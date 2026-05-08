@@ -20,6 +20,8 @@ export type ToolErrorCode =
   | "unauthorized"
   | "forbidden"
   | "conflict"
+  | "commit_token_invalid"
+  | "commit_token_expired"
   | "rate_limited"
   | "upstream_error"
   | "timeout"
@@ -75,6 +77,29 @@ export function conflict(
   correlationId: string,
 ): schemas.ToolResult {
   return failure("conflict", message, correlationId);
+}
+
+/**
+ * Convenience builder for `commit_token_invalid` — token unknown, already
+ * consumed, or issued for a different operation/target. Discriminable from
+ * generic `conflict` so clients can offer a "re-run preview" affordance.
+ */
+export function commitTokenInvalid(
+  message: string,
+  correlationId: string,
+): schemas.ToolResult {
+  return failure("commit_token_invalid", message, correlationId);
+}
+
+/**
+ * Convenience builder for `commit_token_expired` — token presented past its
+ * TTL. Always retryable: clients should re-run the preview call.
+ */
+export function commitTokenExpired(
+  message: string,
+  correlationId: string,
+): schemas.ToolResult {
+  return failure("commit_token_expired", message, correlationId, true);
 }
 
 /** Convenience builder for `internal_error`. */

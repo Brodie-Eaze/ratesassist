@@ -77,14 +77,28 @@ export async function dispatch(args: {
     ctx: RequestContext,
   ) => Promise<schemas.ToolResult>;
 
+  // Defensive: registry should always have a handler for a known ToolName,
+  // but if the catalogue and registry drift apart we want a structured
+  // failure rather than a "handler is not a function" runtime crash.
+  if (typeof handler !== "function") {
+    return failure(
+      "internal_error",
+      `no handler registered for ${toolName}`,
+      context.correlationId,
+    );
+  }
+
   let raw: unknown;
   try {
     raw = await handler(parsed.data, context);
   } catch (e: unknown) {
+    // Log the full error (including stack) here so it isn't lost when we
+    // construct the PII-clean failure result below.
+    console.error("[dispatch]", context.correlationId, toolName, e);
     const message = e instanceof Error ? e.message : "handler threw";
     // Important: do NOT include payload or stack in the message — keep
-    // log surfaces PII-clean. The full stack should be logged elsewhere
-    // by the caller (server.ts) at console.error level.
+    // log surfaces PII-clean. The full stack is logged via console.error
+    // immediately above.
     return failure("internal_error", message, context.correlationId);
   }
 

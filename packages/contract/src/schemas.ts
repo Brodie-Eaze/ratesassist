@@ -170,6 +170,8 @@ export const toolResult = z.discriminatedUnion("ok", [
       "unauthorized",
       "forbidden",
       "conflict",
+      "commit_token_invalid",
+      "commit_token_expired",
       "rate_limited",
       "upstream_error",
       "timeout",

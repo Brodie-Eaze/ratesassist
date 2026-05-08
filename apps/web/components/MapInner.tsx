@@ -15,7 +15,7 @@ import {
   useMapEvents,
   ScaleControl,
 } from "react-leaflet";
-import type { Feature, Geometry, GeoJsonProperties } from "geojson";
+import type { Feature, FeatureCollection, Geometry, GeoJsonProperties } from "geojson";
 import type { Council, Property, Tenement } from "@/lib/types";
 import { BASEMAPS, OVERLAYS, type BasemapDef, type OverlayDef } from "@/lib/basemaps";
 import { bufferPolygon } from "@ratesassist/spatial";
@@ -56,6 +56,11 @@ const ICONS = {
   mining:    makeIcon("#ef4444", "rgba(239,68,68,0.4)"),
   highlight: makeIcon("#10b981", "rgba(16,185,129,0.5)"),
 };
+
+// Explicit WMS overlay defaults — applied only when an overlay omits these fields.
+// Centralised so malformed config is visible rather than silently coerced inline.
+const WMS_DEFAULT_FORMAT = "image/png";
+const WMS_DEFAULT_TRANSPARENT = true;
 
 function Recenter({
   centre,
@@ -206,13 +211,18 @@ export default function MapInner({
             .then((j) => {
               if (ctrl.signal.aborted) return;
               if (j.ok) {
-                setLiveTenements(j.features ?? []);
+                if (!Array.isArray(j.features)) {
+                  setLiveTenements([]);
+                  setLiveStatus((s) => ({ ...s, err: "tenements: malformed: features missing" }));
+                  return;
+                }
+                setLiveTenements(j.features);
                 setLiveStatus((s) => ({
                   ...s,
                   err: undefined,
                   tenements: {
                     source: j.source,
-                    count: (j.features ?? []).length,
+                    count: j.features.length,
                     queriedAt: j.queriedAt,
                   },
                 }));
@@ -221,6 +231,8 @@ export default function MapInner({
               }
             })
             .catch((e: unknown) => {
+              // Swallow caller-aborts (a fresh viewport fetch superseded this one).
+              if (e instanceof Error && e.name === "AbortError") return;
               if (ctrl.signal.aborted) return;
               const msg = e instanceof Error ? e.message : String(e);
               setLiveTenements([]);
@@ -240,13 +252,18 @@ export default function MapInner({
             .then((j) => {
               if (ctrl.signal.aborted) return;
               if (j.ok) {
-                setLiveParcels(j.features ?? []);
+                if (!Array.isArray(j.features)) {
+                  setLiveParcels([]);
+                  setLiveStatus((s) => ({ ...s, err: "parcels: malformed: features missing" }));
+                  return;
+                }
+                setLiveParcels(j.features);
                 setLiveStatus((s) => ({
                   ...s,
                   err: undefined,
                   parcels: {
                     source: j.source,
-                    count: (j.features ?? []).length,
+                    count: j.features.length,
                     queriedAt: j.queriedAt,
                   },
                 }));
@@ -255,6 +272,8 @@ export default function MapInner({
               }
             })
             .catch((e: unknown) => {
+              // Swallow caller-aborts (a fresh viewport fetch superseded this one).
+              if (e instanceof Error && e.name === "AbortError") return;
               if (ctrl.signal.aborted) return;
               const msg = e instanceof Error ? e.message : String(e);
               setLiveParcels([]);
@@ -283,14 +302,19 @@ export default function MapInner({
       <ViewportProbe onChange={handleViewportChange} />
       <ScaleControl position="bottomleft" imperial={false} />
 
-      {/* Basemap */}
-      <TileLayer
-        key={basemap.id}
-        url={basemap.url ?? ""}
-        attribution={basemap.attribution}
-        maxZoom={basemap.maxZoom}
-        {...(basemap.subdomains ? { subdomains: basemap.subdomains } : {})}
-      />
+      {/* Basemap. `basemap.url` may be null when a premium provider has no API
+          key configured — the picker upstream is supposed to filter those out,
+          so reaching here with a null url is a config bug we surface rather
+          than mask with an empty-string default. */}
+      {basemap.url !== null && (
+        <TileLayer
+          key={basemap.id}
+          url={basemap.url}
+          attribution={basemap.attribution}
+          maxZoom={basemap.maxZoom}
+          {...(basemap.subdomains ? { subdomains: basemap.subdomains } : {})}
+        />
+      )}
       {isHybridLabels && (
         <TileLayer
           url="https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"
@@ -299,19 +323,24 @@ export default function MapInner({
         />
       )}
 
-      {/* WMS overlays */}
-      {activeOverlays.map((o) =>
-        o.type === "wms" ? (
+      {/* WMS overlays. A WMS overlay without a `layers` value is malformed
+          config — render nothing rather than mounting an empty-layers request
+          that 4xxs every tile. format/transparent fall back to documented
+          defaults via WMS_DEFAULT_* constants. */}
+      {activeOverlays.map((o) => {
+        if (o.type !== "wms") return null;
+        if (!o.layers) return null;
+        return (
           <WMSTileLayer
             key={o.id}
             url={o.url}
-            layers={o.layers ?? ""}
-            format={o.format ?? "image/png"}
-            transparent={o.transparent ?? true}
+            layers={o.layers}
+            format={o.format ?? WMS_DEFAULT_FORMAT}
+            transparent={o.transparent ?? WMS_DEFAULT_TRANSPARENT}
             attribution={o.attribution}
           />
-        ) : null,
-      )}
+        );
+      })}
 
       {/* Council seat markers */}
       {councils.map((co) => (
@@ -337,7 +366,7 @@ export default function MapInner({
             {
               type: "FeatureCollection",
               features: liveParcels,
-            } as never
+            } as FeatureCollection
           }
           style={() => ({
             color: "#1a52d4",
@@ -362,7 +391,7 @@ export default function MapInner({
             {
               type: "FeatureCollection",
               features: liveTenements,
-            } as never
+            } as FeatureCollection
           }
           style={(feat) => {
             const p = feat?.properties ?? {};
@@ -380,9 +409,14 @@ export default function MapInner({
             const tenId = extractTenementId(props);
             const html = renderTenementPopup(tenId, props);
             layer.bindPopup(html, { maxWidth: 380 });
-            layer.on({
-              click: () => onSelectTenement?.(tenId),
-            });
+            // Skip click-handler when no tenement id resolved — clicking a
+            // missing-id polygon must not collide with a real tenement's
+            // selection state.
+            if (tenId !== null) {
+              layer.on({
+                click: () => onSelectTenement?.(tenId),
+              });
+            }
           }}
         />
       )}
@@ -585,14 +619,14 @@ function escapeHtml(s: string): string {
   );
 }
 
-function extractTenementId(props: Record<string, unknown>): string {
-  return (
+function extractTenementId(props: Record<string, unknown>): string | null {
+  const candidate =
     (props.fmt_tenid as string) ||
     (props.tenid as string)?.trim() ||
     (props.TENID as string) ||
     (props.TENEMENT_ID as string) ||
-    "Tenement"
-  );
+    "";
+  return candidate ? candidate : null;
 }
 
 function dmirsDate(v: unknown): string | null {
@@ -601,7 +635,10 @@ function dmirsDate(v: unknown): string | null {
   return new Date(v).toISOString().slice(0, 10);
 }
 
-function renderTenementPopup(tenId: string, props: Record<string, unknown>): string {
+function renderTenementPopup(tenId: string | null, props: Record<string, unknown>): string {
+  const idLabel = tenId
+    ? `<span>${escapeHtml(tenId)}</span>`
+    : `<span class="ra-tenid-missing" style="color:#94a0b3;font-style:italic">Unidentified tenement</span>`;
   const status = String(props.tenstatus ?? props.STATUS ?? "").trim();
   const type = String(props.type ?? props.TYPE ?? "").trim();
   const holder = String(props.holder1 ?? props.HOLDER ?? "").trim();
@@ -628,7 +665,7 @@ function renderTenementPopup(tenId: string, props: Record<string, unknown>): str
   return `
     <div style="font-size:12px;line-height:1.5;min-width:260px;max-width:360px">
       <div style="font-weight:600;color:#0f141c;margin-bottom:4px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-        <span>${escapeHtml(tenId)}</span>
+        ${idLabel}
         <span style="background:#fef2f2;color:#b91c1c;font-size:10px;padding:1px 6px;border-radius:9999px">DMIRS · live</span>
         ${status ? `<span style="background:${status.toUpperCase().includes("LIVE") ? "#ecfdf5" : "#f7f8fa"};color:${status.toUpperCase().includes("LIVE") ? "#047857" : "#5c6878"};font-size:10px;padding:1px 6px;border-radius:9999px">${escapeHtml(status)}</span>` : ""}
       </div>

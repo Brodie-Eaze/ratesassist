@@ -1,1 +1,0 @@
-{"version":3,"file":"owner.d.ts","sourceRoot":"","sources":["../../src/handlers/owner.ts"],"names":[],"mappings":"AAAA;;GAEG;AAEH,OAAO,KAAK,EAAE,OAAO,EAAE,MAAM,uBAAuB,CAAC;AAErD,OAAO,KAAK,EAAE,cAAc,EAAE,MAAM,uBAAuB,CAAC;AAG5D,uCAAuC;AACvC,wBAAsB,eAAe,CACnC,KAAK,EAAE,OAAO,CAAC,UAAU,CAAC,WAAW,CAAC,EACtC,GAAG,EAAE,cAAc,GAClB,OAAO,CAAC,OAAO,CAAC,UAAU,CAAC,CA+B7B"}

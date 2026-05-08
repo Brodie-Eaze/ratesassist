@@ -12,7 +12,8 @@
     "build": "tsc && esbuild src/server.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/server.js --external:@modelcontextprotocol/sdk --external:zod --external:zod-to-json-schema && node -e \"require('fs').chmodSync('dist/server.js', 0o755)\"",
     "dev": "tsc --watch",
     "start": "node dist/server.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",

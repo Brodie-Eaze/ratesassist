@@ -287,7 +287,32 @@ export async function fetchSlipFeatures(
       }
       const json: unknown = await res.json();
       if (!isFeatureCollection(json)) {
-        lastError = { code: "upstream_error", message: "non-GeoJSON response" };
+        // ArcGIS surfaces upstream errors as `{ error: { code, message, ... } }`
+        // payloads with HTTP 200, which would otherwise flatten to an opaque
+        // "non-GeoJSON response". Surface the embedded code/message so the
+        // caller can see what SLIP actually said (rate limit, auth, etc.).
+        let detail = "non-GeoJSON response";
+        if (
+          typeof json === "object" &&
+          json !== null &&
+          "error" in json &&
+          typeof (json as { error: unknown }).error === "object" &&
+          (json as { error: unknown }).error !== null
+        ) {
+          const errObj = (json as { error: Record<string, unknown> }).error;
+          const code = typeof errObj.code === "number" || typeof errObj.code === "string"
+            ? String(errObj.code)
+            : undefined;
+          const message = typeof errObj.message === "string" ? errObj.message : undefined;
+          if (code !== undefined && message !== undefined) {
+            detail = `ArcGIS error ${code}: ${message}`;
+          } else if (message !== undefined) {
+            detail = `ArcGIS error: ${message}`;
+          } else if (code !== undefined) {
+            detail = `ArcGIS error ${code}`;
+          }
+        }
+        lastError = { code: "upstream_error", message: detail };
         continue;
       }
       _cache.set(key, { ts: Date.now(), features: json.features });

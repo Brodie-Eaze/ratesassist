@@ -317,7 +317,11 @@ function renderMarkdown(input: RenderInput): string {
       : "- (no tenement coverage on this parcel; signals derive from non-spatial sources)";
 
   const abnSuffix = owner.abn
-    ? ` (ABN ${owner.abn}${owner.abnStatus && owner.abnStatus !== "Active" ? ` — ${owner.abnStatus}` : ""})`
+    ? ` (ABN ${owner.abn}${
+        owner.abnCheck.kind === "checked"
+          ? `${owner.abnCheck.status !== "Active" ? ` — ${owner.abnCheck.status}` : ""} — ABN status checked ${owner.abnCheck.checkedAt.slice(0, 10)}`
+          : ""
+      })`
     : "";
 
   const sources = Array.from(new Set(signals.map((s) => s.source))).join("; ");

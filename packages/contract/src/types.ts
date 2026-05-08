@@ -112,14 +112,17 @@ export type Property = {
 
 export type AbnStatus = "Active" | "Cancelled" | "Suspended";
 
+export type AbnCheck =
+  | { readonly kind: "unchecked" }
+  | { readonly kind: "checked"; readonly status: AbnStatus; readonly checkedAt: string };
+
 export type PreviousOwner = { readonly name: string; readonly period: string };
 
 export type Owner = {
   readonly ownerId: string;
   readonly name: string;
   readonly abn: string | null;
-  /** Undefined means "ABN status not yet looked up", not "Active by default". */
-  readonly abnStatus?: AbnStatus;
+  readonly abnCheck: AbnCheck;
   readonly postalAddress: string;
   readonly email: string | null;
   readonly phone: string | null;
@@ -179,6 +182,16 @@ export type SignalCategory =
   | "corporate";
 
 /**
+ * Closed set of mutually-exclusive group identifiers. Branding this as a
+ * union prevents typo-induced silent dedup failures (e.g. "tenement_class"
+ * vs "tenement-class" would previously both type-check as `string`).
+ *
+ * Add new groups here as the catalogue grows; the type system will then
+ * force every signal definition to use a known group.
+ */
+export type SignalExclusiveGroup = "tenement-class";
+
+/**
  * A signal definition — what the detector is looking for, what it weighs,
  * what its authoritative source is. Defined statically per the catalogue.
  */
@@ -195,7 +208,7 @@ export type SignalDef = {
    * Mutually-exclusive group identifier. Among signals sharing a group,
    * only the highest-weighted firing signal contributes to the composite.
    */
-  readonly exclusiveGroup?: string;
+  readonly exclusiveGroup?: SignalExclusiveGroup;
 };
 
 /** A signal that has fired against a property, with its evidence. */

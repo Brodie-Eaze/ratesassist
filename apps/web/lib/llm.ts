@@ -40,20 +40,74 @@ export type LlmResult = {
 };
 
 export function isLive(): boolean {
-  return ANTHROPIC_API_KEY.length > 10 && ANTHROPIC_API_KEY.startsWith("sk-");
+  return ANTHROPIC_API_KEY.length > 10 && ANTHROPIC_API_KEY.startsWith("sk-ant-");
+}
+
+// One-time warning on module load if a key is set but malformed.
+if (ANTHROPIC_API_KEY.length > 0 && !isLive()) {
+  console.warn(
+    "[llm] ANTHROPIC_API_KEY is set but does not look like a valid Anthropic key (expected prefix 'sk-ant-'). Falling back to mock mode.",
+  );
+}
+
+// Lightweight error logger — replaceable hook for downstream wiring.
+function logError(scope: string, correlationId: string | undefined, err: unknown): void {
+  const message = err instanceof Error ? err.message : String(err);
+  const stack = err instanceof Error ? err.stack : undefined;
+  console.error(`[llm:${scope}]`, correlationId ?? "-", message, stack ? `\n${stack}` : "");
+}
+
+/**
+ * Returns true for transport-level failures that warrant graceful mock fallback.
+ * Programming errors (TypeError, ReferenceError, ZodError) deliberately do NOT
+ * match here — those bubble up to the route as 500s.
+ */
+function isLiveTransportFailure(e: unknown): boolean {
+  if (typeof e !== "object" || e === null) return false;
+  if (e instanceof TypeError || e instanceof ReferenceError) return false;
+  const name = (e as { name?: unknown }).name;
+  if (name === "ZodError") return false;
+  const status = (e as { status?: unknown }).status;
+  if (status === 429 || status === 503 || status === 504 || status === 529) return true;
+  const message = String((e as { message?: unknown }).message ?? "").toLowerCase();
+  if (message.includes("timeout")) return true;
+  if (message.includes("network")) return true;
+  if (message.includes("fetch failed")) return true;
+  if (message.includes("econnreset") || message.includes("etimedout")) return true;
+  // Anthropic SDK errors expose a `status` or carry a `headers`/`error` shape.
+  if (
+    name === "APIError" ||
+    name === "APIConnectionError" ||
+    name === "APIConnectionTimeoutError" ||
+    name === "RateLimitError" ||
+    name === "InternalServerError"
+  ) {
+    return true;
+  }
+  return false;
 }
 
 export async function runChat(
   history: ChatMessage[],
   userMessage: string,
+  correlationId?: string,
 ): Promise<LlmResult> {
   if (isLive()) {
     try {
-      return await runChatLive(history, userMessage);
+      return await runChatLive(history, userMessage, correlationId);
     } catch (e: unknown) {
-      // Graceful degradation: if live LLM fails, fall through to mock
+      // Caller-cancelled — propagate so route can return 499/cleanup.
+      if (e instanceof Error && e.name === "AbortError") {
+        throw e;
+      }
+      // Programming errors / unexpected — log + rethrow as 500.
+      if (!isLiveTransportFailure(e)) {
+        logError("runChat.unexpected", correlationId, e);
+        throw e;
+      }
+      // Transport-level failure — graceful degrade to mock.
       const message = e instanceof Error ? e.message : String(e);
-      console.error("[llm] live failed", { message });
+      console.error("[llm] live failed", { correlationId, message });
       const mock = await runChatMock(history, userMessage);
       return {
         ...mock,
@@ -69,26 +123,35 @@ export async function runChat(
 function isRetryableStatus(e: unknown): boolean {
   if (typeof e !== "object" || e === null) return false;
   const status = (e as { status?: unknown }).status;
-  return status === 429 || status === 503 || status === 529;
+  return status === 429 || status === 503 || status === 504 || status === 529;
 }
 
 async function runChatLive(
   history: ChatMessage[],
   userMessage: string,
+  correlationId?: string,
 ): Promise<LlmResult> {
-  const live = runChatLiveInner(history, userMessage);
-  const timeout = new Promise<never>((_, reject) => {
-    setTimeout(
-      () => reject(new Error("Live LLM timeout after 45s")),
-      LIVE_TIMEOUT_MS,
-    );
-  });
-  return Promise.race([live, timeout]);
+  // AbortController so the Anthropic SDK call is actually cancelled when our
+  // wall-clock timeout fires (rather than leaking the upstream socket).
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), LIVE_TIMEOUT_MS);
+  try {
+    return await runChatLiveInner(history, userMessage, ctrl.signal, correlationId);
+  } catch (e: unknown) {
+    if (ctrl.signal.aborted) {
+      throw new Error("Live LLM timeout after 45s");
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function runChatLiveInner(
   history: ChatMessage[],
   userMessage: string,
+  abortSignal: AbortSignal,
+  _correlationId?: string,
 ): Promise<LlmResult> {
   const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
   const toolCalls: ToolCall[] = [];
@@ -113,23 +176,36 @@ async function runChatLiveInner(
 
     let response: Anthropic.Message;
     try {
-      response = await client.messages.create({
-        model: MODEL,
-        max_tokens: 2048,
-        system: SYSTEM_PROMPT,
-        tools: anthropicTools,
-        messages,
-      });
-    } catch (e: unknown) {
-      if (isRetryableStatus(e)) {
-        await new Promise((r) => setTimeout(r, 1500));
-        response = await client.messages.create({
+      response = await client.messages.create(
+        {
           model: MODEL,
           max_tokens: 2048,
           system: SYSTEM_PROMPT,
           tools: anthropicTools,
           messages,
-        });
+        },
+        { signal: abortSignal },
+      );
+    } catch (e: unknown) {
+      if (isRetryableStatus(e)) {
+        await new Promise((r) => setTimeout(r, 1500));
+        // Wrap the retry in its own try/catch so a second failure surfaces
+        // through the same error path as the first (rather than escaping
+        // the loop's catch).
+        try {
+          response = await client.messages.create(
+            {
+              model: MODEL,
+              max_tokens: 2048,
+              system: SYSTEM_PROMPT,
+              tools: anthropicTools,
+              messages,
+            },
+            { signal: abortSignal },
+          );
+        } catch (retryErr: unknown) {
+          throw retryErr;
+        }
       } else {
         throw e;
       }

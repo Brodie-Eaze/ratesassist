@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  ship-check:
+    name: Ship-readiness gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Cache workspace node_modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            apps/*/node_modules
+            packages/*/node_modules
+          key: ${{ runner.os }}-node20-workspaces-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node20-workspaces-
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run ship-check
+        run: npm run ship-check

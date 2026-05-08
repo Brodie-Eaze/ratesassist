@@ -116,9 +116,13 @@ export class CommitTokenStore {
   ):
     | { readonly ok: true; readonly mutation: PendingMutation }
     | { readonly ok: false; readonly reason: "unknown" | "expired" | "operation_mismatch" } {
-    this.gc();
+    // Look up BEFORE gc so an expired entry can be reported as "expired"
+    // rather than indistinguishably collapsed into "unknown" by the sweeper.
+    // Clients use this distinction to choose between "re-run the preview"
+    // (expired) and "we never issued that token" (unknown).
     const entry = this.entries.get(token);
     if (entry === undefined) {
+      this.gc();
       return { ok: false, reason: "unknown" };
     }
     if (entry.expiresAtMs <= this.nowMs()) {

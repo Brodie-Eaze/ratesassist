@@ -296,8 +296,12 @@ export function createAbnClient(config: AbnClientConfig = {}): AbnClient {
       let parsed: unknown;
       try {
         parsed = JSON.parse(stripped);
-      } catch {
-        return { kind: "fail", result: failure("upstream_error", "invalid JSON from ABR", correlationId) };
+      } catch (parseErr: unknown) {
+        const detail = parseErr instanceof Error ? parseErr.message : String(parseErr);
+        return {
+          kind: "fail",
+          result: failure("upstream_error", `invalid JSON from ABR: ${detail}`, correlationId),
+        };
       }
       const validated = AbrResponseSchema.safeParse(parsed);
       if (!validated.success) {
@@ -392,14 +396,14 @@ export function createAbnClient(config: AbnClientConfig = {}): AbnClient {
     if (mock !== undefined) {
       return { ...mock, source: "mock" };
     }
-    return {
-      ok: true,
-      source: "mock",
-      abn: formatAbn(clean),
-      entityName: "Unknown entity (no GUID configured for live lookup)",
-      status: "Unknown",
-      gstRegistered: false,
-    };
+    // No GUID, not in mock fixtures — returning a synthetic "Unknown" mock
+    // would be a silent lie that fires false-positive cancelled/suspended
+    // signals downstream. Refuse explicitly.
+    return failure(
+      "unconfigured",
+      "ABN lookup unconfigured (no GUID and ABN not in mock fixtures)",
+      correlationId,
+    );
   }
 
   return {

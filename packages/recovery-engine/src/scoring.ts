@@ -102,6 +102,10 @@ function suburbRuralValuationPercentile(
       q.landUse === "Rural" &&
       q.assessmentNumber !== p.assessmentNumber,
   );
+  // Insufficient peer set to establish percentile; suppress outlier signal
+  // rather than risk false positive on lone-rural-parcel suburbs. A neutral
+  // 0.5 keeps the property out of both the upper- and lower-decile triggers
+  // that downstream signals key off.
   if (peers.length < 2) return 0.5;
   const lower = peers.filter((q) => q.valuation < p.valuation).length;
   return lower / peers.length;
@@ -173,12 +177,12 @@ export function evaluateSignals(
   }
 
   // ---- Identity: ABN cancelled / suspended ----
-  if (owner?.abnStatus && owner.abnStatus !== "Active") {
+  if (owner?.abnCheck.kind === "checked" && owner.abnCheck.status !== "Active") {
     const sig = getSignal("id.abn.cancelled_or_suspended")!;
     hits.push(
       hit(
         sig,
-        `Owner ${owner.name} (ABN ${owner.abn ?? "?"}) ABN status: ${owner.abnStatus}.`,
+        `Owner ${owner.name} (ABN ${owner.abn ?? "?"}) ABN status: ${owner.abnCheck.status} (checked ${owner.abnCheck.checkedAt}).`,
       ),
     );
   }

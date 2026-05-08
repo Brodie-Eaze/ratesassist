@@ -27,7 +27,7 @@ export async function getOwnerHandler(
       : "  (none on file)";
   const text = [
     `Owner ${owner.ownerId}: ${owner.name}`,
-    `ABN: ${owner.abn ?? "not on record"}${owner.abnStatus ? ` (status: ${owner.abnStatus})` : ""}`,
+    `ABN: ${owner.abn ?? "not on record"}${owner.abnCheck.kind === "checked" ? ` (status: ${owner.abnCheck.status}, checked ${owner.abnCheck.checkedAt.slice(0, 10)})` : ""}`,
     `Postal address: ${owner.postalAddress}`,
     `Phone: ${owner.phone ?? "not on record"}`,
     `Email: ${owner.email ?? "not on record"}`,

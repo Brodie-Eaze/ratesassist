@@ -4,10 +4,11 @@ node_modules/
 .yarn/
 
 # Build output
-web/.next/
-web/out/
-web/build/
-build/                  # MCP server compiled output
+apps/web/.next/
+apps/web/out/
+apps/web/build/
+packages/*/dist/
+build/
 *.tsbuildinfo
 
 # Environment + secrets

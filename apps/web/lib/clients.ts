@@ -42,7 +42,7 @@ const ABN_LOOKUP_BASE: string =
 export const abnClient: AbnClient = createAbnClient({
   baseUrl: ABN_LOOKUP_BASE,
   guid: process.env["ABN_LOOKUP_GUID"] ?? "",
-  strict: false,
+  strict: process.env.NODE_ENV === "production",
 });
 
 // ===== Evaluation context for the recovery engine =====
@@ -84,6 +84,20 @@ export function getEvaluationContext(): EvaluationContext {
     tenementsByAssessment,
   };
   return cachedContext;
+}
+
+/**
+ * Reset the memoised {@link EvaluationContext} so the next call to
+ * {@link getEvaluationContext} rebuilds from the underlying data.
+ *
+ * Mutation handlers in `apps/web/lib/tools.ts` (e.g. `add_property_note`,
+ * `update_owner_contact`, payment-arrangement bookings) MUST call this
+ * function after a successful commit so subsequent recovery-engine sweeps
+ * observe the new state. Without it, mutations are invisible until the
+ * process restarts.
+ */
+export function invalidateEvaluationContext(): void {
+  cachedContext = null;
 }
 
 // ===== Recovery stats — legacy-shape helper =====

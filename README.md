@@ -13,7 +13,7 @@
 | | |
 |---|---|
 | **Status** | Pre-pilot |
-| **Working name** | RatesAssist (see [`BRAND-CANDIDATES.md`](BRAND-CANDIDATES.md)) |
+| **Working name** | RatesAssist (see [`internal/BRAND-CANDIDATES.md`](internal/BRAND-CANDIDATES.md)) |
 | **Stack** | TypeScript, MCP, Anthropic Claude, AWS Sydney |
 | **Confidentiality** | Confidential — see individual document headers |
 
@@ -25,20 +25,23 @@ This repository holds the foundational specification, supporting documents, and 
 
 The product is anchored on a domain co-founder currently running rates departments for multiple councils, manually identifying $30–50M annually in mis-classified rates. RatesAssist productises that capability and extends it across the broader Australian council market (537 LGAs).
 
+## Repository structure
+
+| Path | Contents |
+|---|---|
+| [`apps/`](apps/) | Application workspaces (web app, MCP server, etc.). |
+| [`packages/`](packages/) | Shared TypeScript packages (adapters, contracts, identity, recovery engine, spatial). |
+| [`internal/`](internal/) | Strategic and operational artefacts — pitch, brand, entity structure, founder discovery, partner outreach drafts. Not part of the technical product. |
+
 ## Read in this order
 
 If you've never seen this project before, work through these documents in sequence:
 
 1. **[`RatesAssist.md`](RatesAssist.md)** — master specification. Read this first. Everything else extends from it.
-2. **[`PILOT-PITCH.md`](PILOT-PITCH.md)** — one-page external pitch for the first pilot council CFO.
-3. **[`PILOT-RUNBOOK.md`](PILOT-RUNBOOK.md)** — how the first pilot is operationally executed.
-4. **[`SECURITY.md`](SECURITY.md)** — externally-shareable security posture.
-5. **[`PRIVACY.md`](PRIVACY.md)** — externally-shareable privacy posture.
-6. **[`ENTITY-OPTIONS.md`](ENTITY-OPTIONS.md)** — entity vehicle and cap-table options for legal structure.
-7. **[`BRAND-CANDIDATES.md`](BRAND-CANDIDATES.md)** — brand naming + availability checklist.
-8. **[`MUM-DISCOVERY.md`](MUM-DISCOVERY.md)** — discovery sheet for the founding-domain-expert call.
-9. **[`outreach/techone-partner.md`](outreach/techone-partner.md)** — TechOne ISV partner outreach.
-10. **[`outreach/nearmap-eval.md`](outreach/nearmap-eval.md)** — Nearmap evaluation outreach.
+2. **[`PRODUCTION-PLAN.md`](PRODUCTION-PLAN.md)** — canonical technical plan.
+3. **[`SECURITY.md`](SECURITY.md)** — externally-shareable security posture.
+4. **[`PRIVACY.md`](PRIVACY.md)** — externally-shareable privacy posture.
+5. **[`internal/`](internal/)** — strategic context (pilot pitch, runbook, entity options, brand, discovery, outreach).
 
 ## Repository layout
 
@@ -48,14 +51,17 @@ rates-assist/
 ├── RatesAssist.md               ← master specification
 ├── SECURITY.md                  ← security posture (external)
 ├── PRIVACY.md                   ← privacy posture (external)
-├── PILOT-PITCH.md               ← one-page pilot pitch
-├── PILOT-RUNBOOK.md             ← operational runbook
-├── ENTITY-OPTIONS.md            ← entity + cap table options
-├── BRAND-CANDIDATES.md          ← brand naming
-├── MUM-DISCOVERY.md             ← domain co-founder discovery
-├── outreach/
-│   ├── techone-partner.md       ← TechOne ISV outreach
-│   └── nearmap-eval.md          ← Nearmap eval outreach
+├── PRODUCTION-PLAN.md           ← canonical technical plan
+├── apps/                        ← application workspaces
+├── packages/                    ← shared TypeScript packages
+├── internal/                    ← strategic + operational artefacts
+│   ├── PILOT-PITCH.md
+│   ├── PILOT-RUNBOOK.md
+│   ├── ENTITY-OPTIONS.md
+│   ├── BRAND-CANDIDATES.md
+│   ├── MUM-DISCOVERY.md
+│   ├── OVERNIGHT-REPORT.md
+│   └── outreach/
 ├── package.json                 ← prototype Node project
 ├── tsconfig.json
 ├── src/

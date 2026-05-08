@@ -111,7 +111,19 @@ export function createRequestContext(args: {
  * Build the default ABN client used by the demo adapter. Mock-mode (no
  * GUID); strict mode is OFF because demos run offline. Real adapters
  * configure this from per-tenant secrets in the production wiring.
+ *
+ * Lazily initialised once per process and memoised in a module-scoped
+ * variable. Constructing a fresh client per request would be harmless for
+ * correctness (the underlying ABR cache in @ratesassist/identity is
+ * module-level, so cache hits survive client churn), but a singleton keeps
+ * any future per-instance state (rate limiters, telemetry counters) from
+ * being silently reset on every dispatch.
  */
+let _defaultAbnClient: AbnClient | undefined;
+
 export function createDefaultAbnClient(): AbnClient {
-  return createAbnClient({ strict: false });
+  if (_defaultAbnClient === undefined) {
+    _defaultAbnClient = createAbnClient({ strict: false });
+  }
+  return _defaultAbnClient;
 }
