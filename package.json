@@ -1,0 +1,22 @@
+{
+  "name": "rates-assist-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for AU council rates officers — mocked TechOne workflows for demo.",
+  "type": "module",
+  "bin": {
+    "rates-assist-mcp": "./build/index.js"
+  },
+  "scripts": {
+    "build": "tsc && chmod 755 build/index.js",
+    "start": "node build/index.js"
+  },
+  "files": ["build"],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.5.0"
+  }
+}

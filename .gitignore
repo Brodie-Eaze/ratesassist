@@ -1,0 +1,45 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+.yarn/
+
+# Build output
+web/.next/
+web/out/
+web/build/
+build/                  # MCP server compiled output
+*.tsbuildinfo
+
+# Environment + secrets
+.env
+.env.local
+.env*.local
+!.env.example
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Caches
+.cache/
+.parcel-cache/
+.turbo/
+
+# Generated artefacts (regeneratable from .md sources)
+*.docx
+RatesAssist-Complete.docx
+
+# Temp / scratch
+tmp/
+.tmp/
+*.local

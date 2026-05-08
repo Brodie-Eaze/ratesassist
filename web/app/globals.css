@@ -1,0 +1,93 @@
+@import "leaflet/dist/leaflet.css";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* === Global typography: Arial everywhere === */
+:root,
+html,
+body,
+input,
+button,
+select,
+textarea,
+code,
+pre,
+table,
+.leaflet-container,
+.leaflet-popup-content,
+.leaflet-control,
+.leaflet-control-attribution,
+.leaflet-control-scale {
+  font-family: Arial, Helvetica, sans-serif !important;
+}
+
+/* Use tabular figures for any element using tabular-nums utility (Arial supports
+   tabular-nums via OpenType). */
+.tabular-nums { font-variant-numeric: tabular-nums; }
+
+/* Leaflet container fixes for Tailwind preflight reset */
+.leaflet-container {
+  height: 100%;
+  width: 100%;
+  background: #eef0f4;
+}
+.leaflet-container a { color: #1a52d4; }
+.leaflet-popup-content-wrapper {
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(15, 20, 28, 0.12);
+}
+.leaflet-popup-content { margin: 10px 14px; line-height: 1.5; }
+
+@layer base {
+  body {
+    @apply bg-ink-50 text-ink-900 antialiased;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-white rounded-lg border border-ink-200 shadow-sm;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none;
+  }
+  .btn-primary {
+    @apply btn bg-accent-600 text-white hover:bg-accent-700;
+  }
+  .btn-ghost {
+    @apply btn hover:bg-ink-100 text-ink-700;
+  }
+  .input {
+    @apply w-full rounded-md border border-ink-300 bg-white px-3 py-2 text-sm placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-accent-500 focus:border-accent-500;
+  }
+  .label {
+    @apply text-xs font-medium uppercase tracking-wider text-ink-500;
+  }
+  .badge {
+    @apply inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium;
+  }
+  .badge-success {
+    @apply badge bg-success-50 text-success-700;
+  }
+  .badge-warn {
+    @apply badge bg-warn-50 text-warn-700;
+  }
+  .badge-critical {
+    @apply badge bg-critical-50 text-critical-700;
+  }
+  .badge-neutral {
+    @apply badge bg-ink-100 text-ink-700;
+  }
+}
+
+/* Chat scrolling */
+.chat-scroll {
+  scroll-behavior: smooth;
+}
+.chat-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.chat-scroll::-webkit-scrollbar-thumb {
+  @apply bg-ink-300 rounded-full;
+}
