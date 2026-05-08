@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Sidebar } from "@/components/Sidebar";
+import { useFetch, LoadingState, ErrorState } from "@/lib/useFetch";
 import {
   PortfolioMap,
   AUSTRALIA_CENTRE,
@@ -29,7 +30,7 @@ type DataResponse = {
 };
 
 export default function MapPage() {
-  const [data, setData] = useState<DataResponse | null>(null);
+  const fetchState = useFetch<DataResponse>("/api/data");
   const [council, setCouncil] = useState<string>("");
   const [filterType, setFilterType] = useState<"all" | "mining" | "overdue">("all");
   const [basemapId, setBasemapId] = useState<string>("carto-positron");
@@ -45,20 +46,9 @@ export default function MapPage() {
 
   const status = useMemo(() => basemapStatus(), []);
 
-  useEffect(() => {
-    fetch("/api/data").then((r) => r.json()).then(setData);
-  }, []);
-
-  if (!data) {
-    return (
-      <div className="flex h-screen">
-        <Sidebar />
-        <main className="flex-1 flex items-center justify-center text-ink-500">
-          Loading…
-        </main>
-      </div>
-    );
-  }
+  if (fetchState.status === "loading") return <LoadingState />;
+  if (fetchState.status === "error") return <ErrorState message={fetchState.error} />;
+  const data = fetchState.data;
 
   const tenementCoverage = new Set(
     data.tenements.flatMap((t) => t.intersectsAssessmentNumbers),

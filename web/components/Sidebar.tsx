@@ -116,11 +116,11 @@ export function Sidebar() {
         <div className="px-3 pt-3 border-t border-ink-200">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-full bg-accent-100 text-accent-700 flex items-center justify-center text-xs font-semibold">
-              B
+              D
             </div>
             <div className="text-xs">
-              <div className="font-medium text-ink-900">Brodie (demo)</div>
-              <div className="text-ink-500">Senior Rates Officer</div>
+              <div className="font-medium text-ink-900">Demo Officer</div>
+              <div className="text-ink-500">Senior Rates Officer (demo)</div>
             </div>
           </div>
         </div>

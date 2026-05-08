@@ -11,6 +11,7 @@ type ChatRequest = {
 };
 
 export async function POST(req: NextRequest) {
+  const correlationId = `chat_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   try {
     const body = (await req.json()) as ChatRequest;
     if (!body.message?.trim()) {
@@ -24,8 +25,11 @@ export async function POST(req: NextRequest) {
       modelUsed: result.modelUsed,
     });
   } catch (e: unknown) {
-    const message = e instanceof Error ? e.message : String(e);
-    return NextResponse.json({ error: message }, { status: 500 });
+    console.error("[chat]", correlationId, e);
+    return NextResponse.json(
+      { error: "internal_error", correlationId },
+      { status: 500 },
+    );
   }
 }
 

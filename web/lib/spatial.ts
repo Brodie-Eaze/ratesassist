@@ -1,3 +1,8 @@
+/** Leaflet order: [lat, lng]. Used by react-leaflet positions, polygon rings, etc. */
+export type LatLng = [lat: number, lng: number];
+/** GeoJSON order: [lng, lat]. Used by GeoJSON geometries, ArcGIS bbox params, etc. */
+export type LngLat = [lng: number, lat: number];
+
 // Real spatial data fetching — DMIRS mining tenements + Landgate cadastre.
 //
 // Uses SLIP (Shared Land Information Platform) public ArcGIS REST endpoints
@@ -142,16 +147,21 @@ export async function fetchSlipFeatures(
   return { ok: false, error: "no SLIP layer responded within timeout" };
 }
 
-// Generate a circular buffer polygon around a centroid (for selected-tenement
-// "1km buffer ring" visualisation). Returns a GeoJSON Polygon with 64 vertices.
+/**
+ * Generate a circular buffer polygon around a centroid for selected-tenement
+ * "1km buffer ring" visualisation.
+ *
+ * Returns vertices in **Leaflet order** (`[lat, lng]`), suitable for direct
+ * use as `positions` on a react-leaflet `<Polygon>`. NOT GeoJSON order.
+ */
 export function bufferPolygon(
   lat: number,
   lng: number,
   radiusMetres: number,
   vertices: number = 64,
-): [number, number][] {
+): LatLng[] {
   const earthRadius = 6_378_137;
-  const ring: [number, number][] = [];
+  const ring: LatLng[] = [];
   const latRad = (lat * Math.PI) / 180;
   for (let i = 0; i < vertices; i++) {
     const bearing = (i / vertices) * 2 * Math.PI;

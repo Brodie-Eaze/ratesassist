@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Sidebar } from "@/components/Sidebar";
 import { formatAud } from "@/lib/utils";
+import { useFetch, LoadingState, ErrorState } from "@/lib/useFetch";
 import type { Owner, Property } from "@/lib/types";
 import { FileText, Download, Send } from "lucide-react";
 
@@ -36,18 +37,15 @@ const CERT_TYPES = [
 ];
 
 export default function CertificatesPage() {
-  const [data, setData] = useState<DataResponse | null>(null);
+  const fetchState = useFetch<DataResponse>("/api/data");
   const [certType, setCertType] = useState(CERT_TYPES[0].id);
   const [assessmentNumber, setAssessmentNumber] = useState("");
   const [requesterName, setRequesterName] = useState("");
   const [requesterEmail, setRequesterEmail] = useState("");
   const [generated, setGenerated] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetch("/api/data")
-      .then((r) => r.json())
-      .then(setData);
-  }, []);
+  // Hooks must run unconditionally — compute property/owner before early returns.
+  const data = fetchState.status === "ok" ? fetchState.data : null;
 
   const property = useMemo(
     () => data?.properties.find((p) => p.assessmentNumber === assessmentNumber),
@@ -114,6 +112,9 @@ DECLARATION
 ═══════════════════════════════════════════════════════════════════
 `.trim());
   }
+
+  if (fetchState.status === "loading") return <LoadingState />;
+  if (fetchState.status === "error") return <ErrorState message={fetchState.error} />;
 
   return (
     <div className="flex h-screen">

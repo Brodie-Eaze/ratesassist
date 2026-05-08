@@ -1,13 +1,7 @@
-// RatesRecovery — multi-signal detection engine.
-//
-// The "secret sauce": each property is evaluated against a portfolio of
-// detection signals drawn from authoritative public + commercial sources.
-// Each signal has an evidence string, a weight, and a category. Signals
-// compose into a weighted composite score, capped at 1.0. The score
-// breakdown is transparent and auditable — every contribution is named,
-// weighted, and cited so council legal teams can defend reclassifications.
-//
-// Signals are deterministic (rule + lookup). The LLM never invents them.
+// RatesRecovery — multi-signal detection engine. Each property is evaluated
+// against a portfolio of signals from authoritative public + commercial
+// sources, weighted into a transparent composite score. Scoring is
+// deterministic; the LLM only narrates results.
 
 import {
   OWNERS,
@@ -204,6 +198,18 @@ function suburbRuralValuationPercentile(p: Property): number {
 
 // ===== Per-property signal evaluation =====
 
+function hit(sig: SignalDef, evidence: string): SignalHit {
+  return {
+    id: sig.id,
+    name: sig.name,
+    short: sig.short,
+    category: sig.category,
+    weight: sig.weight,
+    source: sig.source,
+    evidence,
+  };
+}
+
 function evaluateSignals(p: Property): SignalHit[] {
   const hits: SignalHit[] = [];
   const tenements = getTenementsForAssessment(p.assessmentNumber);
@@ -219,39 +225,24 @@ function evaluateSignals(p: Property): SignalHit[] {
 
     if (producing.some((t) => t.type === "M")) {
       const sig = getSignal("reg.tenement.producing.on_rural_or_vacant")!;
-      hits.push({
-        ...sig,
-        evidence: `${producing.length} producing mining lease(s) intersect this parcel: ${producing.map((t) => t.tenementId).join(", ")}.`,
-      });
+      hits.push(hit(sig, `${producing.length} producing mining lease(s) intersect this parcel: ${producing.map((t) => t.tenementId).join(", ")}.`));
     } else if (gpls.some((t) => t.isProducing) && p.landUse === "Vacant") {
       const sig = getSignal("reg.gpl.producing.on_vacant")!;
       const gpl = gpls.find((t) => t.isProducing)!;
-      hits.push({
-        ...sig,
-        evidence: `Producing general-purpose lease ${gpl.tenementId} (${gpl.commodity.join(", ")}) on parcel listed as vacant.`,
-      });
+      hits.push(hit(sig, `Producing general-purpose lease ${gpl.tenementId} (${gpl.commodity.join(", ")}) on parcel listed as vacant.`));
     } else if (miningLeases.length > 0) {
       const sig = getSignal("reg.tenement.live_lease.on_rural_or_vacant")!;
-      hits.push({
-        ...sig,
-        evidence: `Live mining lease(s) intersect this parcel: ${miningLeases.map((t) => t.tenementId).join(", ")}.`,
-      });
+      hits.push(hit(sig, `Live mining lease(s) intersect this parcel: ${miningLeases.map((t) => t.tenementId).join(", ")}.`));
     } else if (explorationOnly) {
       const sig = getSignal("reg.tenement.exploration_only.on_rural")!;
-      hits.push({
-        ...sig,
-        evidence: `Only exploration / prospecting tenement(s) intersect this parcel: ${live.map((t) => t.tenementId).join(", ")}.`,
-      });
+      hits.push(hit(sig, `Only exploration / prospecting tenement(s) intersect this parcel: ${live.map((t) => t.tenementId).join(", ")}.`));
     }
   }
 
   // ---- Identity: ABN cancelled / suspended ----
   if (owner?.abnStatus && owner.abnStatus !== "Active") {
     const sig = getSignal("id.abn.cancelled_or_suspended")!;
-    hits.push({
-      ...sig,
-      evidence: `Owner ${owner.name} (ABN ${owner.abn ?? "?"}) ABN status: ${owner.abnStatus}.`,
-    });
+    hits.push(hit(sig, `Owner ${owner.name} (ABN ${owner.abn ?? "?"}) ABN status: ${owner.abnStatus}.`));
   }
 
   // ---- Identity: tenement holder ≠ rated owner ----
@@ -262,10 +253,7 @@ function evaluateSignals(p: Property): SignalHit[] {
     );
     if (mismatchHolder) {
       const sig = getSignal("id.holder_ne_owner")!;
-      hits.push({
-        ...sig,
-        evidence: `Tenement ${mismatchHolder.tenementId} holder "${mismatchHolder.holder}" differs from rated owner "${owner.name}".`,
-      });
+      hits.push(hit(sig, `Tenement ${mismatchHolder.tenementId} holder "${mismatchHolder.holder}" differs from rated owner "${owner.name}".`));
     }
   }
 
@@ -274,10 +262,7 @@ function evaluateSignals(p: Property): SignalHit[] {
     const term = nameContainsIndustryTerm(owner.name);
     if (term) {
       const sig = getSignal("id.industry_indicator_in_owner_name")!;
-      hits.push({
-        ...sig,
-        evidence: `Owner name "${owner.name}" contains industry term "${term}" but property rated ${p.landUse}.`,
-      });
+      hits.push(hit(sig, `Owner name "${owner.name}" contains industry term "${term}" but property rated ${p.landUse}.`));
     }
   }
 
@@ -286,10 +271,7 @@ function evaluateSignals(p: Property): SignalHit[] {
     const pf = ownerPortfolio(owner.ownerId);
     if (pf.total >= 3 && pf.pct >= 0.5) {
       const sig = getSignal("beh.owner_portfolio_tenement_majority")!;
-      hits.push({
-        ...sig,
-        evidence: `Owner ${owner.name} holds ${pf.total} properties; ${pf.withTenements} (${(pf.pct * 100).toFixed(0)}%) intersect tenements — mining-dominant portfolio.`,
-      });
+      hits.push(hit(sig, `Owner ${owner.name} holds ${pf.total} properties; ${pf.withTenements} (${(pf.pct * 100).toFixed(0)}%) intersect tenements — mining-dominant portfolio.`));
     }
   }
 
@@ -298,10 +280,7 @@ function evaluateSignals(p: Property): SignalHit[] {
     const pct = suburbRuralValuationPercentile(p);
     if (pct >= 0.85) {
       const sig = getSignal("spat.outlier.high_value_rural")!;
-      hits.push({
-        ...sig,
-        evidence: `Valuation $${p.valuation.toLocaleString()} sits in the top ${((1 - pct) * 100).toFixed(0)}% of rural-rated parcels in ${p.suburb} — investigate for undeclared improvements.`,
-      });
+      hits.push(hit(sig, `Valuation $${p.valuation.toLocaleString()} sits in the top ${((1 - pct) * 100).toFixed(0)}% of rural-rated parcels in ${p.suburb} — investigate for undeclared improvements.`));
     }
   }
 
@@ -310,16 +289,40 @@ function evaluateSignals(p: Property): SignalHit[] {
 
 // ===== Composite scoring =====
 
+// Severity bands calibrated so a single register signal alone (≥0.45) is
+// medium; register + identity (≥0.60) is high. Multipliers are heuristic
+// uplift ratios pending integration of per-council differential rate tables.
+export const SEVERITY_BANDS = { high: 0.6, medium: 0.35, low: 0.15 } as const;
+export const UPLIFT_MULTIPLIER: Record<MismatchSeverity, number> = {
+  high: 8,
+  medium: 4,
+  low: 1.5,
+};
+
 function computeComposite(hits: SignalHit[]): number {
   if (!hits.length) return 0;
-  // Weighted sum, capped at 1.0
-  const sum = hits.reduce((s, h) => s + h.weight, 0);
+  // Enforce exclusive groups: take the max-weight hit per group
+  const byGroup = new Map<string, SignalHit>();
+  const ungrouped: SignalHit[] = [];
+  for (const h of hits) {
+    const sig = SIGNAL_CATALOGUE.find((s) => s.id === h.id);
+    const group = sig?.exclusiveGroup;
+    if (!group) {
+      ungrouped.push(h);
+      continue;
+    }
+    const existing = byGroup.get(group);
+    if (!existing || h.weight > existing.weight) byGroup.set(group, h);
+  }
+  const sum =
+    ungrouped.reduce((s, h) => s + h.weight, 0) +
+    [...byGroup.values()].reduce((s, h) => s + h.weight, 0);
   return Math.min(1, sum);
 }
 
 function severityForScore(score: number): MismatchSeverity {
-  if (score >= 0.6) return "high";
-  if (score >= 0.35) return "medium";
+  if (score >= SEVERITY_BANDS.high) return "high";
+  if (score >= SEVERITY_BANDS.medium) return "medium";
   return "low";
 }
 
@@ -341,12 +344,12 @@ function describeKind(hits: SignalHit[]): { kind: string; reason: string } {
 export function estimateUplift(
   annualRatesNow: number,
   severity: MismatchSeverity,
-): { estAnnualRatesNew: number; estUplift: number; estArrears5y: number } {
-  const multiplier = severity === "high" ? 8 : severity === "medium" ? 4 : 1.5;
+): { estAnnualRatesNew: number; estUplift: number; estArrears3y: number } {
+  const multiplier = UPLIFT_MULTIPLIER[severity];
   const estAnnualRatesNew = Math.round(annualRatesNow * multiplier);
   const estUplift = estAnnualRatesNew - annualRatesNow;
-  const estArrears5y = estUplift * 3;
-  return { estAnnualRatesNew, estUplift, estArrears5y };
+  const estArrears3y = estUplift * 3;
+  return { estAnnualRatesNew, estUplift, estArrears3y };
 }
 
 // ===== Public API =====
@@ -368,7 +371,7 @@ export function findMismatches(opts?: {
     const severity = severityForScore(compositeScore);
     if (sevRank[severity] < minRank) continue;
 
-    const { estAnnualRatesNew, estUplift, estArrears5y } = estimateUplift(p.annualRates, severity);
+    const { estAnnualRatesNew, estUplift, estArrears3y } = estimateUplift(p.annualRates, severity);
     const { kind, reason } = describeKind(signals);
     const tenements = getTenementsForAssessment(p.assessmentNumber);
 
@@ -384,7 +387,7 @@ export function findMismatches(opts?: {
       signals,
       estAnnualRatesNew,
       estUplift,
-      estArrears5y,
+      estArrears3y,
     });
   }
 
@@ -404,7 +407,7 @@ export function buildEvidencePack(assessmentNumber: string): {
 
   const compositeScore = computeComposite(signals);
   const severity = severityForScore(compositeScore);
-  const { estAnnualRatesNew, estUplift, estArrears5y } = estimateUplift(p.annualRates, severity);
+  const { estAnnualRatesNew, estUplift, estArrears3y } = estimateUplift(p.annualRates, severity);
   const tenements = getTenementsForAssessment(p.assessmentNumber);
   const { kind, reason } = describeKind(signals);
   const owner = getOwnersForProperty(p)[0];
@@ -421,7 +424,7 @@ export function buildEvidencePack(assessmentNumber: string): {
     signals,
     estAnnualRatesNew,
     estUplift,
-    estArrears5y,
+    estArrears3y,
   };
 
   const today = new Date().toISOString().slice(0, 10);
@@ -506,7 +509,7 @@ ${tenLines}
 | Proposed category | ${tenements.length ? "Mining" : "Review — see signal trail"} |
 | Estimated annual rates | $${p.annualRates.toLocaleString()} → $${estAnnualRatesNew.toLocaleString()} |
 | Estimated annual uplift | **$${estUplift.toLocaleString()}** |
-| Estimated arrears (3y conservative) | **$${estArrears5y.toLocaleString()}** |
+| Estimated arrears (3y conservative) | **$${estArrears3y.toLocaleString()}** |
 
 ## 7. Draft notice to ratepayer
 
@@ -549,7 +552,7 @@ export function recoveryStats(councilCode?: string) {
   const low = all.filter((c) => c.severity === "low");
   const totalUplift = all.reduce((s, c) => s + c.estUplift, 0);
   const highUplift = high.reduce((s, c) => s + c.estUplift, 0);
-  const totalArrears = all.reduce((s, c) => s + c.estArrears5y, 0);
+  const totalArrears = all.reduce((s, c) => s + c.estArrears3y, 0);
   // Per-signal contribution rollup
   const signalCounts: Record<string, number> = {};
   for (const c of all) {

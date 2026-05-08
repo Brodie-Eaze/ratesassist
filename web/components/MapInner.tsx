@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import L from "leaflet";
 import {
   MapContainer,
@@ -177,9 +177,14 @@ export default function MapInner({
     err?: string;
   }>({});
 
+  const ctrlRef = useRef<AbortController | null>(null);
   const handleViewportChange = useCallback(
     async (bbox: number[], z: number) => {
       if (!liveVectors) return;
+      // Cancel any in-flight viewport fetch before starting a new one.
+      ctrlRef.current?.abort();
+      const ctrl = new AbortController();
+      ctrlRef.current = ctrl;
       // Polygon detail only useful from zoom >= 8 (LGA) for tenements,
       // zoom >= 14 (parcel) for cadastre.
       const wantsTenements = z >= 8;
@@ -193,23 +198,33 @@ export default function MapInner({
       const tasks: Promise<void>[] = [];
       if (wantsTenements) {
         tasks.push(
-          fetch(`/api/spatial/miningTenements?${params}`)
-            .then((r) => r.json())
+          fetch(`/api/spatial/miningTenements?${params}`, { signal: ctrl.signal })
+            .then(async (r) => {
+              if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+              return r.json();
+            })
             .then((j) => {
+              if (ctrl.signal.aborted) return;
               if (j.ok) {
                 setLiveTenements(j.features ?? []);
                 setLiveStatus((s) => ({
                   ...s,
+                  err: undefined,
                   tenements: {
                     source: j.source,
                     count: (j.features ?? []).length,
                     queriedAt: j.queriedAt,
                   },
                 }));
+              } else {
+                throw new Error(j.error ?? "tenement query returned ok=false");
               }
             })
-            .catch(() => {
+            .catch((e: unknown) => {
+              if (ctrl.signal.aborted) return;
+              const msg = e instanceof Error ? e.message : String(e);
               setLiveTenements([]);
+              setLiveStatus((s) => ({ ...s, err: `tenements: ${msg}` }));
             }),
         );
       } else {
@@ -217,23 +232,33 @@ export default function MapInner({
       }
       if (wantsParcels) {
         tasks.push(
-          fetch(`/api/spatial/cadastre?${params}`)
-            .then((r) => r.json())
+          fetch(`/api/spatial/cadastre?${params}`, { signal: ctrl.signal })
+            .then(async (r) => {
+              if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+              return r.json();
+            })
             .then((j) => {
+              if (ctrl.signal.aborted) return;
               if (j.ok) {
                 setLiveParcels(j.features ?? []);
                 setLiveStatus((s) => ({
                   ...s,
+                  err: undefined,
                   parcels: {
                     source: j.source,
                     count: (j.features ?? []).length,
                     queriedAt: j.queriedAt,
                   },
                 }));
+              } else {
+                throw new Error(j.error ?? "parcel query returned ok=false");
               }
             })
-            .catch(() => {
+            .catch((e: unknown) => {
+              if (ctrl.signal.aborted) return;
+              const msg = e instanceof Error ? e.message : String(e);
               setLiveParcels([]);
+              setLiveStatus((s) => ({ ...s, err: `parcels: ${msg}` }));
             }),
         );
       } else {
@@ -414,14 +439,13 @@ export default function MapInner({
           );
         })}
 
-      {/* Selected-tenement buffer ring (1km) */}
-      {selectedTenement && (
+      {/* Selected-tenement buffer ring (1km) — centred on polygon bounds centre,
+          not the first vertex. */}
+      {selectedTenement && (() => {
+        const centroid = L.latLngBounds(selectedTenement.polygon).getCenter();
+        return (
         <Polygon
-          positions={bufferPolygon(
-            selectedTenement.polygon[0][0],
-            selectedTenement.polygon[0][1],
-            1000,
-          )}
+          positions={bufferPolygon(centroid.lat, centroid.lng, 1000)}
           pathOptions={{
             color: "#10b981",
             weight: 2,
@@ -430,7 +454,8 @@ export default function MapInner({
             fillOpacity: 0.04,
           }}
         />
-      )}
+        );
+      })()}
 
       {/* Property markers */}
       {properties.map((p) => {
@@ -530,6 +555,20 @@ function LiveStatusBadge({
           {z < 14 ? "zoom in (≥14)" : status.parcels ? `${status.parcels.count} loaded` : "fetching…"}
         </span>
       </div>
+      {status.err && (
+        <div
+          style={{
+            marginTop: 6,
+            paddingTop: 6,
+            borderTop: "1px solid #fee2e2",
+            color: "#b91c1c",
+            fontSize: "10.5px",
+            lineHeight: 1.4,
+          }}
+        >
+          ⚠ Live data unavailable — {status.err}
+        </div>
+      )}
     </div>
   );
 }

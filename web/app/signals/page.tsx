@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { Sidebar } from "@/components/Sidebar";
+import { useFetch, LoadingState, ErrorState } from "@/lib/useFetch";
 import type { SignalCategory, SignalDef } from "@/lib/types";
 import {
   Sparkles,
@@ -31,22 +31,10 @@ const CATEGORY_META: Record<
 };
 
 export default function SignalsPage() {
-  const [data, setData] = useState<SignalsResponse | null>(null);
-
-  useEffect(() => {
-    fetch("/api/signals").then((r) => r.json()).then(setData);
-  }, []);
-
-  if (!data) {
-    return (
-      <div className="flex h-screen">
-        <Sidebar />
-        <main className="flex-1 flex items-center justify-center text-ink-500">
-          Loading…
-        </main>
-      </div>
-    );
-  }
+  const fetchState = useFetch<SignalsResponse>("/api/signals");
+  if (fetchState.status === "loading") return <LoadingState />;
+  if (fetchState.status === "error") return <ErrorState message={fetchState.error} />;
+  const data = fetchState.data;
 
   const grouped = data.catalogue.reduce<Record<SignalCategory, SignalDef[]>>(
     (acc, s) => {

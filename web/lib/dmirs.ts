@@ -1,7 +1,7 @@
-// DMIRS WFS / Landgate SLIP integration.
-// In production, fetches WA Mining Tenements (M, E, P, G, L) by LGA boundary
-// from the public SLIP services. For overnight MVP we attempt the live request
-// and fall back to the seeded data if the network fetch fails (offline-safe demo).
+// DMIRS / SLIP probe + seeded fallback. Performs a SLIP capabilities check to
+// surface availability, then returns the seeded tenement set. Full WFS
+// GetFeature parsing of bbox-intersecting tenements is implemented separately
+// in lib/spatial.ts.
 
 import { getAllLiveTenements } from "./data";
 import type { Tenement } from "./types";
@@ -18,7 +18,8 @@ export type DmirsFetchResult =
       ok: true;
       count: number;
       sample: Tenement[];
-      source: "live" | "cache";
+      source: "seeded" | "cache" | "live";
+      note?: string;
     }
   | {
       ok: false;
@@ -45,7 +46,7 @@ export async function fetchDmirsTenementsForCouncil(
     };
   }
 
-  // Attempt live fetch with short timeout
+  // Attempt SLIP capabilities probe with short timeout
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
@@ -58,16 +59,17 @@ export async function fetchDmirsTenementsForCouncil(
       throw new Error(`HTTP ${res.status}`);
     }
     // We confirm live availability of the SLIP WFS, then return seeded data
-    // for the demo. (Full WFS GetFeature parsing is a phase-1 production task.)
-    const text = await res.text();
-    const live = text.includes("WFS_Capabilities") || text.includes("FeatureType");
+    // for the demo. We do NOT actually parse features here — until that lands,
+    // the data is "seeded" regardless of capabilities-probe success.
+    // (Full WFS GetFeature parsing is implemented in lib/spatial.ts.)
+    await res.text();
     const seeded = getAllLiveTenements();
     cache = { ts: Date.now(), data: seeded };
     return {
       ok: true,
       count: seeded.length,
       sample: seeded.slice(0, 5),
-      source: live ? "live" : "cache",
+      source: "seeded",
     };
   } catch (e: unknown) {
     // Offline-safe fallback to seeded data so the demo always works
@@ -77,7 +79,8 @@ export async function fetchDmirsTenementsForCouncil(
       ok: true,
       count: seeded.length,
       sample: seeded.slice(0, 5),
-      source: "cache",
+      source: "seeded",
+      note: "SLIP capabilities probe failed; using seeded tenement set.",
     };
   }
 }

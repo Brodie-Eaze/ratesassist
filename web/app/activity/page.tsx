@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Sidebar } from "@/components/Sidebar";
+import { useFetch, LoadingState, ErrorState } from "@/lib/useFetch";
 import type { ActivityEvent } from "@/lib/types";
 import {
   Search,
@@ -28,25 +29,12 @@ const CATEGORY_META: Record<
 };
 
 export default function ActivityPage() {
-  const [data, setData] = useState<DataResponse | null>(null);
+  const fetchState = useFetch<DataResponse>("/api/activity");
   const [filter, setFilter] = useState<string>("all");
 
-  useEffect(() => {
-    fetch("/api/activity")
-      .then((r) => r.json())
-      .then(setData);
-  }, []);
-
-  if (!data) {
-    return (
-      <div className="flex h-screen">
-        <Sidebar />
-        <main className="flex-1 flex items-center justify-center text-ink-500">
-          Loading…
-        </main>
-      </div>
-    );
-  }
+  if (fetchState.status === "loading") return <LoadingState />;
+  if (fetchState.status === "error") return <ErrorState message={fetchState.error} />;
+  const data = fetchState.data;
 
   const filtered =
     filter === "all" ? data.activity : data.activity.filter((a) => a.category === filter);

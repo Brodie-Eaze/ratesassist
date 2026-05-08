@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Sidebar } from "@/components/Sidebar";
 import { formatAud } from "@/lib/utils";
+import { useFetch, LoadingState, ErrorState } from "@/lib/useFetch";
 import {
   Building,
   CheckCircle2,
@@ -71,23 +72,12 @@ const STATE_META: Record<
 };
 
 export default function TenantsPage() {
-  const [data, setData] = useState<DataResponse | null>(null);
+  const fetchState = useFetch<DataResponse>("/api/tenants");
   const [tab, setTab] = useState<"tenants" | "catalogue" | "benchmarks">("tenants");
 
-  useEffect(() => {
-    fetch("/api/tenants").then((r) => r.json()).then(setData);
-  }, []);
-
-  if (!data) {
-    return (
-      <div className="flex h-screen">
-        <Sidebar />
-        <main className="flex-1 flex items-center justify-center text-ink-500">
-          Loading…
-        </main>
-      </div>
-    );
-  }
+  if (fetchState.status === "loading") return <LoadingState />;
+  if (fetchState.status === "error") return <ErrorState message={fetchState.error} />;
+  const data = fetchState.data;
 
   const liveCount = data.tenants.filter((t) => t.rating.status === "live").length;
   const totalParcels = data.tenants.reduce((s, t) => s + t.metrics.parcelsMirrored, 0);

@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { Sidebar } from "@/components/Sidebar";
 import { formatAud } from "@/lib/utils";
+import { useFetch, LoadingState, ErrorState } from "@/lib/useFetch";
 import type { Council, MismatchCandidate, Property } from "@/lib/types";
 import {
   TrendingUp,
@@ -34,24 +34,10 @@ type DataResponse = {
 };
 
 export default function IntelPage() {
-  const [data, setData] = useState<DataResponse | null>(null);
-
-  useEffect(() => {
-    fetch("/api/data")
-      .then((r) => r.json())
-      .then(setData);
-  }, []);
-
-  if (!data) {
-    return (
-      <div className="flex h-screen">
-        <Sidebar />
-        <main className="flex-1 flex items-center justify-center text-ink-500">
-          Loading…
-        </main>
-      </div>
-    );
-  }
+  const fetchState = useFetch<DataResponse>("/api/data");
+  if (fetchState.status === "loading") return <LoadingState />;
+  if (fetchState.status === "error") return <ErrorState message={fetchState.error} />;
+  const data = fetchState.data;
 
   const overdue = data.properties.filter((p) => p.balance > 0);
   const totalOverdue = overdue.reduce((s, p) => s + p.balance, 0);

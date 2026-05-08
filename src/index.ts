@@ -1,3 +1,8 @@
+// Standalone MCP server entry point for RatesAssist.
+// Exposes the same tool surface as the Next.js web app via MCP/stdio for
+// external consumers (Claude Desktop, etc.). Tool definitions intentionally
+// duplicate web/lib/tools.ts — keep the two in sync when adding/changing tools.
+
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";

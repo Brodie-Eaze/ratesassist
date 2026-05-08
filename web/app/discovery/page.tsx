@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { LoadingState, ErrorState } from "@/lib/useFetch";
 import Link from "next/link";
 import { Sidebar } from "@/components/Sidebar";
 import { formatAud, shortDate } from "@/lib/utils";
@@ -83,33 +84,47 @@ const SEVERITY_BADGE = {
 
 export default function DiscoveryPage() {
   const [data, setData] = useState<DiscoveryResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
+    let ctrl: AbortController | null = null;
     function load() {
-      fetch("/api/discovery")
-        .then((r) => r.json())
+      ctrl?.abort();
+      ctrl = new AbortController();
+      const signal = ctrl.signal;
+      fetch("/api/discovery", { signal })
+        .then(async (r) => {
+          if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+          return (await r.json()) as DiscoveryResponse;
+        })
         .then((d) => {
-          if (!cancelled) setData(d);
+          if (!cancelled) {
+            setData(d);
+            setError(null);
+          }
+        })
+        .catch((e) => {
+          if (cancelled || signal.aborted) return;
+          const msg = e instanceof Error ? e.message : String(e);
+          // Only surface error if we have no data yet — otherwise keep showing
+          // last good snapshot during transient polling failures.
+          setError((prev) => (data ? prev : msg));
         });
     }
     load();
     const t = setInterval(load, 30_000);
     return () => {
       cancelled = true;
+      ctrl?.abort();
       clearInterval(t);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   if (!data) {
-    return (
-      <div className="flex h-screen">
-        <Sidebar />
-        <main className="flex-1 flex items-center justify-center text-ink-500">
-          Loading…
-        </main>
-      </div>
-    );
+    if (error) return <ErrorState message={error} />;
+    return <LoadingState />;
   }
 
   return (
@@ -289,8 +304,8 @@ export default function DiscoveryPage() {
             </div>
             <div className="mt-4 text-xs text-ink-500 leading-relaxed">
               Every officer decision and council outcome flows back as a label. The composite-scoring model retrains quarterly.
-              Within 12 months, this loop will surface candidates that mum&rsquo;s manual process can&rsquo;t reach simply because
-              the system has seen 100,000+ properties — she&rsquo;s seen 30,000.
+              Within 12 months, this loop will surface candidates that manual review can&rsquo;t reach because
+              the system has seen 100,000+ properties.
             </div>
           </div>
 
@@ -298,7 +313,7 @@ export default function DiscoveryPage() {
           <div className="card p-5 bg-warn-50/40 border-warn-200">
             <div className="font-medium text-ink-900 mb-2">Transparency</div>
             <div className="text-sm text-ink-700 leading-relaxed">
-              Current false-positive rate against historical mum-validated outcomes:{" "}
+              Current false-positive rate against historical officer-validated outcomes:{" "}
               <strong className="text-warn-700">
                 {(data.summary.falsePositiveRate * 100).toFixed(0)}%
               </strong>.

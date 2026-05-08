@@ -42,7 +42,7 @@ export async function GET(
 function renderHtmlPack(markdown: string, packId: string): string {
   // Minimal markdown → HTML for the printable evidence pack.
   // Produces a clean, printable page with brand styling.
-  // For production, swap in a markdown library; for the MVP this is sufficient.
+  // Regex renderer; sufficient for the controlled markdown produced by buildEvidencePack. Will be replaced by a sanitizer-backed library before any production deploy.
   const md = markdown
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")

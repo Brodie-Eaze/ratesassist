@@ -4,7 +4,10 @@ import { useEffect, useRef, useState } from "react";
 import { Send, Wrench, ChevronDown, ChevronRight, Sparkles } from "lucide-react";
 import { Markdown } from "./Markdown";
 import type { ChatMessage, ToolCall } from "@/lib/types";
+import type { ModelUsed } from "@/lib/llm";
 import { cn } from "@/lib/utils";
+
+type ChatMessageWithMeta = ChatMessage & { meta?: ModelUsed };
 
 type ChatProps = {
   initialPrompts?: string[];
@@ -13,7 +16,7 @@ type ChatProps = {
 };
 
 export function Chat({ initialPrompts = [], storageKey = "ra-officer-chat", citizenMode = false }: ChatProps) {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<ChatMessageWithMeta[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [live, setLive] = useState<boolean | null>(null);
@@ -67,12 +70,13 @@ export function Chat({ initialPrompts = [], storageKey = "ra-officer-chat", citi
         body: JSON.stringify({ history: messages, message: text }),
       });
       const data = await res.json();
-      const reply: ChatMessage = {
+      const reply: ChatMessageWithMeta = {
         id: `a_${Date.now()}`,
         role: "assistant",
         content: data.content || "(no response)",
         toolCalls: data.toolCalls,
         timestamp: new Date().toISOString(),
+        meta: data.modelUsed as ModelUsed | undefined,
       };
       setMessages([...history, reply]);
     } catch (e: unknown) {
@@ -182,7 +186,7 @@ export function Chat({ initialPrompts = [], storageKey = "ra-officer-chat", citi
   );
 }
 
-function Message({ message }: { message: ChatMessage }) {
+function Message({ message }: { message: ChatMessageWithMeta }) {
   if (message.role === "user") {
     return (
       <div className="flex justify-end">
@@ -192,9 +196,17 @@ function Message({ message }: { message: ChatMessage }) {
       </div>
     );
   }
+  const showFallbackBanner =
+    message.meta?.kind === "mock" && message.meta.reason === "live_failed";
   return (
     <div className="flex">
       <div className="max-w-[90%] bg-white border border-ink-200 rounded-lg rounded-bl-sm px-4 py-3">
+        {showFallbackBanner && message.meta?.kind === "mock" && (
+          <div className="mb-2 text-xs px-2 py-1.5 rounded border border-red-200 bg-red-50 text-red-700">
+            ⚠ Falling back to deterministic mode — live LLM call failed
+            {message.meta.cause ? ` (${message.meta.cause})` : ""}
+          </div>
+        )}
         {message.toolCalls && message.toolCalls.length > 0 && (
           <ToolCallsBadge toolCalls={message.toolCalls} />
         )}

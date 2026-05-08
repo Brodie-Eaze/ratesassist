@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { Sidebar } from "@/components/Sidebar";
 import { formatAud } from "@/lib/utils";
+import { useFetch, LoadingState, ErrorState } from "@/lib/useFetch";
 import type { MismatchCandidate, SignalCategory, SignalHit } from "@/lib/types";
 import {
   TrendingUp,
@@ -53,26 +54,13 @@ const CATEGORY_META: Record<
 };
 
 export default function RecoveryPage() {
-  const [data, setData] = useState<DataResponse | null>(null);
+  const fetchState = useFetch<DataResponse>("/api/data");
   const [filter, setFilter] = useState<"all" | "high" | "medium" | "low">("all");
   const [signalFilter, setSignalFilter] = useState<string | "all">("all");
 
-  useEffect(() => {
-    fetch("/api/data")
-      .then((r) => r.json())
-      .then(setData);
-  }, []);
-
-  if (!data) {
-    return (
-      <div className="flex h-screen">
-        <Sidebar />
-        <main className="flex-1 flex items-center justify-center text-ink-500">
-          Loading…
-        </main>
-      </div>
-    );
-  }
+  if (fetchState.status === "loading") return <LoadingState />;
+  if (fetchState.status === "error") return <ErrorState message={fetchState.error} />;
+  const data = fetchState.data;
 
   let filtered = data.mismatches;
   if (filter !== "all") filtered = filtered.filter((m) => m.severity === filter);

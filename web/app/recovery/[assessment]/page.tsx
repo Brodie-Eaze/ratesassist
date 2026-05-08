@@ -3,6 +3,7 @@ import { Sidebar } from "@/components/Sidebar";
 import { Markdown } from "@/components/Markdown";
 import { PortfolioMap } from "@/components/PortfolioMap";
 import { buildEvidencePack } from "@/lib/recovery";
+import { getProperty } from "@/lib/data";
 import { ArrowLeft, Download } from "lucide-react";
 import { formatAud } from "@/lib/utils";
 
@@ -13,6 +14,7 @@ export default async function EvidencePackPage({
 }) {
   const { assessment } = await params;
   const pack = buildEvidencePack(assessment);
+  const property = pack ? null : getProperty(assessment);
 
   return (
     <div className="flex h-screen">
@@ -61,13 +63,35 @@ export default async function EvidencePackPage({
           <div className="max-w-3xl mx-auto">
             {!pack ? (
               <div className="card p-8 text-center">
-                <div className="text-ink-700">
-                  No evidence pack available for{" "}
-                  <code className="text-accent-700">{assessment}</code>.
-                </div>
-                <div className="text-sm text-ink-500 mt-2">
-                  Either the property doesn't exist or no mining mismatch was detected.
-                </div>
+                {property ? (
+                  <>
+                    <div className="text-ink-700">
+                      Property{" "}
+                      <span className="font-medium">{property.address}</span>{" "}
+                      (<code className="text-accent-700">{assessment}</code>) has
+                      no detection signals firing.
+                    </div>
+                    <div className="text-sm text-ink-500 mt-2">
+                      Nothing to recover — the rating register, DMIRS, ABN/ASIC
+                      and aerial signals are all clean for this assessment.
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="text-ink-700">
+                      Assessment{" "}
+                      <code className="text-accent-700">{assessment}</code> not
+                      found in the rating register.
+                    </div>
+                    <div className="text-sm text-ink-500 mt-2">
+                      Check the assessment number, or browse{" "}
+                      <Link href="/properties" className="text-accent-700 hover:underline">
+                        all properties
+                      </Link>
+                      .
+                    </div>
+                  </>
+                )}
               </div>
             ) : (
               <>
@@ -82,13 +106,13 @@ export default async function EvidencePackPage({
                     <div>
                       <div className="label">3-year arrears (est.)</div>
                       <div className="text-xl font-semibold text-ink-900">
-                        {formatAud(pack.candidate.estArrears5y)}
+                        {formatAud(pack.candidate.estArrears3y)}
                       </div>
                     </div>
                     <div>
                       <div className="label">Total recovery (est.)</div>
                       <div className="text-xl font-semibold text-success-700">
-                        {formatAud(pack.candidate.estUplift + pack.candidate.estArrears5y)}
+                        {formatAud(pack.candidate.estUplift + pack.candidate.estArrears3y)}
                       </div>
                     </div>
                   </div>

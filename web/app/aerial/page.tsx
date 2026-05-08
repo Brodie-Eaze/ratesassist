@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Sidebar } from "@/components/Sidebar";
 import { PortfolioMap } from "@/components/PortfolioMap";
 import type { MismatchCandidate, Property, Tenement } from "@/lib/types";
 import { formatAud } from "@/lib/utils";
+import { useFetch, LoadingState, ErrorState } from "@/lib/useFetch";
 import { Eye, Layers } from "lucide-react";
 
 type DataResponse = {
@@ -14,33 +15,17 @@ type DataResponse = {
 };
 
 export default function AerialPage() {
-  const [data, setData] = useState<DataResponse | null>(null);
+  const fetchState = useFetch<DataResponse>("/api/data");
   const [selectedAssess, setSelectedAssess] = useState<string>("");
 
-  useEffect(() => {
-    fetch("/api/data")
-      .then((r) => r.json())
-      .then((d) => {
-        setData(d);
-        if (d.mismatches.length) {
-          setSelectedAssess(d.mismatches[0].assessmentNumber);
-        }
-      });
-  }, []);
+  if (fetchState.status === "loading") return <LoadingState />;
+  if (fetchState.status === "error") return <ErrorState message={fetchState.error} />;
+  const data = fetchState.data;
 
-  if (!data) {
-    return (
-      <div className="flex h-screen">
-        <Sidebar />
-        <main className="flex-1 flex items-center justify-center text-ink-500">
-          Loading…
-        </main>
-      </div>
-    );
-  }
-
+  const effectiveAssess =
+    selectedAssess || (data.mismatches[0]?.assessmentNumber ?? "");
   const candidate = data.mismatches.find(
-    (m) => m.assessmentNumber === selectedAssess,
+    (m) => m.assessmentNumber === effectiveAssess,
   );
   const property = candidate?.property;
   const tenements = candidate?.tenements ?? [];
@@ -73,7 +58,7 @@ export default function AerialPage() {
                 key={m.assessmentNumber}
                 onClick={() => setSelectedAssess(m.assessmentNumber)}
                 className={`w-full text-left px-4 py-3 border-b border-ink-100 hover:bg-ink-50 transition-colors ${
-                  selectedAssess === m.assessmentNumber ? "bg-accent-50" : ""
+                  effectiveAssess === m.assessmentNumber ? "bg-accent-50" : ""
                 }`}
               >
                 <div className="flex items-center justify-between">
@@ -222,7 +207,7 @@ export default function AerialPage() {
                     <div className="flex justify-between text-xs text-ink-500">
                       <span>3-year arrears</span>
                       <span className="tabular-nums">
-                        +{formatAud(candidate.estArrears5y)}
+                        +{formatAud(candidate.estArrears3y)}
                       </span>
                     </div>
                   </div>

@@ -2,12 +2,10 @@
 // over the data layer. Mirrors the MCP server tool-set so the same logic
 // applies whether the LLM calls via Anthropic tool-use or via MCP.
 
+import type Anthropic from "@anthropic-ai/sdk";
 import {
   COUNCILS,
-  PROPERTIES,
-  getCouncil,
   getOverdueProperties,
-  getOwner,
   getOwnersForProperty,
   getProperty,
   getTenementsForAssessment,
@@ -19,16 +17,57 @@ import { buildEvidencePack, findMismatches, recoveryStats } from "./recovery";
 import { fetchDmirsTenementsForCouncil } from "./dmirs";
 import { lookupAbn } from "./abn";
 
+export type JsonSchemaProperty = {
+  type: string;
+  description?: string;
+  enum?: readonly string[];
+};
+
 export type ToolDef = {
   name: string;
   description: string;
   input_schema: {
     type: "object";
-    properties: Record<string, unknown>;
+    properties: Record<string, JsonSchemaProperty>;
     required?: string[];
   };
 };
 
+// ---------- Typed registry ----------
+
+type ToolInputs = {
+  search_property: { query: string };
+  search_by_owner: { name: string; suburb?: string };
+  get_property_detail: { assessmentNumber: string };
+  get_transaction_history: { assessmentNumber: string };
+  list_overdue: { council?: string };
+  find_mining_mismatches: {
+    council?: string;
+    minSeverity?: "low" | "medium" | "high";
+  };
+  generate_evidence_pack: { assessmentNumber: string };
+  recovery_summary: { council?: string };
+  daily_briefing: { council?: string };
+  draft_payment_reminder: {
+    assessmentNumber: string;
+    tone?: "friendly" | "firm" | "final";
+  };
+  draft_chase_all_overdue: {
+    tone?: "friendly" | "firm" | "final";
+    council?: string;
+  };
+  verify_abn: { abn: string };
+  fetch_dmirs_tenements: { council: string };
+  list_councils: Record<string, never>;
+};
+type ToolName = keyof ToolInputs;
+
+type Handlers = {
+  [K in ToolName]: (input: ToolInputs[K]) => Promise<string>;
+};
+
+// Loose external handler type — used only by callers that have lost track of
+// which tool they're calling (the LLM JSON-body unwrap path).
 export type ToolHandler = (input: Record<string, unknown>) => Promise<string>;
 
 // ---------- Schemas ----------
@@ -100,7 +139,7 @@ export const TOOLS: ToolDef[] = [
       type: "object",
       properties: {
         council: { type: "string" },
-        minSeverity: { type: "string", enum: ["low", "medium", "high"] },
+        minSeverity: { type: "string", enum: ["low", "medium", "high"] as const },
       },
     },
   },
@@ -143,7 +182,7 @@ export const TOOLS: ToolDef[] = [
       type: "object",
       properties: {
         assessmentNumber: { type: "string" },
-        tone: { type: "string", enum: ["friendly", "firm", "final"] },
+        tone: { type: "string", enum: ["friendly", "firm", "final"] as const },
       },
       required: ["assessmentNumber"],
     },
@@ -155,7 +194,7 @@ export const TOOLS: ToolDef[] = [
     input_schema: {
       type: "object",
       properties: {
-        tone: { type: "string", enum: ["friendly", "firm", "final"] },
+        tone: { type: "string", enum: ["friendly", "firm", "final"] as const },
         council: { type: "string" },
       },
     },
@@ -187,13 +226,28 @@ export const TOOLS: ToolDef[] = [
   },
 ];
 
+export function toAnthropicTool(t: ToolDef): Anthropic.Tool {
+  return {
+    name: t.name,
+    description: t.description,
+    input_schema: {
+      type: "object",
+      properties: t.input_schema.properties as Record<string, unknown>,
+      required: t.input_schema.required,
+    },
+  } as Anthropic.Tool;
+}
+
+export function isKnownTool(name: string): name is ToolName {
+  return name in HANDLERS;
+}
+
 // ---------- Handlers ----------
 
-const HANDLERS: Record<string, ToolHandler> = {
+const HANDLERS: Handlers = {
   async search_property({ query }) {
-    const q = String(query ?? "");
-    const results = searchProperties(q);
-    if (!results.length) return `No properties matching "${q}".`;
+    const results = searchProperties(query);
+    if (!results.length) return `No properties matching "${query}".`;
     return [
       `Found ${results.length} match(es):`,
       ...results.map(
@@ -204,7 +258,7 @@ const HANDLERS: Record<string, ToolHandler> = {
   },
 
   async search_by_owner({ name, suburb }) {
-    const results = searchByOwner(String(name ?? ""), suburb as string | undefined);
+    const results = searchByOwner(name, suburb);
     if (!results.length) return `No properties found for owner matching "${name}".`;
     return [
       `Found ${results.length} property(ies):`,
@@ -216,7 +270,7 @@ const HANDLERS: Record<string, ToolHandler> = {
   },
 
   async get_property_detail({ assessmentNumber }) {
-    const p = getProperty(String(assessmentNumber ?? ""));
+    const p = getProperty(assessmentNumber);
     if (!p) return `No property ${assessmentNumber}.`;
     const owners = getOwnersForProperty(p);
     const tenements = getTenementsForAssessment(p.assessmentNumber);
@@ -247,7 +301,7 @@ const HANDLERS: Record<string, ToolHandler> = {
   },
 
   async get_transaction_history({ assessmentNumber }) {
-    const txs = getTransactions(String(assessmentNumber ?? ""));
+    const txs = getTransactions(assessmentNumber);
     if (!txs.length) return `No transactions on file for ${assessmentNumber}.`;
     return [
       `Transactions for ${assessmentNumber}:`,
@@ -274,10 +328,7 @@ const HANDLERS: Record<string, ToolHandler> = {
   },
 
   async find_mining_mismatches({ council, minSeverity }) {
-    const candidates = findMismatches({
-      council: council as string | undefined,
-      minSeverity: minSeverity as "low" | "medium" | "high" | undefined,
-    });
+    const candidates = findMismatches({ council, minSeverity });
     if (!candidates.length) return "No mining-classification mismatches detected.";
     const total = candidates.reduce((s, c) => s + c.estUplift, 0);
     return [
@@ -295,7 +346,7 @@ const HANDLERS: Record<string, ToolHandler> = {
           `   Current: ${c.property.landUse} → Proposed: Mining (${c.severity}, ${(c.confidence * 100).toFixed(0)}% conf.)`,
           `   Tenements: ${tenList}`,
           `   Est. annual uplift: **$${c.estUplift.toLocaleString()}** (current $${c.property.annualRates.toLocaleString()} → proposed $${c.estAnnualRatesNew.toLocaleString()})`,
-          `   Est. arrears (3y): $${c.estArrears5y.toLocaleString()}`,
+          `   Est. arrears (3y): $${c.estArrears3y.toLocaleString()}`,
         ].join("\n");
       }),
       ``,
@@ -304,14 +355,14 @@ const HANDLERS: Record<string, ToolHandler> = {
   },
 
   async generate_evidence_pack({ assessmentNumber }) {
-    const pack = buildEvidencePack(String(assessmentNumber ?? ""));
+    const pack = buildEvidencePack(assessmentNumber);
     if (!pack)
       return `No evidence pack generated for ${assessmentNumber}: either property not found or no mismatch detected.`;
     return pack.markdown;
   },
 
   async recovery_summary({ council }) {
-    const stats = recoveryStats(council as string | undefined);
+    const stats = recoveryStats(council);
     return [
       `**Recovery summary${council ? ` (${council})` : " (all councils)"}**`,
       ``,
@@ -329,7 +380,7 @@ const HANDLERS: Record<string, ToolHandler> = {
     );
     const totalOverdue = overdue.reduce((s, p) => s + p.balance, 0);
     const arrangements = overdue.filter((p) => p.paymentArrangement).length;
-    const stats = recoveryStats(council as string | undefined);
+    const stats = recoveryStats(council);
 
     return [
       `**Rates briefing — ${new Date().toISOString().slice(0, 10)}${council ? ` · ${council}` : ""}**`,
@@ -352,7 +403,7 @@ const HANDLERS: Record<string, ToolHandler> = {
   },
 
   async draft_payment_reminder({ assessmentNumber, tone = "friendly" }) {
-    const p = getProperty(String(assessmentNumber ?? ""));
+    const p = getProperty(assessmentNumber);
     if (!p) return `No property ${assessmentNumber}.`;
     if (p.balance <= 0) return `${assessmentNumber} has no outstanding balance.`;
     const owner = getOwnersForProperty(p)[0];
@@ -389,7 +440,7 @@ const HANDLERS: Record<string, ToolHandler> = {
   },
 
   async verify_abn({ abn }) {
-    const result = await lookupAbn(String(abn ?? ""));
+    const result = await lookupAbn(abn);
     if (!result.ok) return `ABN lookup failed: ${result.error}`;
     return [
       `**ABN ${result.abn}**`,
@@ -405,7 +456,7 @@ const HANDLERS: Record<string, ToolHandler> = {
   },
 
   async fetch_dmirs_tenements({ council }) {
-    const result = await fetchDmirsTenementsForCouncil(String(council ?? ""));
+    const result = await fetchDmirsTenementsForCouncil(council);
     if (!result.ok) return `DMIRS fetch failed: ${result.error}`;
     return [
       `Fetched **${result.count}** tenement(s) intersecting ${council} (source: ${result.source}).`,
@@ -436,8 +487,7 @@ export async function runTool(
   input: Record<string, unknown>,
 ): Promise<{ output: string; durationMs: number; error?: string }> {
   const start = Date.now();
-  const handler = HANDLERS[name];
-  if (!handler) {
+  if (!isKnownTool(name)) {
     return {
       output: `Unknown tool: ${name}`,
       durationMs: Date.now() - start,
@@ -445,7 +495,11 @@ export async function runTool(
     };
   }
   try {
-    const output = await handler(input);
+    // Boundary cast: JSON arrived from the LLM/HTTP body. The typed handler
+    // expects a known shape; runtime guards inside each handler are still
+    // appropriate but we no longer pre-coerce every field defensively.
+    const handler = HANDLERS[name] as (i: Record<string, unknown>) => Promise<string>;
+    const output = await handler(input ?? {});
     return { output, durationMs: Date.now() - start };
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : String(e);

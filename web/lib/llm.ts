@@ -3,12 +3,13 @@
 // configured.
 
 import Anthropic from "@anthropic-ai/sdk";
-import { runTool, TOOLS } from "./tools";
+import { runTool, TOOLS, toAnthropicTool } from "./tools";
 import type { ChatMessage, ToolCall } from "./types";
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY ?? "";
 const MODEL = "claude-sonnet-4-6";
 const MAX_TOOL_ITERATIONS = 8;
+const LIVE_TIMEOUT_MS = 45_000;
 
 const SYSTEM_PROMPT = `You are RatesAssist — an AI co-pilot for Australian council rates officers.
 
@@ -27,11 +28,15 @@ Operating principles:
 - For the recovery audit, the "headline signal" is the highest-weight signal that fired — but the composite always reflects the full stack.
 - Always favour deterministic tools over your own reasoning for any factual claim.`;
 
+export type ModelUsed =
+  | { kind: "live"; model: string }
+  | { kind: "mock"; reason: "no_key" | "live_failed"; cause?: string };
+
 export type LlmResult = {
   content: string;
   toolCalls: ToolCall[];
   iterations: number;
-  modelUsed: "live" | "mock";
+  modelUsed: ModelUsed;
 };
 
 export function isLive(): boolean {
@@ -47,8 +52,13 @@ export async function runChat(
       return await runChatLive(history, userMessage);
     } catch (e: unknown) {
       // Graceful degradation: if live LLM fails, fall through to mock
-      console.error("Live LLM failed, falling back to mock:", e);
-      return await runChatMock(history, userMessage);
+      const message = e instanceof Error ? e.message : String(e);
+      console.error("[llm] live failed", { message });
+      const mock = await runChatMock(history, userMessage);
+      return {
+        ...mock,
+        modelUsed: { kind: "mock", reason: "live_failed", cause: message },
+      };
     }
   }
   return await runChatMock(history, userMessage);
@@ -56,12 +66,33 @@ export async function runChat(
 
 // ---------- LIVE: Anthropic Claude tool-use loop ----------
 
+function isRetryableStatus(e: unknown): boolean {
+  if (typeof e !== "object" || e === null) return false;
+  const status = (e as { status?: unknown }).status;
+  return status === 429 || status === 503 || status === 529;
+}
+
 async function runChatLive(
+  history: ChatMessage[],
+  userMessage: string,
+): Promise<LlmResult> {
+  const live = runChatLiveInner(history, userMessage);
+  const timeout = new Promise<never>((_, reject) => {
+    setTimeout(
+      () => reject(new Error("Live LLM timeout after 45s")),
+      LIVE_TIMEOUT_MS,
+    );
+  });
+  return Promise.race([live, timeout]);
+}
+
+async function runChatLiveInner(
   history: ChatMessage[],
   userMessage: string,
 ): Promise<LlmResult> {
   const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
   const toolCalls: ToolCall[] = [];
+  const anthropicTools: Anthropic.Tool[] = TOOLS.map(toAnthropicTool);
 
   const messages: Anthropic.MessageParam[] = [
     ...history
@@ -75,16 +106,34 @@ async function runChatLive(
 
   let iterations = 0;
   let finalText = "";
+  let endedCleanly = false;
 
   while (iterations < MAX_TOOL_ITERATIONS) {
     iterations++;
-    const response = await client.messages.create({
-      model: MODEL,
-      max_tokens: 2048,
-      system: SYSTEM_PROMPT,
-      tools: TOOLS as unknown as Anthropic.Tool[],
-      messages,
-    });
+
+    let response: Anthropic.Message;
+    try {
+      response = await client.messages.create({
+        model: MODEL,
+        max_tokens: 2048,
+        system: SYSTEM_PROMPT,
+        tools: anthropicTools,
+        messages,
+      });
+    } catch (e: unknown) {
+      if (isRetryableStatus(e)) {
+        await new Promise((r) => setTimeout(r, 1500));
+        response = await client.messages.create({
+          model: MODEL,
+          max_tokens: 2048,
+          system: SYSTEM_PROMPT,
+          tools: anthropicTools,
+          messages,
+        });
+      } else {
+        throw e;
+      }
+    }
 
     const toolUseBlocks = response.content.filter(
       (b): b is Anthropic.ToolUseBlock => b.type === "tool_use",
@@ -96,6 +145,7 @@ async function runChatLive(
     finalText = textBlocks.map((b) => b.text).join("\n").trim();
 
     if (response.stop_reason === "end_turn" || toolUseBlocks.length === 0) {
+      endedCleanly = true;
       break;
     }
 
@@ -123,7 +173,18 @@ async function runChatLive(
     messages.push({ role: "user", content: toolResults });
   }
 
-  return { content: finalText, toolCalls, iterations, modelUsed: "live" };
+  if (!finalText && !endedCleanly && iterations === MAX_TOOL_ITERATIONS) {
+    throw new Error(
+      `Tool-use loop hit max iterations (${MAX_TOOL_ITERATIONS}) without end_turn`,
+    );
+  }
+
+  return {
+    content: finalText,
+    toolCalls,
+    iterations,
+    modelUsed: { kind: "live", model: MODEL },
+  };
 }
 
 // ---------- MOCK: deterministic intent-routed agent (no API key needed) ----------
@@ -336,7 +397,7 @@ async function runChatMock(
     content: response,
     toolCalls,
     iterations: 1,
-    modelUsed: "mock",
+    modelUsed: { kind: "mock", reason: "no_key" },
   };
 }
 

@@ -42,7 +42,8 @@ export type Property = {
   parcel?: [number, number][];
 };
 
-export type AbnStatus = "Active" | "Cancelled" | "Suspended" | null;
+export type AbnStatus = "Active" | "Cancelled" | "Suspended";
+// (Owner.abnStatus stays optional — undefined means unchecked)
 
 export type Owner = {
   ownerId: string;
@@ -105,14 +106,11 @@ export type SignalDef = {
   exclusiveGroup?: string;
 };
 
-export type SignalHit = {
-  id: string;
-  name: string;
-  short: string;
-  category: SignalCategory;
-  weight: number;
+export type SignalHit = Pick<
+  SignalDef,
+  "id" | "name" | "short" | "category" | "weight" | "source"
+> & {
   evidence: string;
-  source: string;
 };
 
 export type MismatchCandidate = {
@@ -124,7 +122,7 @@ export type MismatchCandidate = {
   reason: string;
   estAnnualRatesNew: number;
   estUplift: number;
-  estArrears5y: number;
+  estArrears3y: number;
   confidence: number;
   /** New: per-candidate signal trail and weighted composite score (0..1) */
   signals: SignalHit[];

@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Sidebar } from "@/components/Sidebar";
 import { PortfolioMap } from "@/components/PortfolioMap";
 import type { Council, Owner, Property, Tenement } from "@/lib/types";
 import { formatAud } from "@/lib/utils";
+import { useFetch, LoadingState, ErrorState } from "@/lib/useFetch";
 import { Search, MapPin, Building2 } from "lucide-react";
 
 type DataResponse = {
@@ -15,27 +16,14 @@ type DataResponse = {
 };
 
 export default function PropertiesPage() {
-  const [data, setData] = useState<DataResponse | null>(null);
+  const fetchState = useFetch<DataResponse>("/api/data");
   const [query, setQuery] = useState("");
   const [council, setCouncil] = useState<string>("");
   const [selected, setSelected] = useState<Property | null>(null);
 
-  useEffect(() => {
-    fetch("/api/data")
-      .then((r) => r.json())
-      .then(setData);
-  }, []);
-
-  if (!data) {
-    return (
-      <div className="flex h-screen">
-        <Sidebar />
-        <main className="flex-1 flex items-center justify-center text-ink-500">
-          Loading…
-        </main>
-      </div>
-    );
-  }
+  if (fetchState.status === "loading") return <LoadingState />;
+  if (fetchState.status === "error") return <ErrorState message={fetchState.error} />;
+  const data = fetchState.data;
 
   const filtered = data.properties.filter((p) => {
     const q = query.toLowerCase();
