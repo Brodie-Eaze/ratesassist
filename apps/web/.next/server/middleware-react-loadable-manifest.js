@@ -1,0 +1,1 @@
+self.__REACT_LOADABLE_MANIFEST="{\"components/PortfolioMap.tsx -> ./MapInner\":{\"id\":\"components/PortfolioMap.tsx -> ./MapInner\",\"files\":[\"static/chunks/_app-pages-browser_components_MapInner_tsx.js\"]}}"

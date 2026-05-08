@@ -1,22 +1,21 @@
 {
-  "name": "rates-assist-mcp",
-  "version": "0.1.0",
-  "description": "MCP server for AU council rates officers — mocked TechOne workflows for demo.",
-  "type": "module",
-  "bin": {
-    "rates-assist-mcp": "./build/index.js"
-  },
+  "name": "ratesassist",
+  "version": "0.2.0",
+  "private": true,
+  "description": "RatesAssist — vertical AI for Australian council rates departments. Production monorepo.",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
-    "build": "tsc && chmod 755 build/index.js",
-    "start": "node build/index.js"
-  },
-  "files": ["build"],
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.0",
-    "zod": "^3.23.8"
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "dev:web": "npm run dev --workspace=apps/web",
+    "dev:adapter-demo": "npm run dev --workspace=packages/adapter-demo"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
-    "typescript": "^5.5.0"
+    "typescript": "^5.6.3",
+    "@types/node": "^22.9.0"
   }
 }

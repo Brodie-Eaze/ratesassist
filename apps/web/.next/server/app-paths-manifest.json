@@ -1,0 +1,18 @@
+{
+  "/page": "app/page.js",
+  "/properties/page": "app/properties/page.js",
+  "/recovery/page": "app/recovery/page.js",
+  "/map/page": "app/map/page.js",
+  "/discovery/page": "app/discovery/page.js",
+  "/signals/page": "app/signals/page.js",
+  "/aerial/page": "app/aerial/page.js",
+  "/intel/page": "app/intel/page.js",
+  "/reconciliation/page": "app/reconciliation/page.js",
+  "/certificates/page": "app/certificates/page.js",
+  "/activity/page": "app/activity/page.js",
+  "/tenants/page": "app/tenants/page.js",
+  "/connections/page": "app/connections/page.js",
+  "/citizen/page": "app/citizen/page.js",
+  "/api/chat/route": "app/api/chat/route.js",
+  "/api/data/route": "app/api/data/route.js"
+}

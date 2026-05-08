@@ -1,0 +1,22 @@
+{
+  "name": "@ratesassist/spatial",
+  "version": "0.2.0",
+  "private": true,
+  "description": "RatesAssist spatial layer — SLIP/DMIRS/Landgate ArcGIS REST integration, bbox validation, buffer geometry. Platform-agnostic; depends only on @ratesassist/contract.",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./slip": "./src/slip.ts",
+    "./dmirs": "./src/dmirs.ts",
+    "./buffer": "./src/buffer.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ratesassist/contract": "*",
+    "zod": "^3.23.8"
+  }
+}

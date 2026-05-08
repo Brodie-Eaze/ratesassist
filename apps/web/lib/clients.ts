@@ -1,0 +1,143 @@
+/**
+ * Workspace-package client wiring for `apps/web`.
+ *
+ * The web app composes types and engines from `@ratesassist/contract`,
+ * `@ratesassist/recovery-engine`, and `@ratesassist/identity`. Each of those
+ * packages takes its configuration through explicit constructors — they do
+ * not read `process.env` themselves. This module is the single place where
+ * the web app instantiates those clients and caches them at module scope.
+ *
+ * Because Next.js may import this module from server components, route
+ * handlers, and tool handlers within the same process, the singletons here
+ * are intentionally process-local and lazily initialised.
+ */
+
+import { createAbnClient, type AbnClient } from "@ratesassist/identity";
+import {
+  recoveryStats as engineRecoveryStats,
+  findMismatches,
+  type EvaluationContext,
+} from "@ratesassist/recovery-engine";
+import type { MismatchCandidate, Tenement } from "@ratesassist/contract";
+
+import { OWNERS, PROPERTIES, TENEMENTS } from "./data";
+
+/**
+ * Default ABN-Lookup base. Library code does not read environment, so we read
+ * `ABN_LOOKUP_BASE` here and pass it through to the factory.
+ */
+const ABN_LOOKUP_BASE: string =
+  process.env["ABN_LOOKUP_BASE"] ?? "https://abr.business.gov.au/json";
+
+/**
+ * Singleton ABN client. The legacy app silently fell back to mock data on
+ * upstream failure even when a GUID was configured; the new client
+ * distinguishes "no GUID" (mock allowed) from "live call failed" (returns an
+ * error). Web-app callers should treat `ok: false` as a real failure mode.
+ *
+ * Strict mode is left off in the web app so that local development without an
+ * ABN_LOOKUP_GUID still surfaces honest mock results. Pilot deployments will
+ * flip `strict: true` via configuration change at deploy time.
+ */
+export const abnClient: AbnClient = createAbnClient({
+  baseUrl: ABN_LOOKUP_BASE,
+  guid: process.env["ABN_LOOKUP_GUID"] ?? "",
+  strict: false,
+});
+
+// ===== Evaluation context for the recovery engine =====
+
+let cachedContext: EvaluationContext | null = null;
+
+/**
+ * Build (and memoise) the {@link EvaluationContext} that the recovery engine
+ * sweeps over.
+ *
+ * The context is constructed once per process from the in-memory data layer:
+ * an `ownersById` map and a `tenementsByAssessment` index keyed by the
+ * `intersectsAssessmentNumbers` field. The recovery engine then evaluates
+ * signals in O(1) per property given the indexes.
+ *
+ * Phase 1B will replace this in-process context with one populated through
+ * the MCP client; the engine's signature stays the same.
+ */
+export function getEvaluationContext(): EvaluationContext {
+  if (cachedContext !== null) return cachedContext;
+
+  const ownersById = new Map(OWNERS.map((o) => [o.ownerId, o]));
+
+  const tenementsByAssessment = new Map<string, Tenement[]>();
+  for (const tenement of TENEMENTS) {
+    for (const assessment of tenement.intersectsAssessmentNumbers) {
+      const list = tenementsByAssessment.get(assessment);
+      if (list === undefined) {
+        tenementsByAssessment.set(assessment, [tenement]);
+      } else {
+        list.push(tenement);
+      }
+    }
+  }
+
+  cachedContext = {
+    properties: PROPERTIES,
+    ownersById,
+    tenementsByAssessment,
+  };
+  return cachedContext;
+}
+
+// ===== Recovery stats — legacy-shape helper =====
+//
+// The new `recoveryStats` from `@ratesassist/recovery-engine` returns a
+// readonly aggregate keyed by `bySeverity` and `*Aud`-suffixed monetary
+// fields. The web app's UI and `recovery_summary` tool currently consume the
+// legacy shape (`high`, `medium`, `low`, `totalUplift`, etc.). Rather than
+// touching every consumer in this refactor, we expose a thin adapter that
+// produces the legacy shape from the new aggregate.
+//
+// The legacy shape will be retired alongside the in-process data layer in
+// Phase 1B; until then, every consumer is funnelled through this helper so
+// there is exactly one place to delete.
+
+/**
+ * Web-app-shaped recovery summary. Composed from the engine's
+ * {@link engineRecoveryStats} output plus a couple of derived counts the UI
+ * needs (per-severity totals at the top level, total recovery as a
+ * convenience).
+ */
+export type WebRecoveryStats = {
+  readonly total: number;
+  readonly high: number;
+  readonly medium: number;
+  readonly low: number;
+  readonly totalUplift: number;
+  readonly highUplift: number;
+  readonly totalArrears: number;
+  readonly totalRecovery: number;
+  readonly signalCounts: Readonly<Record<string, number>>;
+};
+
+/**
+ * Compute web-app-shaped recovery stats for the given (optional) council
+ * filter. Calls the engine internally so callers do not need to wire up the
+ * evaluation context themselves.
+ */
+export function recoveryStatsForWeb(councilCode?: string): WebRecoveryStats {
+  const ctx = getEvaluationContext();
+  const candidates: readonly MismatchCandidate[] =
+    councilCode !== undefined
+      ? findMismatches(ctx, { council: councilCode })
+      : findMismatches(ctx);
+  const s = engineRecoveryStats(candidates);
+  return {
+    total: s.total,
+    high: s.bySeverity.high,
+    medium: s.bySeverity.medium,
+    low: s.bySeverity.low,
+    totalUplift: s.totalUpliftAud,
+    highUplift: s.highSeverityUpliftAud,
+    totalArrears: s.totalArrears3yAud,
+    totalRecovery: s.totalRecoveryAud,
+    signalCounts: s.signalCounts,
+  };
+}

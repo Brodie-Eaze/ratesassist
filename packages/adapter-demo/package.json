@@ -1,0 +1,29 @@
+{
+  "name": "@ratesassist/adapter-demo",
+  "version": "0.2.0",
+  "private": true,
+  "description": "RatesAssist demo adapter — a reference MCP server implementing the @ratesassist/contract against synthetic council data. Used for local development, integration testing, and as a template for real platform adapters (TechOne, Civica, etc.).",
+  "type": "module",
+  "bin": {
+    "ratesassist-adapter-demo": "./dist/server.js"
+  },
+  "main": "./dist/server.js",
+  "scripts": {
+    "build": "tsc && esbuild src/server.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/server.js --external:@modelcontextprotocol/sdk --external:zod --external:zod-to-json-schema && node -e \"require('fs').chmodSync('dist/server.js', 0o755)\"",
+    "dev": "tsc --watch",
+    "start": "node dist/server.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@ratesassist/contract": "*",
+    "@ratesassist/identity": "*",
+    "@ratesassist/recovery-engine": "*",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "@types/node": "^22.9.0",
+    "esbuild": "^0.24.0"
+  }
+}

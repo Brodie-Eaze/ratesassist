@@ -1,0 +1,20 @@
+{
+  "name": "@ratesassist/identity",
+  "version": "0.2.0",
+  "private": true,
+  "description": "RatesAssist identity layer — ATO ABN Lookup integration with strict-live mode, bounded retry, and PII-safe logging. Platform-agnostic; depends only on @ratesassist/contract.",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./abn": "./src/abn.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ratesassist/contract": "*",
+    "zod": "^3.23.8"
+  }
+}
