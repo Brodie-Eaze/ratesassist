@@ -1,13 +1,8 @@
 /**
- * Composite scoring engine.
- *
- * Pure functions over the contract's domain types. No I/O, no global state.
- * Easily unit-testable. Adapters call `evaluateSignals(property, ctx)` to
- * get the firing signals; the host composes those into a candidate.
- *
- * The exclusive-group invariant is enforced at the scoring layer (not just
- * in `evaluateSignals`) so that any future signal added wrong cannot
- * silently double-count.
+ * Composite scoring engine. Pure functions over the contract's domain types.
+ * Adapters call `evaluateSignals(property, ctx)` to get firing signals; the
+ * host composes those into a candidate. Exclusive-group invariants are
+ * enforced both in `evaluateSignals` and defensively in `computeComposite`.
  */
 
 import type {
@@ -26,12 +21,8 @@ import {
   getSignal,
 } from "./signals.js";
 
-/**
- * Construct a SignalHit from a definition + evidence string. Use this
- * helper rather than spreading the SignalDef so we don't accidentally
- * carry over fields like `description` or `exclusiveGroup` which the
- * contract forbids on a hit.
- */
+// Construct a SignalHit explicitly rather than spreading SignalDef — the
+// contract forbids `description` and `exclusiveGroup` on hits.
 function hit(sig: SignalDef, evidence: string): SignalHit {
   return {
     id: sig.id,
@@ -44,11 +35,6 @@ function hit(sig: SignalDef, evidence: string): SignalHit {
   };
 }
 
-/**
- * Context passed into per-property signal evaluation. The host pre-computes
- * indexes once per sweep so signal evaluation is O(1) per property,
- * O(n) per portfolio.
- */
 export type EvaluationContext = {
   /** All properties in the active tenant — used for portfolio + outlier signals. */
   readonly properties: readonly Property[];
@@ -112,12 +98,9 @@ function suburbRuralValuationPercentile(
 }
 
 /**
- * Evaluate every signal against a property. Returns the hits in declaration
- * order. The caller composes them via `computeComposite`.
- *
- * Note: tenement-class signals (`reg.tenement.*`) share an exclusive group
- * — the if/else if branching here ensures only one fires per property,
- * but the scoring layer also enforces this defensively.
+ * Evaluate every signal against a property. Tenement-class signals
+ * (`reg.tenement.*`) share an exclusive group — the if/else branching below
+ * ensures only one fires; `computeComposite` enforces this defensively too.
  */
 export function evaluateSignals(
   p: Property,

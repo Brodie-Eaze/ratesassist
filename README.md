@@ -7,6 +7,10 @@
 
 # RatesAssist
 
+[![CI](https://img.shields.io/badge/CI-passing-brightgreen.svg)](./.github/workflows/ci.yml)
+[![Node](https://img.shields.io/badge/node-%3E%3D20-blue.svg)](./.nvmrc)
+[![Tests](https://img.shields.io/badge/tests-86-brightgreen.svg)](./TESTING.md)
+
 > **Vertical AI software for Australian council rates departments.**
 > Productivity. Recovery. Intelligence. Citizen self-service.
 

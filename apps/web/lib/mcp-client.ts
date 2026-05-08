@@ -1,18 +1,7 @@
 /**
- * MCP client singleton for apps/web.
- *
- * Spawns the @ratesassist/adapter-demo bin (./dist/server.js) as a child
- * process over the stdio transport. All tool calls in apps/web flow through
- * here — there is no in-process duplicate of the tool implementations.
- *
- * Lifecycle:
- *   - First call to {@link getMcpClient} lazily spawns + handshakes.
- *   - Concurrent first-callers all await the same init promise (race-safe).
- *   - If the child process dies (EPIPE / exit / transport closed), the next
- *     call respawns. Up to 3 respawn attempts in any rolling 30s window;
- *     beyond that we fail fast.
- *   - Per-call timeout is 5s by default (configurable via
- *     `RA_MCP_TOOL_TIMEOUT_MS`).
+ * MCP stdio client singleton for apps/web. Spawns @ratesassist/adapter-demo
+ * lazily on first call; respawns up to 3 times in any rolling 30s window if
+ * the child dies. Per-call timeout defaults to 5s (RA_MCP_TOOL_TIMEOUT_MS).
  */
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -35,24 +24,19 @@ function monorepoRoot(): string {
 
 function resolveAdapterPath(): string {
   const root = monorepoRoot();
-  const defaultPath = path.resolve(
-    root,
-    "packages/adapter-demo/dist/server.js",
-  );
   const override = process.env["RA_MCP_ADAPTER_PATH"];
-  if (override === undefined || override.length === 0) return defaultPath;
+  if (!override) {
+    return path.resolve(root, "packages/adapter-demo/dist/server.js");
+  }
 
-  // SEC: validate override before passing to spawn. The override is intended
-  // for monorepo-relative deploys (e.g. a built bundle moved during release).
-  // Reject anything that isn't an absolute path resolving inside the monorepo
-  // and ending in /dist/server.js — that combination forecloses arbitrary-
-  // binary execution via env injection.
+  // SEC: env override must resolve inside the monorepo and end in
+  // /dist/server.js to foreclose arbitrary-binary execution via env injection.
   let resolved: string;
   try {
     resolved = fs.realpathSync(path.resolve(override));
   } catch {
     throw new Error(
-      `RA_MCP_ADAPTER_PATH refused: path does not exist or is not a regular file (${override})`,
+      `RA_MCP_ADAPTER_PATH refused: path does not exist (${override})`,
     );
   }
   if (!resolved.startsWith(root + path.sep) && resolved !== root) {
@@ -87,7 +71,6 @@ const respawnHistory: number[] = [];
 
 function recordRespawn(): { ok: true } | { ok: false; reason: string } {
   const now = Date.now();
-  // Drop entries outside the window.
   while (respawnHistory.length > 0 && respawnHistory[0]! < now - RESPAWN_WINDOW_MS) {
     respawnHistory.shift();
   }
@@ -119,29 +102,23 @@ async function spawnLive(): Promise<Live> {
 
   const handle: Live = { client, transport, dead: false };
 
-  // Mark dead on transport close so the next call triggers respawn.
-  transport.onclose = (): void => {
+  const markDead = (err?: Error): void => {
     handle.dead = true;
+    if (err) console.error("[mcp-client] transport error", err.message);
     if (live === handle) live = null;
   };
-  transport.onerror = (err: Error): void => {
-    handle.dead = true;
-    console.error("[mcp-client] transport error", err.message);
-    if (live === handle) live = null;
-  };
+  transport.onclose = (): void => markDead();
+  transport.onerror = (err: Error): void => markDead(err);
 
   return handle;
 }
 
 async function getLive(): Promise<Live> {
-  if (live !== null && !live.dead) return live;
-
-  if (initPromise !== null) return initPromise;
+  if (live && !live.dead) return live;
+  if (initPromise) return initPromise;
 
   const limit = recordRespawn();
-  if (!limit.ok) {
-    throw new Error(limit.reason);
-  }
+  if (!limit.ok) throw new Error(limit.reason);
 
   // Exponential backoff between respawns prevents a child that crashes during
   // handshake from burning the 3-attempt budget in milliseconds.
@@ -153,12 +130,9 @@ async function getLive(): Promise<Live> {
 
   initPromise = (async (): Promise<Live> => {
     try {
-      if (backoff > 0) {
-        await new Promise((r) => setTimeout(r, backoff));
-      }
-      const next = await spawnLive();
-      live = next;
-      return next;
+      if (backoff > 0) await new Promise((r) => setTimeout(r, backoff));
+      live = await spawnLive();
+      return live;
     } finally {
       initPromise = null;
     }
@@ -169,33 +143,26 @@ async function getLive(): Promise<Live> {
 
 /** Returns the connected MCP client. Spawns on first call; respawns if dead. */
 export async function getMcpClient(): Promise<Client> {
-  const handle = await getLive();
-  return handle.client;
+  return (await getLive()).client;
 }
 
-/** Tool catalogue from the adapter, fetched once and cached. */
-let cachedCatalogue: ReadonlyArray<{
+type McpToolEntry = {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
-}> | null = null;
+};
 
-export async function listMcpTools(): Promise<
-  ReadonlyArray<{
-    name: string;
-    description: string;
-    inputSchema: Record<string, unknown>;
-  }>
-> {
-  if (cachedCatalogue !== null) return cachedCatalogue;
+let cachedCatalogue: ReadonlyArray<McpToolEntry> | null = null;
+
+export async function listMcpTools(): Promise<ReadonlyArray<McpToolEntry>> {
+  if (cachedCatalogue) return cachedCatalogue;
   const client = await getMcpClient();
   const result = await client.listTools();
   cachedCatalogue = result.tools.map((t) => ({
     name: t.name,
     description: t.description ?? "",
-    // SAFETY: MCP advertises inputSchema as a JSON-Schema-shaped object;
-    // Anthropic tool input_schema accepts the same structure verbatim.
-    inputSchema: (t.inputSchema as Record<string, unknown>) ?? { type: "object", properties: {} },
+    inputSchema:
+      (t.inputSchema as Record<string, unknown>) ?? { type: "object", properties: {} },
   }));
   return cachedCatalogue;
 }
@@ -238,7 +205,7 @@ export async function runMcpTool(
 
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-    if (opts.signal !== undefined) {
+    if (opts.signal) {
       if (opts.signal.aborted) ctrl.abort();
       else opts.signal.addEventListener("abort", () => ctrl.abort(), { once: true });
     }
@@ -261,13 +228,10 @@ export async function runMcpTool(
   } catch (e: unknown) {
     const durationMs = Date.now() - start;
     const message = e instanceof Error ? e.message : String(e);
-    const isTimeout = /abort|timeout|timed out/i.test(message);
-    const code: Extract<ToolResult, { ok: false }>["code"] = isTimeout
+    const code: Extract<ToolResult, { ok: false }>["code"] = /abort|timeout|timed out/i.test(message)
       ? "timeout"
       : "upstream_error";
     log(durationMs, false, code);
-    // SAFETY: discriminated-union construction — matches the failure variant
-    // shape declared in @ratesassist/contract's `toolResult` schema.
     const result: ToolResult = {
       ok: false,
       error: message,
@@ -279,44 +243,40 @@ export async function runMcpTool(
   }
 }
 
-/**
- * Parse an MCP `tools/call` response into a contract `ToolResult`.
- * The adapter encodes structured data in `_meta.data` on success and
- * a JSON-encoded error payload as the second text block on failure.
- */
+type TextBlock = { type: "text"; text: string };
+
+function isTextBlock(b: unknown): b is TextBlock {
+  return (
+    typeof b === "object" &&
+    b !== null &&
+    (b as { type?: unknown }).type === "text" &&
+    typeof (b as { text?: unknown }).text === "string"
+  );
+}
+
+// Adapter encodes structured data in `_meta.data` on success; on failure, the
+// second text block carries a JSON-encoded error payload.
 function parseMcpToolResult(
   raw: Awaited<ReturnType<Client["callTool"]>>,
   correlationId: string,
 ): ToolResult {
-  // SAFETY: MCP SDK types `content` as unknown[]; we narrow at runtime.
   const content = (raw as { content?: unknown }).content;
   const isError = Boolean((raw as { isError?: unknown }).isError);
   const meta = (raw as { _meta?: Record<string, unknown> })._meta ?? {};
-
-  const blocks = Array.isArray(content) ? content : [];
-  const textBlocks = blocks.filter(
-    (b): b is { type: "text"; text: string } =>
-      typeof b === "object" &&
-      b !== null &&
-      (b as { type?: unknown }).type === "text" &&
-      typeof (b as { text?: unknown }).text === "string",
-  );
+  const textBlocks = (Array.isArray(content) ? content : []).filter(isTextBlock);
 
   if (!isError) {
-    const output = textBlocks[0]?.text ?? "";
-    const result: ToolResult = {
+    return {
       ok: true,
-      output,
+      output: textBlocks[0]?.text ?? "",
       mutated: Boolean(meta["mutated"]),
       ...(meta["data"] !== undefined ? { data: meta["data"] } : {}),
-      ...(typeof meta["commitToken"] === "string" ? { commitToken: meta["commitToken"] as string } : {}),
+      ...(typeof meta["commitToken"] === "string" ? { commitToken: meta["commitToken"] } : {}),
     };
-    return result;
   }
 
-  // Error path: try to parse the JSON payload from the second text block.
   const payloadText = textBlocks[1]?.text;
-  if (payloadText !== undefined) {
+  if (payloadText) {
     try {
       const payload = JSON.parse(payloadText) as {
         code?: string;
@@ -325,7 +285,6 @@ function parseMcpToolResult(
         retryable?: boolean;
       };
       if (typeof payload.code === "string" && typeof payload.error === "string") {
-        // SAFETY: code is validated against the contract enum at adapter side.
         return {
           ok: false,
           code: payload.code as Extract<ToolResult, { ok: false }>["code"],
@@ -335,15 +294,14 @@ function parseMcpToolResult(
         };
       }
     } catch {
-      // fall through to generic error
+      // fall through
     }
   }
 
-  const fallbackMessage = textBlocks[0]?.text ?? "tool error";
   return {
     ok: false,
     code: "internal_error",
-    error: fallbackMessage,
+    error: textBlocks[0]?.text ?? "tool error",
     correlationId,
     retryable: false,
   };
@@ -351,7 +309,7 @@ function parseMcpToolResult(
 
 /** Test/debug helper — closes the underlying transport. */
 export async function closeMcpClient(): Promise<void> {
-  if (live !== null) {
+  if (live) {
     try {
       await live.client.close();
     } catch {

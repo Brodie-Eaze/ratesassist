@@ -1,6 +1,5 @@
-// LLM orchestration. Anthropic Claude tool-use loop, with a sophisticated
-// deterministic fallback that does multi-tool reasoning when no API key is
-// configured.
+// LLM orchestration. Anthropic Claude tool-use loop, with a deterministic
+// intent-routed fallback when no API key is configured.
 
 import Anthropic from "@anthropic-ai/sdk";
 import { runTool, TOOLS, toAnthropicTool } from "./tools";
@@ -10,6 +9,16 @@ const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY ?? "";
 const MODEL = "claude-sonnet-4-6";
 const MAX_TOOL_ITERATIONS = 8;
 const LIVE_TIMEOUT_MS = 45_000;
+const RETRY_BACKOFF_MS = 1_500;
+const MAX_TOKENS = 2048;
+const RETRYABLE_STATUSES: ReadonlySet<number> = new Set([429, 503, 504, 529]);
+const RETRYABLE_ERROR_NAMES: ReadonlySet<string> = new Set([
+  "APIError",
+  "APIConnectionError",
+  "APIConnectionTimeoutError",
+  "RateLimitError",
+  "InternalServerError",
+]);
 
 const SYSTEM_PROMPT = `You are RatesAssist — an AI co-pilot for Australian council rates officers.
 
@@ -50,41 +59,30 @@ if (ANTHROPIC_API_KEY.length > 0 && !isLive()) {
   );
 }
 
-// Lightweight error logger — replaceable hook for downstream wiring.
 function logError(scope: string, correlationId: string | undefined, err: unknown): void {
   const message = err instanceof Error ? err.message : String(err);
   const stack = err instanceof Error ? err.stack : undefined;
   console.error(`[llm:${scope}]`, correlationId ?? "-", message, stack ? `\n${stack}` : "");
 }
 
-/**
- * Returns true for transport-level failures that warrant graceful mock fallback.
- * Programming errors (TypeError, ReferenceError, ZodError) deliberately do NOT
- * match here — those bubble up to the route as 500s.
- */
+// Programming errors (TypeError/ReferenceError/ZodError) are NOT transport
+// failures — they bubble up as 500s rather than degrading to mock.
 function isLiveTransportFailure(e: unknown): boolean {
   if (typeof e !== "object" || e === null) return false;
   if (e instanceof TypeError || e instanceof ReferenceError) return false;
   const name = (e as { name?: unknown }).name;
   if (name === "ZodError") return false;
   const status = (e as { status?: unknown }).status;
-  if (status === 429 || status === 503 || status === 504 || status === 529) return true;
+  if (typeof status === "number" && RETRYABLE_STATUSES.has(status)) return true;
+  if (typeof name === "string" && RETRYABLE_ERROR_NAMES.has(name)) return true;
   const message = String((e as { message?: unknown }).message ?? "").toLowerCase();
-  if (message.includes("timeout")) return true;
-  if (message.includes("network")) return true;
-  if (message.includes("fetch failed")) return true;
-  if (message.includes("econnreset") || message.includes("etimedout")) return true;
-  // Anthropic SDK errors expose a `status` or carry a `headers`/`error` shape.
-  if (
-    name === "APIError" ||
-    name === "APIConnectionError" ||
-    name === "APIConnectionTimeoutError" ||
-    name === "RateLimitError" ||
-    name === "InternalServerError"
-  ) {
-    return true;
-  }
-  return false;
+  return (
+    message.includes("timeout") ||
+    message.includes("network") ||
+    message.includes("fetch failed") ||
+    message.includes("econnreset") ||
+    message.includes("etimedout")
+  );
 }
 
 export async function runChat(
@@ -92,30 +90,28 @@ export async function runChat(
   userMessage: string,
   correlationId?: string,
 ): Promise<LlmResult> {
-  if (isLive()) {
-    try {
-      return await runChatLive(history, userMessage, correlationId);
-    } catch (e: unknown) {
-      // Caller-cancelled — propagate so route can return 499/cleanup.
-      if (e instanceof Error && e.name === "AbortError") {
-        throw e;
-      }
-      // Programming errors / unexpected — log + rethrow as 500.
-      if (!isLiveTransportFailure(e)) {
-        logError("runChat.unexpected", correlationId, e);
-        throw e;
-      }
-      // Transport-level failure — graceful degrade to mock.
-      const message = e instanceof Error ? e.message : String(e);
-      console.error("[llm] live failed", { correlationId, message });
-      const mock = await runChatMock(history, userMessage);
-      return {
-        ...mock,
-        modelUsed: { kind: "mock", reason: "live_failed", cause: message },
-      };
-    }
+  if (!isLive()) {
+    return runChatMock(history, userMessage);
   }
-  return await runChatMock(history, userMessage);
+
+  try {
+    return await runChatLive(history, userMessage, correlationId);
+  } catch (e: unknown) {
+    if (e instanceof Error && e.name === "AbortError") {
+      throw e;
+    }
+    if (!isLiveTransportFailure(e)) {
+      logError("runChat.unexpected", correlationId, e);
+      throw e;
+    }
+    const message = e instanceof Error ? e.message : String(e);
+    console.error("[llm] live failed", { correlationId, message });
+    const mock = await runChatMock(history, userMessage);
+    return {
+      ...mock,
+      modelUsed: { kind: "mock", reason: "live_failed", cause: message },
+    };
+  }
 }
 
 // ---------- LIVE: Anthropic Claude tool-use loop ----------
@@ -123,7 +119,7 @@ export async function runChat(
 function isRetryableStatus(e: unknown): boolean {
   if (typeof e !== "object" || e === null) return false;
   const status = (e as { status?: unknown }).status;
-  return status === 429 || status === 503 || status === 504 || status === 529;
+  return typeof status === "number" && RETRYABLE_STATUSES.has(status);
 }
 
 async function runChatLive(
@@ -131,19 +127,40 @@ async function runChatLive(
   userMessage: string,
   correlationId?: string,
 ): Promise<LlmResult> {
-  // AbortController so the Anthropic SDK call is actually cancelled when our
-  // wall-clock timeout fires (rather than leaking the upstream socket).
+  // AbortController cancels the SDK socket when our wall-clock timeout fires.
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), LIVE_TIMEOUT_MS);
   try {
     return await runChatLiveInner(history, userMessage, ctrl.signal, correlationId);
   } catch (e: unknown) {
     if (ctrl.signal.aborted) {
-      throw new Error("Live LLM timeout after 45s");
+      throw new Error(`Live LLM timeout after ${LIVE_TIMEOUT_MS / 1000}s`);
     }
     throw e;
   } finally {
     clearTimeout(timer);
+  }
+}
+
+async function callAnthropic(
+  client: Anthropic,
+  messages: Anthropic.MessageParam[],
+  tools: Anthropic.Tool[],
+  signal: AbortSignal,
+): Promise<Anthropic.Message> {
+  const params: Anthropic.MessageCreateParamsNonStreaming = {
+    model: MODEL,
+    max_tokens: MAX_TOKENS,
+    system: SYSTEM_PROMPT,
+    tools,
+    messages,
+  };
+  try {
+    return await client.messages.create(params, { signal });
+  } catch (e: unknown) {
+    if (!isRetryableStatus(e)) throw e;
+    await new Promise((r) => setTimeout(r, RETRY_BACKOFF_MS));
+    return await client.messages.create(params, { signal });
   }
 }
 
@@ -174,42 +191,7 @@ async function runChatLiveInner(
   while (iterations < MAX_TOOL_ITERATIONS) {
     iterations++;
 
-    let response: Anthropic.Message;
-    try {
-      response = await client.messages.create(
-        {
-          model: MODEL,
-          max_tokens: 2048,
-          system: SYSTEM_PROMPT,
-          tools: anthropicTools,
-          messages,
-        },
-        { signal: abortSignal },
-      );
-    } catch (e: unknown) {
-      if (isRetryableStatus(e)) {
-        await new Promise((r) => setTimeout(r, 1500));
-        // Wrap the retry in its own try/catch so a second failure surfaces
-        // through the same error path as the first (rather than escaping
-        // the loop's catch).
-        try {
-          response = await client.messages.create(
-            {
-              model: MODEL,
-              max_tokens: 2048,
-              system: SYSTEM_PROMPT,
-              tools: anthropicTools,
-              messages,
-            },
-            { signal: abortSignal },
-          );
-        } catch (retryErr: unknown) {
-          throw retryErr;
-        }
-      } else {
-        throw e;
-      }
-    }
+    const response = await callAnthropic(client, messages, anthropicTools, abortSignal);
 
     const toolUseBlocks = response.content.filter(
       (b): b is Anthropic.ToolUseBlock => b.type === "tool_use",
@@ -228,14 +210,12 @@ async function runChatLiveInner(
     messages.push({ role: "assistant", content: response.content });
     const toolResults: Anthropic.ToolResultBlockParam[] = [];
     for (const tu of toolUseBlocks) {
-      const result = await runTool(
-        tu.name,
-        (tu.input as Record<string, unknown>) ?? {},
-      );
+      const input = (tu.input as Record<string, unknown>) ?? {};
+      const result = await runTool(tu.name, input);
       toolCalls.push({
         id: tu.id,
         name: tu.name,
-        input: (tu.input as Record<string, unknown>) ?? {},
+        input,
         output: result.output,
         durationMs: result.durationMs,
       });

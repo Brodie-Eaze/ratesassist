@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# RatesAssist pre-commit gate.
+# Fast subset of ship-check: typecheck + tests. Skips Next.js build.
+# Bypass with `git commit --no-verify` only when intentional.
+
+set -e
+
+npx lint-staged
+npm run typecheck --workspaces --if-present
+npm test

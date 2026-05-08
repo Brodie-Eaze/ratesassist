@@ -2,7 +2,7 @@
   "name": "@ratesassist/identity",
   "version": "0.2.0",
   "private": true,
-  "description": "RatesAssist identity layer — ATO ABN Lookup integration with strict-live mode, bounded retry, and PII-safe logging. Platform-agnostic; depends only on @ratesassist/contract.",
+  "description": "RatesAssist identity layer \u2014 ATO ABN Lookup integration with strict-live mode, bounded retry, and PII-safe logging. Platform-agnostic; depends only on @ratesassist/contract.",
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
@@ -17,5 +17,9 @@
   "dependencies": {
     "@ratesassist/contract": "*",
     "zod": "^3.23.8"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
   }
 }

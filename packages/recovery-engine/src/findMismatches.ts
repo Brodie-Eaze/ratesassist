@@ -1,14 +1,8 @@
 /**
- * findMismatches — pure ranking pipeline over an EvaluationContext.
- *
- * For every property in the active tenant's portfolio, evaluate every signal,
- * compose a composite confidence score, derive a severity band, estimate the
- * uplift, and emit a fully-populated MismatchCandidate. Sorted by estimated
- * uplift (descending) — councils prioritise by recoverable revenue.
- *
- * This module is the single source of truth for "what does the recovery
- * engine think is mis-rated right now?". It is deterministic, side-effect
- * free, and entirely reproducible from a given EvaluationContext snapshot.
+ * findMismatches — pure ranking pipeline. For every property, evaluate every
+ * signal, compose a composite confidence score, derive a severity band,
+ * estimate the uplift, and emit a MismatchCandidate. Sorted by estimated
+ * uplift desc.
  */
 
 import type {
@@ -25,47 +19,24 @@ import {
   severityForScore,
 } from "./scoring.js";
 
-/**
- * Filter options for {@link findMismatches}.
- *
- * - `council`: restrict the sweep to a single tenant code. When omitted, all
- *   properties in the context are evaluated (multi-tenant aggregations).
- * - `minSeverity`: drop candidates whose severity is below this band. The
- *   ranking ("low" < "medium" < "high") matches the contract's severity
- *   semantics.
- */
 export type FindMismatchesOptions = {
   readonly council?: string;
   readonly minSeverity?: MismatchSeverity;
 };
 
-/**
- * Severity rank used purely for the `minSeverity` filter. Higher number =
- * stronger evidence. Ordering only — these numbers do not appear in any
- * contract field or output.
- */
 const SEVERITY_RANK: Readonly<Record<MismatchSeverity, number>> = {
   low: 0,
   medium: 1,
   high: 2,
 } as const;
 
-/**
- * Choose the headline signal hit (highest weight). Returns the contract's
- * `kind` (signal short label) and `reason` (evidence string, optionally
- * appended with a count of compound signals).
- *
- * Caller MUST ensure `hits` is non-empty; we don't return an Option here
- * because the caller has already filtered out empty-signal properties.
- */
+// Pick the highest-weight hit; if the case has compound signals, note the
+// count so the candidate's `reason` reflects more than just the headline.
 function describeHeadline(hits: readonly SignalHit[]): {
   readonly kind: string;
   readonly reason: string;
 } {
-  // Defensive: caller invariant says non-empty, but we don't want to crash
-  // on a future regression. Use a narrow, explicit branch instead of `!`.
-  const sorted = [...hits].sort((a, b) => b.weight - a.weight);
-  const top = sorted[0];
+  const top = [...hits].sort((a, b) => b.weight - a.weight)[0];
   if (!top) {
     return { kind: "no signal", reason: "" };
   }
@@ -79,18 +50,6 @@ function describeHeadline(hits: readonly SignalHit[]): {
   return { kind: top.short, reason };
 }
 
-/**
- * Run the recovery engine over the supplied context.
- *
- * Returns a readonly, uplift-sorted list of candidates. Every candidate is
- * a complete, audit-ready record: every field on `MismatchCandidate` is
- * populated from deterministic functions of the input context.
- *
- * Time complexity: O(P · S) where P is the property count and S is the
- * signal count. The portfolio + spatial signals are O(P) each, but they
- * walk small per-owner / per-suburb subsets and are already optimised in
- * `evaluateSignals`.
- */
 export function findMismatches(
   ctx: EvaluationContext,
   options: FindMismatchesOptions = {},
@@ -135,8 +94,7 @@ export function findMismatches(
       estUplift,
       estArrears3y,
       compositeScore,
-      // `confidence` is a backward-compatibility alias maintained on the
-      // contract; new code should read `compositeScore`.
+      // `confidence` is a backward-compat alias; new code reads compositeScore.
       confidence: compositeScore,
       signals,
     });

@@ -2,7 +2,7 @@
   "name": "@ratesassist/recovery-engine",
   "version": "0.2.0",
   "private": true,
-  "description": "Multi-signal detection engine — finds mis-rated properties by cross-referencing council rating data against authoritative external registers. Platform-agnostic; consumes only @ratesassist/contract types.",
+  "description": "Multi-signal detection engine \u2014 finds mis-rated properties by cross-referencing council rating data against authoritative external registers. Platform-agnostic; consumes only @ratesassist/contract types.",
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
@@ -15,5 +15,9 @@
   },
   "dependencies": {
     "@ratesassist/contract": "*"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
   }
 }
