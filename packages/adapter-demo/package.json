@@ -8,6 +8,15 @@
     "ratesassist-adapter-demo": "./dist/server.js"
   },
   "main": "./dist/server.js",
+  "exports": {
+    ".": "./dist/server.js",
+    "./inproc": "./dist/inproc.js",
+    "./runtime/dispatcher": "./dist/runtime/dispatcher.js",
+    "./runtime/context": "./dist/runtime/context.js",
+    "./runtime/commitTokens": "./dist/runtime/commitTokens.js",
+    "./data": "./dist/data/index.js",
+    "./identity": "./dist/identity.js"
+  },
   "scripts": {
     "build": "tsc && esbuild src/server.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/server.js --external:@modelcontextprotocol/sdk --external:zod --external:zod-to-json-schema && node -e \"require('fs').chmodSync('dist/server.js', 0o755)\"",
     "dev": "tsc --watch",

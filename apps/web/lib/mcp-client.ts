@@ -1,7 +1,23 @@
 /**
- * MCP stdio client singleton for apps/web. Spawns @ratesassist/adapter-demo
- * lazily on first call; respawns up to 3 times in any rolling 30s window if
- * the child dies. Per-call timeout defaults to 5s (RA_MCP_TOOL_TIMEOUT_MS).
+ * Tool transport for apps/web.
+ *
+ * Two transports are supported, selected via env at module load:
+ *
+ *   - "mcp" (default): spawn @ratesassist/adapter-demo as a child process and
+ *     speak MCP over stdio. Singleton client; respawns up to 3 times in any
+ *     rolling 30s window if the child dies. Per-call timeout defaults to 5s
+ *     (RA_MCP_TOOL_TIMEOUT_MS).
+ *
+ *   - "inproc": import the dispatcher directly and call it in-process. Used
+ *     on Vercel and other serverless targets where long-lived child processes
+ *     are not reliable. Loses the stdio trust boundary the MCP transport
+ *     provides — acceptable for the demo adapter (synthetic, read-only data).
+ *     Production adapters must NOT use this transport.
+ *
+ * Selection precedence:
+ *   1. RA_TOOL_TRANSPORT=mcp|inproc      — explicit override
+ *   2. VERCEL=1                          — auto-select inproc
+ *   3. fallback                          — mcp
  */
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -12,6 +28,17 @@ import path from "node:path";
 import type { schemas } from "@ratesassist/contract";
 
 type ToolResult = schemas.ToolResult;
+
+type Transport = "mcp" | "inproc";
+
+function resolveTransport(): Transport {
+  const explicit = process.env["RA_TOOL_TRANSPORT"];
+  if (explicit === "mcp" || explicit === "inproc") return explicit;
+  if (process.env["VERCEL"] === "1") return "inproc";
+  return "mcp";
+}
+
+const TRANSPORT: Transport = resolveTransport();
 
 const DEFAULT_TIMEOUT_MS = 5_000;
 const RESPAWN_WINDOW_MS = 30_000;
@@ -156,6 +183,15 @@ let cachedCatalogue: ReadonlyArray<McpToolEntry> | null = null;
 
 export async function listMcpTools(): Promise<ReadonlyArray<McpToolEntry>> {
   if (cachedCatalogue) return cachedCatalogue;
+  if (TRANSPORT === "inproc") {
+    const inproc = await import("@ratesassist/adapter-demo/inproc");
+    cachedCatalogue = inproc.listTools().map((t) => ({
+      name: t.name,
+      description: t.description ?? "",
+      inputSchema: t.inputSchema ?? { type: "object", properties: {} },
+    }));
+    return cachedCatalogue;
+  }
   const client = await getMcpClient();
   const result = await client.listTools();
   cachedCatalogue = result.tools.map((t) => ({
@@ -201,6 +237,18 @@ export async function runMcpTool(
   };
 
   try {
+    if (TRANSPORT === "inproc") {
+      const inproc = await import("@ratesassist/adapter-demo/inproc");
+      const result = await inproc.callTool({
+        name,
+        input,
+        correlationId,
+      });
+      const durationMs = Date.now() - start;
+      log(durationMs, result.ok, result.ok ? undefined : result.code);
+      return { result, durationMs };
+    }
+
     const client = await getMcpClient();
 
     const ctrl = new AbortController();
@@ -319,4 +367,17 @@ export async function closeMcpClient(): Promise<void> {
   }
   cachedCatalogue = null;
   respawnHistory.length = 0;
+  if (TRANSPORT === "inproc") {
+    try {
+      const inproc = await import("@ratesassist/adapter-demo/inproc");
+      inproc._resetInproc();
+    } catch {
+      // ignore — inproc module may not have been loaded
+    }
+  }
+}
+
+/** Diagnostic — which transport is active for this process. */
+export function getActiveTransport(): "mcp" | "inproc" {
+  return TRANSPORT;
 }

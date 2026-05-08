@@ -44,3 +44,6 @@ RatesAssist-Complete.docx
 tmp/
 .tmp/
 *.local
+
+# DMIRS pull cache (regeneratable; large)
+.dmirs-cache/
