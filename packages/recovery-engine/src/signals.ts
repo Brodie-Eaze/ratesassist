@@ -49,6 +49,20 @@ export const SIGNAL_CATALOGUE: readonly SignalDef[] = [
     source: "DMIRS MINEDEX",
   },
   {
+    id: "reg.tenement.recently_granted",
+    name: "Tenement granted within last 90 days",
+    short: "Recent grant",
+    category: "register",
+    weight: 0.40,
+    // NOT in tenement-class exclusive group — this fires IN ADDITION to
+    // the producing/live/exploration-only signals because it adds the
+    // time-sensitivity dimension. A producing mining lease granted last
+    // week is more urgent than one granted in 1985.
+    description:
+      "Intersecting tenement was granted within the last 90 days. Recently granted licences carry both higher recovery urgency (current rates classification has not yet caught up) and the 30-day wardens-court appeal risk if grantdate is within 30 days.",
+    source: "DMIRS MINEDEX (grantdate field)",
+  },
+  {
     id: "reg.tenement.exploration_only.on_rural",
     name: "Exploration tenement only — review",
     short: "Exploration only",

@@ -54,8 +54,8 @@ const TENEMENT_SEEDS: readonly TenementSeed[] = [
     intersects: ["TPS-1102-44"],
     lat: -22.694,
     lng: 117.7935,
-    grantedDate: "2014-08-19",
-    expiryDate: "2035-08-18",
+    grantedDate: "2026-04-01",
+    expiryDate: "2047-03-31",
     lastWorkProgramYear: 2025,
   },
   {
@@ -116,8 +116,8 @@ const TENEMENT_SEEDS: readonly TenementSeed[] = [
     intersects: ["ESH-1102-71"],
     lat: -20.7364,
     lng: 116.8463,
-    grantedDate: "2022-11-14",
-    expiryDate: "2027-11-13",
+    grantedDate: "2026-04-20",
+    expiryDate: "2031-04-19",
     lastWorkProgramYear: 2024,
   },
   {
@@ -148,8 +148,8 @@ const TENEMENT_SEEDS: readonly TenementSeed[] = [
     intersects: ["ESH-1102-88"],
     lat: -23.3614,
     lng: 119.7349,
-    grantedDate: "2024-01-15",
-    expiryDate: "2049-01-14",
+    grantedDate: "2026-03-12",
+    expiryDate: "2051-03-11",
     lastWorkProgramYear: 2025,
   },
 

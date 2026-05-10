@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, Suspense } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { Sidebar } from "@/components/Sidebar";
 import { formatAud } from "@/lib/utils";
 import { useFetch, LoadingState, ErrorState } from "@/lib/useFetch";
@@ -18,7 +19,10 @@ import {
   Database,
   Eye,
   GanttChart,
+  BellRing,
 } from "lucide-react";
+
+const RECENTLY_GRANTED_SIGNAL_ID = "reg.tenement.recently_granted";
 
 type DataResponse = {
   mismatches: MismatchCandidate[];
@@ -54,9 +58,27 @@ const CATEGORY_META: Record<
 };
 
 export default function RecoveryPage() {
+  return (
+    <Suspense fallback={<LoadingState />}>
+      <RecoveryPageInner />
+    </Suspense>
+  );
+}
+
+function RecoveryPageInner() {
   const fetchState = useFetch<DataResponse>("/api/data");
   const [filter, setFilter] = useState<"all" | "high" | "medium" | "low">("all");
   const [signalFilter, setSignalFilter] = useState<string | "all">("all");
+  const [recentlyGrantedOnly, setRecentlyGrantedOnly] = useState<boolean>(false);
+  const searchParams = useSearchParams();
+
+  // Pre-apply the "Newly granted only" filter when arriving via
+  // /recovery?signal=recently_granted (e.g. the legacy /alerts redirect).
+  useEffect(() => {
+    if (searchParams?.get("signal") === "recently_granted") {
+      setRecentlyGrantedOnly(true);
+    }
+  }, [searchParams]);
 
   if (fetchState.status === "loading") return <LoadingState />;
   if (fetchState.status === "error") return <ErrorState message={fetchState.error} />;
@@ -66,6 +88,10 @@ export default function RecoveryPage() {
   if (filter !== "all") filtered = filtered.filter((m) => m.severity === filter);
   if (signalFilter !== "all")
     filtered = filtered.filter((m) => m.signals.some((s) => s.id === signalFilter));
+  if (recentlyGrantedOnly)
+    filtered = filtered.filter((m) =>
+      m.signals.some((s) => s.id === RECENTLY_GRANTED_SIGNAL_ID),
+    );
 
   return (
     <div className="flex h-screen">
@@ -199,6 +225,23 @@ export default function RecoveryPage() {
             <span className="text-xs text-ink-400 ml-3">
               Showing {filtered.length} of {data.mismatches.length}
             </span>
+            <button
+              onClick={() => setRecentlyGrantedOnly((v) => !v)}
+              className={`btn ml-auto ${
+                recentlyGrantedOnly
+                  ? "bg-warn-500 text-white"
+                  : "bg-white border border-warn-300 text-warn-700 hover:bg-warn-50"
+              }`}
+              title="Filter to candidates with a tenement granted within the last 90 days (DMIRS MINEDEX)"
+            >
+              <BellRing className="w-3 h-3" />
+              Newly granted only
+              <span className="text-[10px] opacity-70 ml-1">
+                {data.mismatches.filter((m) =>
+                  m.signals.some((s) => s.id === RECENTLY_GRANTED_SIGNAL_ID),
+                ).length}
+              </span>
+            </button>
           </div>
 
           {/* Candidates */}
@@ -252,6 +295,9 @@ function CandidateCard({
   candidate: MismatchCandidate;
   rank: number;
 }) {
+  const isRecentlyGranted = c.signals.some(
+    (s) => s.id === RECENTLY_GRANTED_SIGNAL_ID,
+  );
   return (
     <Link
       href={`/recovery/${c.assessmentNumber}`}
@@ -267,6 +313,15 @@ function CandidateCard({
             <span className={`badge ${SEVERITY_BADGE[c.severity]}`}>
               {c.severity.toUpperCase()}
             </span>
+            {isRecentlyGranted && (
+              <span
+                className="badge bg-warn-100 text-warn-700 border border-warn-300"
+                title="An intersecting tenement was granted within the last 90 days (DMIRS MINEDEX)"
+              >
+                <BellRing className="w-3 h-3 mr-1 inline" />
+                NEW GRANT
+              </span>
+            )}
             <span className="badge badge-neutral">
               {(c.compositeScore * 100).toFixed(0)}% composite
             </span>

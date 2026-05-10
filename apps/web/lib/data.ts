@@ -248,15 +248,15 @@ export const OWNERS: Owner[] = [...CURATED_OWNERS, ...GENERIC_OWNERS];
 
 const TENEMENT_SEED = [
   // Tom Price (Pilbara iron)
-  { id: "M70/1284", type: "M" as const, holder: "Pilbara Iron Holdings Pty Ltd",  abn: "32 614 882 110", commodity: ["Iron Ore"],          area: 4_820, prod: true,  intersects: ["TPS-1102-44"], lat: -22.6940, lng: 117.7935, expiry: "2035-08-18", granted: "2014-08-19", lastWP: 2025 },
+  { id: "M70/1284", type: "M" as const, holder: "Pilbara Iron Holdings Pty Ltd",  abn: "32 614 882 110", commodity: ["Iron Ore"],          area: 4_820, prod: true,  intersects: ["TPS-1102-44"], lat: -22.6940, lng: 117.7935, expiry: "2047-03-31", granted: "2026-04-01", lastWP: 2025 },
   { id: "M70/1411", type: "M" as const, holder: "Pilbara Iron Holdings Pty Ltd",  abn: "32 614 882 110", commodity: ["Iron Ore","Manganese"], area: 2_260, prod: true, intersects: ["TPS-1102-47"], lat: -22.6982, lng: 117.7892, expiry: "2038-03-03", granted: "2017-03-04", lastWP: 2025 },
   { id: "L70/0177", type: "L" as const, holder: "Pilbara Iron Holdings Pty Ltd",  abn: "32 614 882 110", commodity: ["Infrastructure"],    area: 320,   prod: false, intersects: ["TPS-1102-91"], lat: -22.7102, lng: 117.8011, expiry: "2037-01-29", granted: "2016-01-30", lastWP: null },
   { id: "M70/1502", type: "M" as const, holder: "Pilbara Iron Holdings Pty Ltd",  abn: "32 614 882 110", commodity: ["Iron Ore"],          area: 3_140, prod: true,  intersects: ["ESH-1102-92","ASH-9911-22"], lat: -22.6981, lng: 115.6444, expiry: "2040-04-12", granted: "2019-04-13", lastWP: 2025 },
   // Karratha exploration
-  { id: "E45/5821", type: "E" as const, holder: "Karratha Exploration Pty Ltd",   abn: "44 990 221 005", commodity: ["Lithium","Rare Earths"], area: 18_400, prod: false, intersects: ["ESH-1102-71"], lat: -20.7364, lng: 116.8463, expiry: "2027-11-13", granted: "2022-11-14", lastWP: 2024 },
+  { id: "E45/5821", type: "E" as const, holder: "Karratha Exploration Pty Ltd",   abn: "44 990 221 005", commodity: ["Lithium","Rare Earths"], area: 18_400, prod: false, intersects: ["ESH-1102-71"], lat: -20.7364, lng: 116.8463, expiry: "2031-04-19", granted: "2026-04-20", lastWP: 2024 },
   { id: "E45/6011", type: "E" as const, holder: "Karratha Exploration Pty Ltd",   abn: "44 990 221 005", commodity: ["Lithium"],            area: 9_200, prod: false, intersects: [], lat: -20.7501, lng: 116.8800, expiry: "2028-07-19", granted: "2023-07-20", lastWP: 2025 },
   // Newman solar
-  { id: "G69/0044", type: "G" as const, holder: "Newman Solar Pty Ltd",           abn: "55 220 901 477", commodity: ["Solar Infrastructure"], area: 180,  prod: true,  intersects: ["ESH-1102-88"], lat: -23.3614, lng: 119.7349, expiry: "2049-01-14", granted: "2024-01-15", lastWP: 2025 },
+  { id: "G69/0044", type: "G" as const, holder: "Newman Solar Pty Ltd",           abn: "55 220 901 477", commodity: ["Solar Infrastructure"], area: 180,  prod: true,  intersects: ["ESH-1102-88"], lat: -23.3614, lng: 119.7349, expiry: "2051-03-11", granted: "2026-03-12", lastWP: 2025 },
   // Sandstone gold
   { id: "M52/0908", type: "M" as const, holder: "Goldfields Resources Ltd",       abn: "18 552 117 884", commodity: ["Gold"],               area: 740,   prod: true,  intersects: ["SST-2204-19"], lat: -27.9881, lng: 119.2944, expiry: "2030-06-21", granted: "2009-06-22", lastWP: 2025 },
   { id: "P52/1701", type: "P" as const, holder: "Sandstone Prospecting Pty Ltd",  abn: "82 144 029 561", commodity: ["Gold"],               area: 90,    prod: false, intersects: ["SST-2204-31"], lat: -28.0042, lng: 119.3122, expiry: "2027-03-31", granted: "2023-04-01", lastWP: null },

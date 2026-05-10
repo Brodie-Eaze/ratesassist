@@ -76,7 +76,7 @@ const PAGE_ROUTES = [
   "/",
   "/intel", "/reconciliation", "/activity", "/recovery", "/signals",
   "/discovery", "/certificates", "/citizen", "/tenants", "/connections",
-  "/map", "/aerial", "/properties", "/alerts",
+  "/map", "/aerial", "/properties",
 ];
 
 async function main(): Promise<number> {
@@ -177,6 +177,20 @@ async function main(): Promise<number> {
     expect(b.data?.grant?.tenementId === "M  4701569", `wrong tenement`);
     expect(Array.isArray(b.data?.intersectingParcels), `parcels not array`);
     expect(typeof b.data?.cadastreSource === "string", `missing cadastreSource`);
+  });
+
+  // --- /alerts is a legacy redirect into Recovery with the recently_granted filter ---
+  await check("GET /alerts redirects to /recovery?signal=recently_granted", async () => {
+    const r = await fetch(`${BASE}/alerts`, { redirect: "manual" });
+    expect(
+      r.status === 307 || r.status === 308 || r.status === 302,
+      `expected redirect status, got ${r.status}`,
+    );
+    const loc = r.headers.get("location") ?? "";
+    expect(
+      loc.includes("/recovery") && loc.includes("signal=recently_granted"),
+      `expected redirect to /recovery?signal=recently_granted, got ${loc}`,
+    );
   });
 
   // --- Page: /alerts/[tenementId] (server renders HTML) ---

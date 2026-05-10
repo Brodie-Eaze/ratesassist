@@ -19,7 +19,6 @@ import {
   Sparkles,
   Cpu,
   Building,
-  BellRing,
 } from "lucide-react";
 import { Wordmark } from "./Brand";
 import { cn } from "@/lib/utils";
@@ -36,9 +35,8 @@ const NAV: NavItem[] = [
   { href: "/",                label: "Officer Chat",   icon: MessageSquare, product: "Assist",   group: "Workspace" },
   { href: "/properties",      label: "Properties",     icon: Search,        product: "Assist",   group: "Workspace" },
   { href: "/map",             label: "Portfolio Map",  icon: MapPin,        product: "Assist",   group: "Workspace" },
-  { href: "/alerts",          label: "Grant Alerts",   icon: BellRing,      product: "Recovery", group: "Recovery" },
-  { href: "/discovery",       label: "Discovery Engine",icon: Cpu,          product: "Recovery", group: "Recovery" },
   { href: "/recovery",        label: "Recovery Audit", icon: FileText,      product: "Recovery", group: "Recovery" },
+  { href: "/discovery",       label: "Discovery Engine",icon: Cpu,          product: "Recovery", group: "Recovery" },
   { href: "/signals",         label: "Signal Catalogue",icon: Sparkles,     product: "Recovery", group: "Recovery" },
   { href: "/aerial",          label: "Aerial Evidence",icon: Eye,           product: "Recovery", group: "Recovery" },
   { href: "/intel",           label: "Dashboards",     icon: BarChart3,     product: "Intel",    group: "Intel" },

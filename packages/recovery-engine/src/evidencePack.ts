@@ -214,8 +214,9 @@ function renderSignalLine(s: SignalHit): string {
  * Render one tenement as a markdown bullet for the external-evidence section.
  */
 function renderTenementLine(t: Tenement): string {
+  const detailHref = `/alerts/${encodeURIComponent(t.tenementId)}`;
   const parts: string[] = [
-    `**${t.tenementId}**`,
+    `**[${t.tenementId}](${detailHref})**`,
     `${t.type}-class`,
     t.status,
     t.commodity.length > 0 ? t.commodity.join(", ") : "no commodity listed",

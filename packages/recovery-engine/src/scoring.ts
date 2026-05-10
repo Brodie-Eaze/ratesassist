@@ -42,7 +42,18 @@ export type EvaluationContext = {
   readonly ownersById: ReadonlyMap<string, Owner>;
   /** Live tenements that intersect each assessment, keyed by assessmentNumber. */
   readonly tenementsByAssessment: ReadonlyMap<string, readonly Tenement[]>;
+  /**
+   * Wall clock injection point. Production callers can omit this and the
+   * engine defaults to `Date.now`. Tests pin it to a fixed millisecond value
+   * so time-relative signals (e.g. `reg.tenement.recently_granted`) are
+   * deterministic.
+   */
+  readonly now?: () => number;
 };
+
+/** Window (in days) for the `reg.tenement.recently_granted` signal. */
+export const RECENTLY_GRANTED_WINDOW_DAYS = 90;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 const INDUSTRY_TERMS: readonly string[] = [
   "iron", "mining", "resources", "minerals", "metals", "gold", "lithium",
@@ -154,6 +165,31 @@ export function evaluateSignals(
           `Only exploration / prospecting tenement(s) intersect this parcel: ${live
             .map((t) => t.tenementId)
             .join(", ")}.`,
+        ),
+      );
+    }
+
+    // Recently-granted (additive: NOT in tenement-class exclusive group).
+    // Adds time-sensitivity on top of the class signal — a producing lease
+    // granted last week is more urgent than one granted in 1985.
+    const nowMs = (ctx.now ?? Date.now)();
+    const windowMs = RECENTLY_GRANTED_WINDOW_DAYS * MS_PER_DAY;
+    const recent = live.filter((t) => {
+      const granted = Date.parse(t.grantedDate);
+      if (Number.isNaN(granted)) return false;
+      const ageMs = nowMs - granted;
+      return ageMs >= 0 && ageMs <= windowMs;
+    });
+    if (recent.length > 0) {
+      const sig = getSignal("reg.tenement.recently_granted")!;
+      const parts = recent.map((t) => {
+        const ageDays = Math.floor((nowMs - Date.parse(t.grantedDate)) / MS_PER_DAY);
+        return `${t.tenementId} granted ${t.grantedDate} (${ageDays} day${ageDays === 1 ? "" : "s"} ago)`;
+      });
+      hits.push(
+        hit(
+          sig,
+          `Tenement ${parts.join("; ")} — recently granted; review urgency elevated.`,
         ),
       );
     }

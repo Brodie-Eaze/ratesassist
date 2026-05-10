@@ -109,14 +109,20 @@ function ctxFrom(args: {
   properties: readonly Property[];
   owners: readonly Owner[];
   tenementsByAssessment?: ReadonlyMap<string, readonly Tenement[]>;
+  now?: () => number;
 }): EvaluationContext {
   return {
     properties: args.properties,
     ownersById: new Map(args.owners.map((o) => [o.ownerId, o])),
     tenementsByAssessment:
       args.tenementsByAssessment ?? new Map<string, readonly Tenement[]>(),
+    now: args.now,
   };
 }
+
+/** Fixed clock for time-relative signal tests. */
+const FIXED_NOW_MS = Date.parse("2026-05-10T00:00:00Z");
+const fixedNow = (): number => FIXED_NOW_MS;
 
 // ---- computeComposite ----
 
@@ -326,6 +332,77 @@ describe("evaluateSignals", () => {
     });
     const ids = evaluateSignals(props[0]!, ctx).map((h) => h.id);
     expect(ids).toContain("beh.owner_portfolio_tenement_majority");
+  });
+
+  describe("reg.tenement.recently_granted", () => {
+    function dateMinusDays(days: number): string {
+      const ms = FIXED_NOW_MS - days * 24 * 60 * 60 * 1000;
+      return new Date(ms).toISOString().slice(0, 10);
+    }
+
+    it("fires when grantedDate is within the 90-day window", () => {
+      const p = prop({ landUse: "Rural" });
+      const t = ten({
+        type: "M",
+        isProducing: true,
+        grantedDate: dateMinusDays(30),
+      });
+      const ctx = ctxFrom({
+        properties: [p],
+        owners: [owner()],
+        tenementsByAssessment: new Map([["A1", [t]]]),
+        now: fixedNow,
+      });
+      const ids = evaluateSignals(p, ctx).map((h) => h.id);
+      expect(ids).toContain("reg.tenement.recently_granted");
+    });
+
+    it("does NOT fire at 91 days (just outside window)", () => {
+      const p = prop({ landUse: "Rural" });
+      const t = ten({
+        type: "M",
+        isProducing: true,
+        grantedDate: dateMinusDays(91),
+      });
+      const ctx = ctxFrom({
+        properties: [p],
+        owners: [owner()],
+        tenementsByAssessment: new Map([["A1", [t]]]),
+        now: fixedNow,
+      });
+      const ids = evaluateSignals(p, ctx).map((h) => h.id);
+      expect(ids).not.toContain("reg.tenement.recently_granted");
+    });
+
+    it("has weight 0.40 and no exclusive group (stacks with class signals)", () => {
+      const sig = SIGNAL_CATALOGUE.find(
+        (s) => s.id === "reg.tenement.recently_granted",
+      );
+      expect(sig).toBeDefined();
+      expect(sig!.weight).toBe(0.40);
+      expect(sig!.exclusiveGroup).toBeUndefined();
+    });
+
+    it("stacks with the producing-tenement class signal — both fire and both contribute", () => {
+      const p = prop({ landUse: "Rural" });
+      const t = ten({
+        type: "M",
+        isProducing: true,
+        grantedDate: dateMinusDays(10),
+      });
+      const ctx = ctxFrom({
+        properties: [p],
+        owners: [owner()],
+        tenementsByAssessment: new Map([["A1", [t]]]),
+        now: fixedNow,
+      });
+      const hits = evaluateSignals(p, ctx);
+      const ids = hits.map((h) => h.id);
+      expect(ids).toContain("reg.tenement.producing.on_rural_or_vacant");
+      expect(ids).toContain("reg.tenement.recently_granted");
+      // Composite reflects both — producing (0.55) + recent (0.40) = 0.95.
+      expect(computeComposite(hits)).toBeCloseTo(0.95, 10);
+    });
   });
 
   it("exclusive-group fires only once per property even with multiple tenements", () => {
