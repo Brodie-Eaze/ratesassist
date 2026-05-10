@@ -7,7 +7,7 @@
  * outer page can highlight the corresponding row.
  */
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import L from "leaflet";
 import {
   MapContainer,
@@ -18,6 +18,24 @@ import {
   GeoJSON,
   useMap,
 } from "react-leaflet";
+
+type Basemap = "satellite" | "street";
+
+const BASEMAPS: Record<Basemap, { url: string; attribution: string; maxZoom: number }> = {
+  satellite: {
+    // Esri World Imagery — free, no API key required, global coverage.
+    url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    attribution:
+      "Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community",
+    maxZoom: 19,
+  },
+  street: {
+    url: "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+    attribution:
+      '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+    maxZoom: 19,
+  },
+};
 
 type Geometry =
   | { type: "Polygon"; coordinates: number[][][] }
@@ -171,19 +189,62 @@ export default function GrantMap({
       ? [grant.geometry.coordinates[1] as number, grant.geometry.coordinates[0] as number]
       : tenementRings[0]?.[0] ?? [-25.27, 133.78];
 
+  const [basemap, setBasemap] = useState<Basemap>("satellite");
+  const tile = BASEMAPS[basemap];
+
   return (
-    <MapContainer
-      center={centre}
-      zoom={11}
-      scrollWheelZoom
-      style={{ height: "100%", width: "100%" }}
-      preferCanvas
-    >
-      <TileLayer
-        url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png"
-        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/attributions">CARTO</a>'
-        maxZoom={19}
-      />
+    <div style={{ position: "relative", height: "100%", width: "100%" }}>
+      {/* Basemap toggle pill — top-right of the map, above tile layer. */}
+      <div
+        style={{
+          position: "absolute",
+          top: 12,
+          right: 12,
+          zIndex: 1000,
+          background: "rgba(255,255,255,0.95)",
+          borderRadius: 6,
+          padding: 2,
+          fontSize: 12,
+          fontFamily: "Arial, sans-serif",
+          boxShadow: "0 1px 3px rgba(0,0,0,0.18)",
+          display: "flex",
+          gap: 2,
+        }}
+      >
+        {(["satellite", "street"] as const).map((b) => (
+          <button
+            key={b}
+            onClick={() => setBasemap(b)}
+            style={{
+              padding: "4px 10px",
+              border: "none",
+              borderRadius: 4,
+              cursor: "pointer",
+              background: basemap === b ? "#1a52d4" : "transparent",
+              color: basemap === b ? "white" : "#374151",
+              fontWeight: basemap === b ? 600 : 400,
+              textTransform: "capitalize",
+            }}
+            type="button"
+          >
+            {b}
+          </button>
+        ))}
+      </div>
+
+      <MapContainer
+        center={centre}
+        zoom={11}
+        scrollWheelZoom
+        style={{ height: "100%", width: "100%" }}
+        preferCanvas
+      >
+        <TileLayer
+          key={basemap}
+          url={tile.url}
+          attribution={tile.attribution}
+          maxZoom={tile.maxZoom}
+        />
 
       <FitToGrant grant={grant} parcels={parcelPoints} />
 
@@ -264,8 +325,9 @@ export default function GrantMap({
         );
       })}
 
-      <PolygonStandIn rings={[]} />
-    </MapContainer>
+        <PolygonStandIn rings={[]} />
+      </MapContainer>
+    </div>
   );
 }
 
