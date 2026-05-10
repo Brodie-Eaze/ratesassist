@@ -73,10 +73,19 @@ export type RunToolResult = {
   mutated?: boolean;
 };
 
+export type RunToolAttribution = {
+  readonly tenantId?: string;
+  readonly actorId?: string;
+  readonly actorKind?: "user" | "service" | "llm";
+  readonly ip?: string;
+  readonly userAgent?: string;
+};
+
 export async function runTool(
   name: string,
   input: Record<string, unknown>,
   correlationId?: string,
+  attribution?: RunToolAttribution,
 ): Promise<RunToolResult> {
   if (!isKnownTool(name)) {
     return {
@@ -90,6 +99,11 @@ export async function runTool(
 
   const { result, durationMs } = await runMcpTool(name, input ?? {}, {
     ...(correlationId !== undefined ? { correlationId } : {}),
+    ...(attribution?.tenantId !== undefined ? { tenantId: attribution.tenantId } : {}),
+    ...(attribution?.actorId !== undefined ? { actorId: attribution.actorId } : {}),
+    ...(attribution?.actorKind !== undefined ? { actorKind: attribution.actorKind } : {}),
+    ...(attribution?.ip !== undefined ? { ip: attribution.ip } : {}),
+    ...(attribution?.userAgent !== undefined ? { userAgent: attribution.userAgent } : {}),
   });
 
   if (result.ok) {

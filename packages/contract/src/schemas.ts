@@ -152,6 +152,15 @@ export const inputs = {
     /** Lookback window in days for resolving the tenement against the grants feed. */
     sinceDays: z.number().int().min(1).max(365).default(90),
   }),
+
+  list_audit_log: z.object({
+    /** Tenant scope. Defaults to the caller's tenant when omitted. */
+    tenantId: z.string().min(1).max(80).optional(),
+    /** Page size; clamped to [1, 500]. */
+    limit: z.number().int().min(1).max(500).default(50),
+    /** ISO-8601 floor; only entries at-or-after this instant are returned. */
+    since: z.string().datetime().optional(),
+  }),
 } as const;
 
 export type ToolInputs = {

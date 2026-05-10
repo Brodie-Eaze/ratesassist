@@ -62,12 +62,23 @@ export async function callTool(args: {
   readonly name: string;
   readonly input: Record<string, unknown>;
   readonly correlationId?: string;
+  /** Forwarded from the apps/web auth middleware (`x-session` header). */
+  readonly tenantId?: string;
+  readonly actorId?: string;
+  readonly actorKind?: "user" | "service" | "llm";
+  readonly ip?: string;
+  readonly userAgent?: string;
 }): Promise<ToolResult> {
   const ctx = createRequestContext({
     store: getStore(),
     commitTokens: getCommitTokens(),
     abnClient: createDefaultAbnClient(),
     ...(args.correlationId !== undefined ? { correlationId: args.correlationId } : {}),
+    ...(args.tenantId !== undefined ? { tenantId: args.tenantId } : {}),
+    ...(args.actorId !== undefined ? { actorId: args.actorId } : {}),
+    ...(args.actorKind !== undefined ? { actorKind: args.actorKind } : {}),
+    ...(args.ip !== undefined ? { ip: args.ip } : {}),
+    ...(args.userAgent !== undefined ? { userAgent: args.userAgent } : {}),
   });
   return dispatch({
     toolName: args.name,

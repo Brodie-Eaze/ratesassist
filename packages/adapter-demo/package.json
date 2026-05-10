@@ -15,7 +15,8 @@
     "./runtime/context": "./dist/runtime/context.js",
     "./runtime/commitTokens": "./dist/runtime/commitTokens.js",
     "./data": "./dist/data/index.js",
-    "./identity": "./dist/identity.js"
+    "./identity": "./dist/identity.js",
+    "./audit": "./dist/audit/index.js"
   },
   "scripts": {
     "build": "tsc && esbuild src/server.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/server.js --external:@modelcontextprotocol/sdk --external:zod --external:zod-to-json-schema && node -e \"require('fs').chmodSync('dist/server.js', 0o755)\"",

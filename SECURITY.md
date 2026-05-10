@@ -90,15 +90,16 @@ The pilot deployment is **single-operator** (the founder). Multi-user identity c
 
 ## Audit log
 
-The current code path **logs application events to standard output** (captured by the hosting provider's log retention). It is **not** an immutable, tamper-evident, Merkle-anchored log.
+Every mutating tool call writes a structured audit entry tagged with tenant, actor, action, before/after snapshot, correlation ID, IP, and User-Agent. The captured-fields schema is delivered.
 
-- **Append-only, immutable storage:** **Planned (Phase 2)** with the Postgres rollout. Implementation will use append-only tables with a separate role for the writer, periodic Merkle-tree snapshots, and write-once (S3 Object Lock or equivalent) archival.
-- **Tamper-evident anchoring:** **Planned (Phase 2).**
-- **Captured fields (user, role, tenant, IP, device, timestamp + monotonic sequence, action, parameters, result hash, conversation ID):** **Partial today** (basic structured logs); **full schema planned (Phase 2).**
-- **7-year retention:** **Planned (Phase 2)** to satisfy state records requirements; see `DATA-RETENTION-POLICY.md`.
+- **Append-only storage:** **In place** — in-memory ring buffer for the demo adapter (capped at 10,000 entries with FIFO eviction); Postgres-backed `audit_log` table available via `RA_USE_DB=true` for production, with `UPDATE` and `DELETE` revoked at the SQL role level (see `packages/db/migrations/0001_init.sql`).
+- **Tamper-evident anchoring:** **Planned (Phase 9 hash-chain over occurrence order).**
+- **Captured fields (user, role, tenant, IP, User-Agent, timestamp, action, target type/id, before/after JSON, correlation ID):** **In place.** Documented in `packages/db/AUDIT.md`.
+- **7-year retention:** **Planned (Phase 2 Postgres rollout)** to satisfy state records requirements; see `DATA-RETENTION-POLICY.md`. The in-memory ring buffer in the demo adapter is intentionally bounded — do not represent it as durable.
+- **Read API:** `GET /api/audit/log` (supervisor and above; `read.audit_log` permission). Cross-tenant reads are limited to `platform_admin`.
 - **Tenant-level export on demand and on offboarding:** **Planned (Phase 3).**
 
-We will not represent the audit log as immutable, tamper-evident, or 7-year-retained until those properties are actually delivered. Targeted Q3 2026 with the Phase 2 Postgres rollout. See [`PRODUCTION-PLAN.md`](PRODUCTION-PLAN.md) and [`DATA-CLASSIFICATION-MATRIX.md`](DATA-CLASSIFICATION-MATRIX.md).
+We will not represent the audit log as Merkle-anchored, immutable across hardware compromise, or 7-year-retained until those properties are actually delivered. The in-memory variant satisfies the demo + functional-test requirement; the Postgres variant satisfies the production capture-and-retention requirement once `RA_USE_DB=true` is wired end-to-end (Phase 2 finalisation). See [`PRODUCTION-PLAN.md`](PRODUCTION-PLAN.md) and [`DATA-CLASSIFICATION-MATRIX.md`](DATA-CLASSIFICATION-MATRIX.md).
 
 ---
 

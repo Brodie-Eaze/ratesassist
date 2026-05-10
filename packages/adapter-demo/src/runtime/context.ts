@@ -34,6 +34,12 @@ export type UserRole =
   | "admin";
 
 /**
+ * Coarse classification for the principal driving this request. Mirrors the
+ * `actor_kind` enum in the Postgres audit_log table.
+ */
+export type ActorKind = "user" | "service" | "llm";
+
+/**
  * Demo tenant id — single hardcoded value because the adapter does not yet
  * enforce per-tenant isolation. Phase 2 replaces this with the
  * authenticated session's tenant.
@@ -50,6 +56,13 @@ export const DEMO_USER_ID = "demo-user";
 export const DEMO_USER_ROLE: UserRole = "officer";
 
 /**
+ * Default actor kind when no authenticated session is bound to the request
+ * (system tools, health probes, smoke tests). User-bound dispatches set
+ * "user" via the dispatcher's session forwarding.
+ */
+export const DEFAULT_ACTOR_KIND: ActorKind = "service";
+
+/**
  * Per-request context. Immutable; constructed by
  * {@link createRequestContext} and threaded through handler invocations.
  */
@@ -60,6 +73,23 @@ export type RequestContext = {
   readonly userId: string;
   /** RBAC role of the initiating user. */
   readonly userRole: UserRole;
+  /**
+   * Stable principal id used for audit attribution. Mirrors `userId` when a
+   * real session is bound; defaults to `userId` for service dispatches.
+   * Distinct from `userId` so future SSO-issued sub-claims (Entra `oid`,
+   * WorkOS `id`) can replace this without churning every handler.
+   */
+  readonly actorId: string;
+  /**
+   * What kind of principal initiated the request. "user" for an authenticated
+   * session; "service" for system tools / health probes; "llm" reserved for
+   * the future model-driven path.
+   */
+  readonly actorKind: ActorKind;
+  /** Originating IP, if known. Forwarded by middleware. */
+  readonly ip?: string;
+  /** Originating User-Agent, if known. Forwarded by middleware. */
+  readonly userAgent?: string;
   /** Correlation id propagated to logs and error responses. */
   readonly correlationId: string;
   /** Injectable wall clock. Always call `ctx.now()` in handlers. */
@@ -86,6 +116,10 @@ export function createRequestContext(args: {
   readonly tenantId?: string;
   readonly userId?: string;
   readonly userRole?: UserRole;
+  readonly actorId?: string;
+  readonly actorKind?: ActorKind;
+  readonly ip?: string;
+  readonly userAgent?: string;
   readonly correlationId?: string;
   readonly now?: () => Date;
 }): RequestContext {
@@ -94,10 +128,15 @@ export function createRequestContext(args: {
     ownersById: args.store.snapshotOwnersById(),
     tenementsByAssessment: args.store.snapshotTenementsByAssessment(),
   };
+  const userId = args.userId ?? DEMO_USER_ID;
   return {
     tenantId: args.tenantId ?? DEMO_TENANT_ID,
-    userId: args.userId ?? DEMO_USER_ID,
+    userId,
     userRole: args.userRole ?? DEMO_USER_ROLE,
+    actorId: args.actorId ?? userId,
+    actorKind: args.actorKind ?? DEFAULT_ACTOR_KIND,
+    ...(args.ip !== undefined ? { ip: args.ip } : {}),
+    ...(args.userAgent !== undefined ? { userAgent: args.userAgent } : {}),
     correlationId: args.correlationId ?? randomUUID(),
     now: args.now ?? (() => new Date()),
     evaluationContext,

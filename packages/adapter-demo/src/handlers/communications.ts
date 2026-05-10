@@ -15,6 +15,7 @@ import type {
   schemas,
 } from "@ratesassist/contract";
 
+import { recordMutation } from "../audit/index.js";
 import type { RequestContext } from "../runtime/context.js";
 import { notFound } from "../runtime/errors.js";
 import { aud } from "./format.js";
@@ -115,6 +116,21 @@ export async function draftPaymentReminderHandler(
     ``,
     `[NOT SENT — separate confirmation flow required]`,
   ].join("\n");
+  // Best-effort preview event. Drafts don't mutate state but the council's
+  // compliance officer needs to see *which* properties were drafted against,
+  // by whom — so we record a preview event with target=property and a
+  // minimal payload (no message body, since that's reproducible from input).
+  recordMutation({
+    tenantId: ctx.tenantId,
+    actorId: ctx.actorId,
+    actorKind: ctx.actorKind,
+    action: "draft_payment_reminder",
+    target: { type: "property", id: property.assessmentNumber },
+    after: { tone: input.tone, recipientOwnerId: owner.ownerId, balance: property.balance },
+    correlationId: ctx.correlationId,
+    ...(ctx.ip !== undefined ? { ip: ctx.ip } : {}),
+    ...(ctx.userAgent !== undefined ? { userAgent: ctx.userAgent } : {}),
+  });
   return {
     ok: true,
     output: text,
@@ -167,6 +183,24 @@ export async function draftChaseAllOverdueHandler(
     ``,
     `[NOT SENT — separate confirmation flow required to commit any individual draft]`,
   ].join("\n");
+  // Single batch-level audit event — emitting one entry per draft would
+  // explode the buffer and obscure the meaningful "officer ran a chase"
+  // signal. The list of assessmentNumbers is in the payload for traceability.
+  recordMutation({
+    tenantId: ctx.tenantId,
+    actorId: ctx.actorId,
+    actorKind: ctx.actorKind,
+    action: "draft_chase_all_overdue",
+    target: { type: "council", id: input.council ?? ctx.tenantId },
+    after: {
+      tone: input.tone,
+      draftCount: drafts.length,
+      assessmentNumbers: drafts.map((d) => d.assessmentNumber),
+    },
+    correlationId: ctx.correlationId,
+    ...(ctx.ip !== undefined ? { ip: ctx.ip } : {}),
+    ...(ctx.userAgent !== undefined ? { userAgent: ctx.userAgent } : {}),
+  });
   return {
     ok: true,
     output: text,

@@ -222,6 +222,17 @@ export type RunMcpToolOpts = {
   readonly correlationId?: string;
   readonly signal?: AbortSignal;
   readonly timeoutMs?: number;
+  /**
+   * Session attribution forwarded to the in-process adapter. Used by the
+   * audit log so writes are tagged with the real principal + IP. Ignored
+   * by the stdio transport (the child process doesn't trust web-side
+   * session claims; production stdio adapters re-establish identity).
+   */
+  readonly tenantId?: string;
+  readonly actorId?: string;
+  readonly actorKind?: "user" | "service" | "llm";
+  readonly ip?: string;
+  readonly userAgent?: string;
 };
 
 /**
@@ -255,6 +266,11 @@ export async function runMcpTool(
         name,
         input,
         correlationId,
+        ...(opts.tenantId !== undefined ? { tenantId: opts.tenantId } : {}),
+        ...(opts.actorId !== undefined ? { actorId: opts.actorId } : {}),
+        ...(opts.actorKind !== undefined ? { actorKind: opts.actorKind } : {}),
+        ...(opts.ip !== undefined ? { ip: opts.ip } : {}),
+        ...(opts.userAgent !== undefined ? { userAgent: opts.userAgent } : {}),
       });
       const durationMs = Date.now() - start;
       log(durationMs, result.ok, result.ok ? undefined : result.code);
