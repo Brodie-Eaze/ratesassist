@@ -27,7 +27,7 @@ describe("CSRF / Origin check (SEC-014)", () => {
     const req = makeReq("POST", "https://app.example.com/api/chat", {
       host: "app.example.com",
     });
-    const res = middleware(req);
+    const res = await middleware(req);
     expect(res.status).toBe(403);
     const body = await res.text();
     expect(JSON.parse(body)).toEqual({
@@ -41,7 +41,7 @@ describe("CSRF / Origin check (SEC-014)", () => {
       host: "app.example.com",
       origin: "https://evil.example.org",
     });
-    const res = middleware(req);
+    const res = await middleware(req);
     expect(res.status).toBe(403);
   });
 
@@ -50,7 +50,7 @@ describe("CSRF / Origin check (SEC-014)", () => {
       host: "app.example.com",
       origin: "https://app.example.com",
     });
-    const res = middleware(req);
+    const res = await middleware(req);
     expect(res.status).not.toBe(403);
   });
 
@@ -58,7 +58,7 @@ describe("CSRF / Origin check (SEC-014)", () => {
     const req = makeReq("GET", "https://app.example.com/api/health", {
       host: "app.example.com",
     });
-    const res = middleware(req);
+    const res = await middleware(req);
     expect(res.status).not.toBe(403);
   });
 
@@ -67,7 +67,7 @@ describe("CSRF / Origin check (SEC-014)", () => {
       host: "app.example.com",
       origin: "https://attacker.test",
     });
-    const res = middleware(req);
+    const res = await middleware(req);
     expect(res.status).toBe(403);
   });
 
@@ -77,7 +77,7 @@ describe("CSRF / Origin check (SEC-014)", () => {
       const req = makeReq("POST", "https://app.example.com/api/webhook/x", {
         host: "app.example.com",
       });
-      const res = middleware(req);
+      const res = await middleware(req);
       expect(res.status).not.toBe(403);
     } finally {
       delete process.env.RA_CSRF_EXEMPT_PATHS;
@@ -88,7 +88,7 @@ describe("CSRF / Origin check (SEC-014)", () => {
     const req = makeReq("POST", "https://app.example.com/api/tools/run", {
       host: "app.example.com",
     });
-    const res = middleware(req);
+    const res = await middleware(req);
     expect(res.status).toBe(403);
   });
 });

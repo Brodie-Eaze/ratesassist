@@ -13,6 +13,8 @@
 export * from "./types.js";
 export * as schemas from "./schemas.js";
 export * from "./tools.js";
+export * from "./auth.js";
+export { buildOpenApiDocument, type OpenApiOptions } from "./openapi.js";
 
 /** Current contract version. Adapters declare which contract version they support. */
 export const CONTRACT_VERSION = "0.2.0";

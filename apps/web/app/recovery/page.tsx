@@ -1,6 +1,9 @@
 "use client";
 
 import { useState, useEffect, useMemo, Suspense } from "react";
+// Round 4B: dashboard now reads from /api/recovery/candidates (slim
+// envelope — candidates + stats only) instead of /api/data which also
+// shipped properties/owners/tenements arrays.
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Sidebar } from "@/components/Sidebar";
@@ -65,8 +68,35 @@ export default function RecoveryPage() {
   );
 }
 
+type CandidatesEnvelope = {
+  ok: boolean;
+  data: { candidates: MismatchCandidate[]; stats: DataResponse["stats"] };
+  pagination?: { total: number; limit: number; offset: number };
+};
+
+type Fetched =
+  | { status: "loading"; data: null; error: null }
+  | { status: "ok"; data: DataResponse; error: null }
+  | { status: "error"; data: null; error: string };
+
 function RecoveryPageInner() {
-  const fetchState = useFetch<DataResponse>("/api/data");
+  const envState = useFetch<CandidatesEnvelope>("/api/recovery/candidates");
+  // Adapt the new envelope back to the legacy DataResponse shape that the
+  // rest of this component already consumes. The page-internal contract is
+  // unchanged.
+  const fetchState: Fetched =
+    envState.status === "ok"
+      ? {
+          status: "ok",
+          data: {
+            mismatches: envState.data.data.candidates,
+            stats: envState.data.data.stats,
+          },
+          error: null,
+        }
+      : envState.status === "error"
+        ? { status: "error", data: null, error: envState.error }
+        : { status: "loading", data: null, error: null };
   const [filter, setFilter] = useState<"all" | "high" | "medium" | "low">("all");
   const [signalFilter, setSignalFilter] = useState<string | "all">("all");
   const [recentlyGrantedOnly, setRecentlyGrantedOnly] = useState<boolean>(false);

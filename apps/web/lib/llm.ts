@@ -21,24 +21,34 @@ function isAllowedAuBaseUrl(url: string): boolean {
 }
 
 function resolveAnthropicBaseUrl(): string {
-  const candidate =
-    ANTHROPIC_BASE_URL_ENV.length > 0 ? ANTHROPIC_BASE_URL_ENV : ANTHROPIC_BASE_URL_DEFAULT;
-  if (process.env.NODE_ENV === "production") {
-    if (!isAllowedAuBaseUrl(candidate)) {
-      throw new Error(
-        `[llm] ANTHROPIC_BASE_URL refused in production: '${candidate}'. ` +
-          `Must be https://api.anthropic.com.au or a *.amazonaws.com(.au) Bedrock endpoint.`,
+  return ANTHROPIC_BASE_URL_ENV.length > 0
+    ? ANTHROPIC_BASE_URL_ENV
+    : ANTHROPIC_BASE_URL_DEFAULT;
+}
+
+/**
+ * Runtime guard called only when a live LLM call is about to fire. We
+ * deliberately defer the production refusal here rather than at module load
+ * because Next.js evaluates route modules during build (where NODE_ENV is
+ * "production" but the env shell may carry a non-AU placeholder for a
+ * staging/CI configuration). At runtime, a real request must use AU.
+ */
+function assertAuBaseUrlAtCallTime(url: string): void {
+  if (process.env.NODE_ENV !== "production") {
+    if (ANTHROPIC_BASE_URL_ENV.length > 0 && !isAllowedAuBaseUrl(ANTHROPIC_BASE_URL_ENV)) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[llm] ANTHROPIC_BASE_URL '${ANTHROPIC_BASE_URL_ENV}' is not an AU endpoint; allowed in dev only.`,
       );
     }
-    return candidate;
+    return;
   }
-  if (ANTHROPIC_BASE_URL_ENV.length > 0 && !isAllowedAuBaseUrl(ANTHROPIC_BASE_URL_ENV)) {
-    // eslint-disable-next-line no-console
-    console.warn(
-      `[llm] ANTHROPIC_BASE_URL '${ANTHROPIC_BASE_URL_ENV}' is not an AU endpoint; allowed in dev only.`,
+  if (!isAllowedAuBaseUrl(url)) {
+    throw new Error(
+      `[llm] ANTHROPIC_BASE_URL refused at runtime: '${url}'. ` +
+        `Must be https://api.anthropic.com.au or a *.amazonaws.com(.au) Bedrock endpoint.`,
     );
   }
-  return candidate;
 }
 
 const RESOLVED_ANTHROPIC_BASE_URL: string = resolveAnthropicBaseUrl();
@@ -244,6 +254,10 @@ async function runChatLiveInner(
   abortSignal: AbortSignal,
   _correlationId?: string,
 ): Promise<LlmResult> {
+  // Runtime AU-region guard — fires only when a real call is about to go
+  // out, never at build/collection time.
+  assertAuBaseUrlAtCallTime(RESOLVED_ANTHROPIC_BASE_URL);
+
   const client = new Anthropic({
     apiKey: ANTHROPIC_API_KEY,
     baseURL: RESOLVED_ANTHROPIC_BASE_URL,

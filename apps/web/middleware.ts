@@ -1,5 +1,5 @@
 /**
- * Next.js middleware — trace-id propagation only (no auth here).
+ * Next.js middleware — trace-id propagation, CSRF/Origin gate, and auth gate.
  *
  * Runs on the Edge runtime, so it cannot use pino/AsyncLocalStorage
  * directly. Instead it:
@@ -9,17 +9,51 @@
  *      request header.
  *   3. Echoes it on the response as `x-correlation-id`.
  *   4. Emits a single JSON `request.start` line for ingress visibility.
+ *   5. Enforces the SEC-014 Origin/CSRF check on mutating verbs.
+ *   6. Enforces the auth gate: every /api/* path requires a valid signed
+ *      session unless it's in PUBLIC_API_PREFIXES. HTML routes outside
+ *      /login are redirected to /login instead of 401'd.
  *
- * Route handlers retrieve the id with `correlationIdFromHeaders(req.headers)`
- * and wrap their work in `runWithCorrelation(...)` (Node runtime), which
- * is where the AsyncLocalStorage chain actually lives.
- *
- * Auth, CSP, HSTS, region pinning — separate track, NOT here.
+ * The validated session is forwarded to route handlers via the
+ * `x-session` request header so handlers don't have to re-verify on every
+ * request. (Browsers cannot set this header — middleware controls it.)
  */
 
 import { NextRequest, NextResponse } from "next/server";
 
+import {
+  SESSION_COOKIE,
+  SESSION_HEADER,
+  buildSessionCookie,
+  readCookie,
+  verifySessionToken,
+} from "./lib/auth";
+import { issueStubSession, parseDevAutologin } from "./lib/auth-stub";
+import type { Session } from "@ratesassist/contract";
+
 const CORRELATION_HEADER = "x-correlation-id";
+
+const PUBLIC_API_PREFIXES: readonly string[] = [
+  "/api/health",
+  "/api/ready",
+  "/api/version",
+  "/api/auth/",
+];
+
+const PUBLIC_HTML_PATHS: readonly string[] = ["/login"];
+
+function isPublicApi(path: string): boolean {
+  return PUBLIC_API_PREFIXES.some(
+    (p) => path === p || path.startsWith(p.endsWith("/") ? p : p + "/"),
+  );
+}
+
+function isPublicHtml(path: string): boolean {
+  if (PUBLIC_HTML_PATHS.includes(path)) return true;
+  // Static / framework paths are excluded by the matcher already, but keep
+  // a defensive check for /favicon.ico etc. that share the matcher.
+  return path.startsWith("/_next/") || path === "/favicon.ico";
+}
 
 function isWellFormedId(v: string): boolean {
   if (v.length === 0 || v.length > 128) return false;
@@ -90,7 +124,33 @@ function logSecurityEvent(
   }
 }
 
-export function middleware(req: NextRequest): NextResponse {
+async function resolveSession(
+  req: NextRequest,
+): Promise<{ session: Session | null; mintedToken: string | null }> {
+  // 1. existing cookie / Authorization header
+  const auth = req.headers.get("authorization");
+  if (auth && auth.startsWith("Bearer ")) {
+    const s = await verifySessionToken(auth.slice(7).trim());
+    if (s) return { session: s, mintedToken: null };
+  }
+  const token = readCookie(req.headers.get("cookie") ?? "", SESSION_COOKIE);
+  if (token) {
+    const s = await verifySessionToken(token);
+    if (s) return { session: s, mintedToken: null };
+  }
+
+  // 2. dev autologin — forge a session on the fly so demo flows work without
+  //    a login round trip. Disabled in production by parseDevAutologin().
+  const autologin = parseDevAutologin();
+  if (autologin) {
+    const { session, token: minted } = await issueStubSession(autologin);
+    return { session, mintedToken: minted };
+  }
+
+  return { session: null, mintedToken: null };
+}
+
+export async function middleware(req: NextRequest): Promise<NextResponse> {
   const correlationId = pickOrMintId(req);
   const method = req.method;
   const path = req.nextUrl.pathname;
@@ -125,8 +185,47 @@ export function middleware(req: NextRequest): NextResponse {
     }
   }
 
+  // Auth gate. Public paths bypass; everything else needs a session.
+  const isApi = path.startsWith("/api/");
+  const isPublic = isApi ? isPublicApi(path) : isPublicHtml(path);
+
+  let session: Session | null = null;
+  let mintedToken: string | null = null;
+
+  if (!isPublic) {
+    const resolved = await resolveSession(req);
+    session = resolved.session;
+    mintedToken = resolved.mintedToken;
+
+    if (!session) {
+      logSecurityEvent("auth.unauthorized", {
+        ip,
+        path,
+        method,
+        correlationId,
+      });
+      if (isApi) {
+        return new NextResponse(
+          JSON.stringify({ ok: false, code: "unauthorized" }),
+          {
+            status: 401,
+            headers: {
+              "content-type": "application/json",
+              "x-correlation-id": correlationId,
+            },
+          },
+        );
+      }
+      const url = req.nextUrl.clone();
+      url.pathname = "/login";
+      url.searchParams.set("next", path);
+      const redirect = NextResponse.redirect(url);
+      redirect.headers.set("x-correlation-id", correlationId);
+      return redirect;
+    }
+  }
+
   // JSON ingress log — visible in `vercel logs` / container stdout.
-  // (Edge runtime can't load pino; raw JSON keeps the schema consistent.)
   try {
     // eslint-disable-next-line no-console
     console.log(
@@ -138,6 +237,7 @@ export function middleware(req: NextRequest): NextResponse {
         path,
         correlationId,
         ...(ip !== undefined ? { ip } : {}),
+        ...(session ? { userId: session.userId, tenantId: session.tenantId } : {}),
         time: new Date().toISOString(),
       }),
     );
@@ -147,13 +247,30 @@ export function middleware(req: NextRequest): NextResponse {
 
   const requestHeaders = new Headers(req.headers);
   requestHeaders.set(CORRELATION_HEADER, correlationId);
+  if (session) {
+    requestHeaders.set(SESSION_HEADER, JSON.stringify(session));
+  }
 
   const res = NextResponse.next({ request: { headers: requestHeaders } });
   res.headers.set(CORRELATION_HEADER, correlationId);
+  if (mintedToken) {
+    // Persist the autologin session on the response so subsequent requests
+    // hit the cookie path instead of re-minting every time.
+    res.headers.append("set-cookie", buildSessionCookie(mintedToken));
+  }
   return res;
 }
 
 export const config = {
-  // Trace-id middleware applies to API routes only for now.
-  matcher: ["/api/:path*"],
+  /*
+   * Run middleware on:
+   *   - all /api/* (auth + CSRF + trace)
+   *   - all HTML routes except /login, _next, and static assets
+   *
+   * The negative lookahead excludes Next internals + common static extensions.
+   */
+  matcher: [
+    "/api/:path*",
+    "/((?!_next/|favicon\\.ico|robots\\.txt|sitemap\\.xml|.*\\.(?:css|js|png|jpg|jpeg|svg|gif|webp|ico|woff2?|ttf|map)$).*)",
+  ],
 };
