@@ -455,14 +455,18 @@ export async function fetchRecentlyGrantedTenements(
       ) {
         const feats = (json as { features: GeoJsonFeature[] }).features;
         const nowMs = now();
+        // PERF-006: hoist the allow-set out of the per-feature loop. The
+        // type list is fixed for the whole call; allocating a fresh Set
+        // for every feature was wasted work.
+        const allow =
+          types !== undefined && types.length > 0
+            ? new Set(types.map((t) => t.toUpperCase()))
+            : null;
         const grants: GrantedTenement[] = [];
         for (const feat of feats) {
           const g = featureToGrant(feat, nowMs);
           if (g === null) continue;
-          if (types !== undefined && types.length > 0) {
-            const allow = new Set(types.map((t) => t.toUpperCase()));
-            if (!allow.has(g.type)) continue;
-          }
+          if (allow !== null && !allow.has(g.type)) continue;
           if (g.grantDateMs < sinceMs) continue;
           grants.push(g);
         }

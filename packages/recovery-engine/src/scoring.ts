@@ -16,7 +16,7 @@ import type {
 
 import {
   SEVERITY_BANDS,
-  SIGNAL_CATALOGUE,
+  SIGNAL_BY_ID,
   UPLIFT_MULTIPLIER,
   getSignal,
 } from "./signals.js";
@@ -42,6 +42,20 @@ export type EvaluationContext = {
   readonly ownersById: ReadonlyMap<string, Owner>;
   /** Live tenements that intersect each assessment, keyed by assessmentNumber. */
   readonly tenementsByAssessment: ReadonlyMap<string, readonly Tenement[]>;
+  /**
+   * O(1) owner-to-properties index. Pre-computed at context construction so
+   * `ownerPortfolio` does not re-scan ctx.properties for every property
+   * evaluated (PERF-002). Optional for backwards compatibility — if absent
+   * we fall back to the linear scan.
+   */
+  readonly propertiesByOwnerId?: ReadonlyMap<string, readonly Property[]>;
+  /**
+   * O(1) suburb→rural-properties index. Pre-computed so the
+   * `spat.outlier.high_value_rural` percentile lookup does not scan
+   * ctx.properties per rural parcel (PERF-003). Optional with linear-scan
+   * fallback.
+   */
+  readonly ruralBySuburb?: ReadonlyMap<string, readonly Property[]>;
   /**
    * Wall clock injection point. Production callers can omit this and the
    * engine defaults to `Date.now`. Tests pin it to a fixed millisecond value
@@ -78,14 +92,21 @@ function ownerPortfolio(
   ownerId: string,
   ctx: EvaluationContext,
 ): { total: number; withTenements: number; pct: number } {
-  const props = ctx.properties.filter((p) => p.ownerIds.includes(ownerId));
-  const withTen = props.filter(
-    (p) => (ctx.tenementsByAssessment.get(p.assessmentNumber) ?? []).length > 0,
-  );
+  // PERF-002: prefer the pre-built index; fall back to a linear scan only
+  // when the (optional) index is absent (legacy callers / tests).
+  const props =
+    ctx.propertiesByOwnerId?.get(ownerId) ??
+    ctx.properties.filter((p) => p.ownerIds.includes(ownerId));
+  let withTen = 0;
+  for (const p of props) {
+    if ((ctx.tenementsByAssessment.get(p.assessmentNumber) ?? []).length > 0) {
+      withTen++;
+    }
+  }
   return {
     total: props.length,
-    withTenements: withTen.length,
-    pct: props.length > 0 ? withTen.length / props.length : 0,
+    withTenements: withTen,
+    pct: props.length > 0 ? withTen / props.length : 0,
   };
 }
 
@@ -93,11 +114,15 @@ function suburbRuralValuationPercentile(
   p: Property,
   ctx: EvaluationContext,
 ): number {
-  const peers = ctx.properties.filter(
-    (q) =>
-      q.suburb === p.suburb &&
-      q.landUse === "Rural" &&
-      q.assessmentNumber !== p.assessmentNumber,
+  // PERF-003: lookup pre-filtered rural-by-suburb list; fall back to linear
+  // scan if the index isn't on this context.
+  const ruralPeersInSuburb =
+    ctx.ruralBySuburb?.get(p.suburb) ??
+    ctx.properties.filter(
+      (q) => q.suburb === p.suburb && q.landUse === "Rural",
+    );
+  const peers = ruralPeersInSuburb.filter(
+    (q) => q.assessmentNumber !== p.assessmentNumber,
   );
   // Insufficient peer set to establish percentile; suppress outlier signal
   // rather than risk false positive on lone-rural-parcel suburbs. A neutral
@@ -284,7 +309,8 @@ export function computeComposite(hits: readonly SignalHit[]): number {
   const ungrouped: SignalHit[] = [];
 
   for (const h of hits) {
-    const def = SIGNAL_CATALOGUE.find((s) => s.id === h.id);
+    // PERF-004: O(1) Map lookup instead of linear find().
+    const def = SIGNAL_BY_ID.get(h.id);
     const group = def?.exclusiveGroup;
     if (!group) {
       ungrouped.push(h);

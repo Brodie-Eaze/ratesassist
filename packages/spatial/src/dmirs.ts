@@ -40,14 +40,38 @@ import type {
 const FALLBACK_DMIRS_WFS_BASE =
   "https://services.slip.wa.gov.au/public/services/SLIP_Public_Services/Industry_and_Mining/MapServer/WFSServer";
 
+/**
+ * SEC-011: DMIRS_WFS_BASE allowlist. Any env-supplied override must point
+ * at the official WA SLIP service. Without this gate, an attacker who
+ * controls the env (e.g. via a misconfigured PaaS dashboard) could pivot
+ * tenement lookups to a hostile origin and serve crafted "mining tenement"
+ * payloads back into the recovery audit, fabricating signal evidence.
+ *
+ * The allowlist is intentionally narrow: only the slip.wa.gov.au public
+ * services host. Internal or staging variants must be added explicitly.
+ */
+export function isAllowedDmirsBase(url: string): boolean {
+  return /^https:\/\/services\.slip\.wa\.gov\.au\//i.test(url);
+}
+
 const DEFAULT_DMIRS_WFS_BASE: string = (() => {
+  let envValue: string | undefined;
   try {
     if (typeof process !== "undefined" && typeof process.env === "object" && process.env !== null) {
       const v = process.env["DMIRS_WFS_BASE"];
-      if (typeof v === "string" && v.length > 0) return v;
+      if (typeof v === "string" && v.length > 0) envValue = v;
     }
   } catch {
     // process not available in this runtime — fall through.
+  }
+  if (envValue !== undefined) {
+    if (!isAllowedDmirsBase(envValue)) {
+      throw new Error(
+        `DMIRS_WFS_BASE refused: '${envValue}' is not on the SLIP allowlist ` +
+          `(must start with https://services.slip.wa.gov.au/)`,
+      );
+    }
+    return envValue;
   }
   return FALLBACK_DMIRS_WFS_BASE;
 })();

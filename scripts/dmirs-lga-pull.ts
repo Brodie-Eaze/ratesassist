@@ -261,64 +261,107 @@ async function pullTenements(
   let tilesQueried = 0;
   const earliest = new Date().toISOString();
 
-  for (const tile of tiles) {
-    if (all.length >= maxTotal) break;
-    const cachePath = join(cacheDir, `mining-tenements-${bboxKey(tile)}.json`);
-    let tileFeatures: GeoJsonFeature[] | null = null;
+  // PERF-005: read cache hits synchronously, then parallelise the network
+  // fetches in batches of SLIP_PARALLEL (soft limit). A failure inside a
+  // batch surfaces immediately — no silent partial result.
+  const SLIP_PARALLEL = 8;
 
+  type TileWork = {
+    tile: BoundingBox;
+    cachePath: string;
+    cached: GeoJsonFeature[] | null;
+  };
+
+  const work: TileWork[] = tiles.map((tile) => {
+    const cachePath = join(cacheDir, `mining-tenements-${bboxKey(tile)}.json`);
+    let cached: GeoJsonFeature[] | null = null;
     if (!fresh && existsSync(cachePath)) {
       try {
         const raw = readFileSync(cachePath, "utf8");
         const parsed = JSON.parse(raw) as CachedTile;
-        if (Array.isArray(parsed.features)) {
-          tileFeatures = parsed.features;
-          cacheHits++;
-        }
+        if (Array.isArray(parsed.features)) cached = parsed.features;
       } catch {
         // corrupt cache — re-fetch
       }
     }
+    if (cached !== null) cacheHits++;
+    return { tile, cachePath, cached };
+  });
 
-    if (tileFeatures === null) {
-      const result = await fetchSlipFeatures("miningTenements", tile, {
-        maxFeatures: Math.min(2000, maxTotal),
-        timeoutMs: 20_000,
-        signal,
-        correlationId: `dmirs-lga-pull-${bboxKey(tile)}`,
-      });
-      tilesQueried++;
-      if (!result.ok) {
-        // Hard fail: SLIP unreachable. No mock fallback.
-        throw new Error(
-          `SLIP unreachable for tile ${tile.join(",")}: ${result.code}: ${result.error}`,
-        );
-      }
-      tileFeatures = [...result.features];
-      try {
-        writeFileSync(
-          cachePath,
-          JSON.stringify(
-            {
-              bbox: tile,
-              queriedAt: result.queriedAt,
-              features: tileFeatures,
-            } satisfies CachedTile,
-            null,
-            2,
-          ),
-        );
-      } catch {
-        // Cache write failure is non-fatal.
+  // Process tiles in order (cache hits + batched network fetches) so the
+  // dedup + maxTotal short-circuit logic stays deterministic.
+  let i = 0;
+  outer: while (i < work.length) {
+    if (all.length >= maxTotal) break;
+
+    // Pull a batch of consecutive tiles that need a network fetch (and the
+    // synchronous cache hits that precede them — they cost nothing).
+    const batch: TileWork[] = [];
+    while (i < work.length && batch.filter((w) => w.cached === null).length < SLIP_PARALLEL) {
+      batch.push(work[i]!);
+      i++;
+    }
+
+    const tileFeaturesByIndex: (GeoJsonFeature[] | null)[] = batch.map(
+      (w) => w.cached,
+    );
+
+    const networkJobs = batch
+      .map((w, idx) => ({ w, idx }))
+      .filter(({ w }) => w.cached === null);
+
+    if (networkJobs.length > 0) {
+      const results = await Promise.all(
+        networkJobs.map(({ w }) =>
+          fetchSlipFeatures("miningTenements", w.tile, {
+            maxFeatures: Math.min(2000, maxTotal),
+            timeoutMs: 20_000,
+            signal,
+            correlationId: `dmirs-lga-pull-${bboxKey(w.tile)}`,
+          }).then((result) => ({ w, result })),
+        ),
+      );
+      tilesQueried += networkJobs.length;
+      for (const { w, result } of results) {
+        if (!result.ok) {
+          // Hard fail: SLIP unreachable. No mock fallback. Abandon batch.
+          throw new Error(
+            `SLIP unreachable for tile ${w.tile.join(",")}: ${result.code}: ${result.error}`,
+          );
+        }
+        const feats = [...result.features];
+        try {
+          writeFileSync(
+            w.cachePath,
+            JSON.stringify(
+              {
+                bbox: w.tile,
+                queriedAt: result.queriedAt,
+                features: feats,
+              } satisfies CachedTile,
+              null,
+              2,
+            ),
+          );
+        } catch {
+          // Cache write failure is non-fatal.
+        }
+        const slot = batch.indexOf(w);
+        tileFeaturesByIndex[slot] = feats;
       }
     }
 
-    for (const feat of tileFeatures) {
-      // Dedup by tenement ID across overlapping tiles.
-      const id = pickTenementId(feat) ?? JSON.stringify(feat.properties).slice(0, 64);
-      if (seen.has(id)) continue;
-      seen.add(id);
-      all.push(feat);
-      if (all.length >= maxTotal) break;
+    for (const tileFeatures of tileFeaturesByIndex) {
+      if (tileFeatures === null) continue;
+      for (const feat of tileFeatures) {
+        // Dedup by tenement ID across overlapping tiles.
+        const id =
+          pickTenementId(feat) ?? JSON.stringify(feat.properties).slice(0, 64);
+        if (seen.has(id)) continue;
+        seen.add(id);
+        all.push(feat);
+        if (all.length >= maxTotal) break outer;
+      }
     }
   }
 

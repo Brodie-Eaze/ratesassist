@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, Suspense } from "react";
+import { useState, useEffect, useMemo, Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Sidebar } from "@/components/Sidebar";
@@ -79,6 +79,32 @@ function RecoveryPageInner() {
       setRecentlyGrantedOnly(true);
     }
   }, [searchParams]);
+
+  // PERF-009: per-signal sample lookup, computed once per data change.
+  // Previously every render iterated `data.stats.signalCounts` and called
+  // `data.mismatches.find(...)` for every entry — O(signals * mismatches)
+  // each render.
+  const signalSamples = useMemo(() => {
+    const map = new Map<string, SignalHit>();
+    if (fetchState.status !== "ok") return map;
+    for (const m of fetchState.data.mismatches) {
+      for (const s of m.signals) {
+        if (!map.has(s.id)) map.set(s.id, s);
+      }
+    }
+    return map;
+  }, [fetchState]);
+
+  // PERF-008: count of recently-granted candidates is derived data; cache
+  // it instead of re-filtering every render.
+  const recentlyGrantedCount = useMemo(() => {
+    if (fetchState.status !== "ok") return 0;
+    let n = 0;
+    for (const m of fetchState.data.mismatches) {
+      if (m.signals.some((s) => s.id === RECENTLY_GRANTED_SIGNAL_ID)) n++;
+    }
+    return n;
+  }, [fetchState]);
 
   if (fetchState.status === "loading") return <LoadingState />;
   if (fetchState.status === "error") return <ErrorState message={fetchState.error} />;
@@ -177,8 +203,7 @@ function RecoveryPageInner() {
               {Object.entries(data.stats.signalCounts)
                 .sort((a, b) => b[1] - a[1])
                 .map(([id, count]) => {
-                  const sample = data.mismatches.find((m) => m.signals.some((s) => s.id === id));
-                  const sig = sample?.signals.find((s) => s.id === id);
+                  const sig = signalSamples.get(id);
                   if (!sig) return null;
                   const meta = CATEGORY_META[sig.category];
                   const Icon = meta.icon;
@@ -237,9 +262,7 @@ function RecoveryPageInner() {
               <BellRing className="w-3 h-3" />
               Newly granted only
               <span className="text-[10px] opacity-70 ml-1">
-                {data.mismatches.filter((m) =>
-                  m.signals.some((s) => s.id === RECENTLY_GRANTED_SIGNAL_ID),
-                ).length}
+                {recentlyGrantedCount}
               </span>
             </button>
           </div>

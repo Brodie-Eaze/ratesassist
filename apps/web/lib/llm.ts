@@ -7,6 +7,63 @@ import type { ChatMessage, ToolCall } from "./types";
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY ?? "";
 const MODEL = "claude-sonnet-4-6";
+
+// SEC-007: AU region pinning. Resolve Anthropic base URL once at module load
+// and refuse non-AU endpoints in production. Bedrock Sydney pattern allowed.
+const ANTHROPIC_BASE_URL_DEFAULT = "https://api.anthropic.com.au";
+const ANTHROPIC_BASE_URL_ENV = (process.env.ANTHROPIC_BASE_URL ?? "").trim();
+
+function isAllowedAuBaseUrl(url: string): boolean {
+  if (url === "https://api.anthropic.com.au") return true;
+  // Bedrock AU regional pattern, e.g. https://bedrock-runtime.ap-southeast-2.amazonaws.com(.au)
+  if (/^https:\/\/[a-z0-9.-]+\.amazonaws\.com(\.au)?(\/|$)/i.test(url)) return true;
+  return false;
+}
+
+function resolveAnthropicBaseUrl(): string {
+  const candidate =
+    ANTHROPIC_BASE_URL_ENV.length > 0 ? ANTHROPIC_BASE_URL_ENV : ANTHROPIC_BASE_URL_DEFAULT;
+  if (process.env.NODE_ENV === "production") {
+    if (!isAllowedAuBaseUrl(candidate)) {
+      throw new Error(
+        `[llm] ANTHROPIC_BASE_URL refused in production: '${candidate}'. ` +
+          `Must be https://api.anthropic.com.au or a *.amazonaws.com(.au) Bedrock endpoint.`,
+      );
+    }
+    return candidate;
+  }
+  if (ANTHROPIC_BASE_URL_ENV.length > 0 && !isAllowedAuBaseUrl(ANTHROPIC_BASE_URL_ENV)) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[llm] ANTHROPIC_BASE_URL '${ANTHROPIC_BASE_URL_ENV}' is not an AU endpoint; allowed in dev only.`,
+    );
+  }
+  return candidate;
+}
+
+const RESOLVED_ANTHROPIC_BASE_URL: string = resolveAnthropicBaseUrl();
+
+// SEC-016: PII scrubber for outbound user messages. Redacts AU ABNs, AU
+// phone numbers, and email addresses before forwarding to Anthropic. The
+// caller retains the unredacted text in our internal log for audit.
+// Order matters: emails first (they contain @), then ABNs (digit runs),
+// then phone numbers (overlap with ABN digit clusters if not narrowed).
+const EMAIL_RE = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g;
+const ABN_RE = /\b\d{2}[\s-]?\d{3}[\s-]?\d{3}[\s-]?\d{3}\b/g;
+// AU phone numbers, broad pattern.
+const AU_PHONE_RE =
+  /(?:\+?61[\s-]?\d(?:[\s-]?\d){7,9}|\b0[2-478](?:[\s-]?\d){8}\b|\b04\d{2}[\s-]?\d{3}[\s-]?\d{3}\b)/g;
+
+export function scrubPii(text: string): string {
+  if (process.env.RA_DISABLE_PII_SCRUB === "1") return text;
+  // Phones first: +61-prefixed numbers also satisfy the 11-digit ABN shape
+  // (`61 XXX XXX XXX`), so running ABN first would eat them.
+  return text
+    .replace(EMAIL_RE, "[EMAIL-REDACTED]")
+    .replace(AU_PHONE_RE, "[PHONE-REDACTED]")
+    .replace(ABN_RE, "[ABN-REDACTED]");
+}
+
 const MAX_TOOL_ITERATIONS = 8;
 const LIVE_TIMEOUT_MS = 45_000;
 const RETRY_BACKOFF_MS = 1_500;
@@ -94,8 +151,25 @@ export async function runChat(
     return runChatMock(history, userMessage);
   }
 
+  // SEC-016: scrub PII before forwarding to Anthropic. The unredacted message
+  // remains in our internal audit log via the caller's correlation context.
+  const scrubbedUserMessage = scrubPii(userMessage);
+  if (scrubbedUserMessage !== userMessage) {
+    // eslint-disable-next-line no-console
+    console.info(
+      JSON.stringify({
+        level: "info",
+        scope: "llm",
+        event: "security.pii_scrubbed",
+        correlationId: correlationId ?? null,
+        originalLength: userMessage.length,
+        scrubbedLength: scrubbedUserMessage.length,
+      }),
+    );
+  }
+
   try {
-    return await runChatLive(history, userMessage, correlationId);
+    return await runChatLive(history, scrubbedUserMessage, correlationId);
   } catch (e: unknown) {
     if (e instanceof Error && e.name === "AbortError") {
       throw e;
@@ -170,7 +244,10 @@ async function runChatLiveInner(
   abortSignal: AbortSignal,
   _correlationId?: string,
 ): Promise<LlmResult> {
-  const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
+  const client = new Anthropic({
+    apiKey: ANTHROPIC_API_KEY,
+    baseURL: RESOLVED_ANTHROPIC_BASE_URL,
+  });
   const toolCalls: ToolCall[] = [];
   const anthropicTools: Anthropic.Tool[] = TOOLS.map(toAnthropicTool);
 

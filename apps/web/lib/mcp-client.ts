@@ -59,6 +59,18 @@ function resolveAdapterPath(): string {
     return path.resolve(root, "packages/adapter-demo/dist/server.js");
   }
 
+  // SEC-010: in production, refuse env-driven adapter path overrides outright.
+  // The override is a useful dev/test affordance but is too sharp an edge in
+  // production — a compromised env would let an attacker pivot to arbitrary
+  // binaries inside the deployment image.
+  if (process.env.NODE_ENV === "production") {
+    mcpLog.warn(
+      { event: "security.mcp_adapter_override_refused", override },
+      "RA_MCP_ADAPTER_PATH override refused in production; falling back to bundled adapter",
+    );
+    return path.resolve(root, "packages/adapter-demo/dist/server.js");
+  }
+
   // SEC: env override must resolve inside the monorepo and end in
   // /dist/server.js to foreclose arbitrary-binary execution via env injection.
   let resolved: string;

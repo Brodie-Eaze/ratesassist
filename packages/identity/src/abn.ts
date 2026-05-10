@@ -42,7 +42,16 @@ const RETRY_BACKOFF_MS = 1_500;
 /** HTTP status codes considered retriable. */
 const RETRIABLE_STATUS_CODES = new Set<number>([429, 503, 504]);
 
-/** Cache TTL for live ABN responses. ABN status changes are rare. */
+/**
+ * Cache TTL for live ABN responses. ABN status changes are rare, so 24h is
+ * a good balance between freshness and cost — well within ABR's published
+ * change cadence.
+ *
+ * NOTE (Phase 2): this cache is process-local. Multi-replica deployments
+ * MUST migrate to Redis to share state and to bound the per-process memory
+ * footprint. The shape (`{ ts: number, value: AbnLookupResult }`) is small
+ * enough to lift-and-shift directly; the caller surface stays unchanged.
+ */
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 /** ABR's "ABN not found" status string. */

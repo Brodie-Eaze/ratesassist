@@ -1,6 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
+  "regions": ["syd1"],
   "buildCommand": "npm run build --workspace=@ratesassist/contract --if-present && npm run build --workspace=@ratesassist/identity --if-present && npm run build --workspace=@ratesassist/recovery-engine --if-present && npm run build --workspace=@ratesassist/spatial --if-present && npm run build --workspace=@ratesassist/adapter-demo && npm run build --workspace=apps/web",
   "installCommand": "npm install",
   "outputDirectory": "apps/web/.next",

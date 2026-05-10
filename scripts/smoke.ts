@@ -65,7 +65,15 @@ function expect(cond: unknown, msg: string): asserts cond {
 }
 
 async function getJson(path: string, init?: RequestInit): Promise<{ status: number; body: unknown; raw: string }> {
-  const r = await fetch(`${BASE}${path}`, init);
+  // Inject a same-origin `Origin` header on mutating verbs to satisfy the
+  // SEC-014 CSRF middleware. The smoke harness drives the local dev server
+  // as a first-party caller, so this is the honest representation.
+  const method = (init?.method ?? "GET").toUpperCase();
+  const needsOrigin = method !== "GET" && method !== "HEAD" && method !== "OPTIONS";
+  const headers = new Headers(init?.headers);
+  if (needsOrigin && !headers.has("origin")) headers.set("origin", BASE);
+  const merged: RequestInit = { ...init, headers };
+  const r = await fetch(`${BASE}${path}`, merged);
   const raw = await r.text();
   let body: unknown = null;
   try { body = JSON.parse(raw); } catch { body = raw; }
@@ -319,7 +327,7 @@ async function main(): Promise<number> {
     for (let i = 0; i < N; i++) {
       reqs.push(fetch(`${BASE}/api/tools/search_property`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", origin: BASE },
         body: JSON.stringify({ input: { query: "x" } }),
       }));
     }

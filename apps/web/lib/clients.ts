@@ -18,7 +18,7 @@ import {
   findMismatches,
   type EvaluationContext,
 } from "@ratesassist/recovery-engine";
-import type { MismatchCandidate, Tenement } from "@ratesassist/contract";
+import type { MismatchCandidate, Property, Tenement } from "@ratesassist/contract";
 
 import { OWNERS, PROPERTIES, TENEMENTS } from "./data";
 
@@ -78,10 +78,36 @@ export function getEvaluationContext(): EvaluationContext {
     }
   }
 
+  // PERF-002 / PERF-003: build per-owner and per-suburb-rural indexes in a
+  // single pass over PROPERTIES so the scoring engine can look up O(1)
+  // instead of re-scanning the full property list on every signal eval.
+  const propertiesByOwnerId = new Map<string, Property[]>();
+  const ruralBySuburb = new Map<string, Property[]>();
+  for (const p of PROPERTIES) {
+    for (const ownerId of p.ownerIds) {
+      const bucket = propertiesByOwnerId.get(ownerId);
+      if (bucket === undefined) {
+        propertiesByOwnerId.set(ownerId, [p]);
+      } else {
+        bucket.push(p);
+      }
+    }
+    if (p.landUse === "Rural") {
+      const bucket = ruralBySuburb.get(p.suburb);
+      if (bucket === undefined) {
+        ruralBySuburb.set(p.suburb, [p]);
+      } else {
+        bucket.push(p);
+      }
+    }
+  }
+
   cachedContext = {
     properties: PROPERTIES,
     ownersById,
     tenementsByAssessment,
+    propertiesByOwnerId,
+    ruralBySuburb,
   };
   return cachedContext;
 }
@@ -142,6 +168,24 @@ export function recoveryStatsForWeb(councilCode?: string): WebRecoveryStats {
     councilCode !== undefined
       ? findMismatches(ctx, { council: councilCode })
       : findMismatches(ctx);
+  return webStatsFromCandidates(candidates);
+}
+
+/**
+ * PERF-001: stats overload for callers that have already computed the
+ * candidate set. Avoids the double `findMismatches` sweep that
+ * `/api/data` was doing (once explicitly + once inside
+ * `recoveryStatsForWeb`). Same legacy-shape output.
+ */
+export function recoveryStatsFor(
+  candidates: readonly MismatchCandidate[],
+): WebRecoveryStats {
+  return webStatsFromCandidates(candidates);
+}
+
+function webStatsFromCandidates(
+  candidates: readonly MismatchCandidate[],
+): WebRecoveryStats {
   const s = engineRecoveryStats(candidates);
   return {
     total: s.total,

@@ -15,7 +15,8 @@ import {
   severityForScore,
   type EvaluationContext,
 } from "../src/scoring.js";
-import { SIGNAL_CATALOGUE } from "../src/signals.js";
+import { findMismatches } from "../src/findMismatches.js";
+import { SIGNAL_BY_ID, SIGNAL_CATALOGUE, getSignal } from "../src/signals.js";
 
 // ---- Fixture helpers ----
 
@@ -424,5 +425,160 @@ describe("evaluateSignals", () => {
     expect(tenementClassIds).toEqual([
       "reg.tenement.producing.on_rural_or_vacant",
     ]);
+  });
+});
+
+// ---- PERF-004: O(1) signal lookup ----
+
+describe("SIGNAL_BY_ID index", () => {
+  it("contains every catalogue entry keyed by id", () => {
+    expect(SIGNAL_BY_ID.size).toBe(SIGNAL_CATALOGUE.length);
+    for (const sig of SIGNAL_CATALOGUE) {
+      expect(SIGNAL_BY_ID.get(sig.id)).toBe(sig);
+    }
+  });
+
+  it("getSignal() resolves through the Map (O(1))", () => {
+    const expected = SIGNAL_CATALOGUE[0]!;
+    expect(getSignal(expected.id)).toBe(expected);
+    expect(getSignal("nope.does.not.exist")).toBeUndefined();
+  });
+});
+
+// ---- PERF-002 / PERF-003: index correctness via context indexes ----
+
+describe("EvaluationContext indexes (PERF-002 / PERF-003)", () => {
+  it("propertiesByOwnerId yields the same portfolio behaviour as the linear scan", () => {
+    const props = [
+      prop({ assessmentNumber: "A1", landUse: "Rural", ownerIds: ["O1"] }),
+      prop({ assessmentNumber: "A2", landUse: "Rural", ownerIds: ["O1"] }),
+      prop({ assessmentNumber: "A3", landUse: "Rural", ownerIds: ["O1"] }),
+      prop({ assessmentNumber: "A4", landUse: "Rural", ownerIds: ["O2"] }),
+    ];
+    const tenMap = new Map<string, readonly Tenement[]>([
+      ["A1", [ten({ tenementId: "M1", isProducing: false, type: "E" })]],
+      ["A2", [ten({ tenementId: "M2", isProducing: false, type: "E" })]],
+    ]);
+    const owners = [owner({ ownerId: "O1" }), owner({ ownerId: "O2", name: "Other" })];
+
+    const linear = ctxFrom({ properties: props, owners, tenementsByAssessment: tenMap });
+    const indexed: EvaluationContext = {
+      ...linear,
+      propertiesByOwnerId: new Map([
+        ["O1", props.filter((p) => p.ownerIds.includes("O1"))],
+        ["O2", props.filter((p) => p.ownerIds.includes("O2"))],
+      ]),
+    };
+
+    const linearIds = evaluateSignals(props[0]!, linear).map((h) => h.id);
+    const indexedIds = evaluateSignals(props[0]!, indexed).map((h) => h.id);
+    expect(indexedIds).toEqual(linearIds);
+    expect(indexedIds).toContain("beh.owner_portfolio_tenement_majority");
+  });
+
+  it("ruralBySuburb yields the same percentile-outlier behaviour as the linear scan", () => {
+    const target = prop({
+      assessmentNumber: "T1",
+      suburb: "Karratha",
+      landUse: "Rural",
+      valuation: 5_000_000,
+    });
+    const peers: Property[] = Array.from({ length: 20 }, (_, i) =>
+      prop({
+        assessmentNumber: `P${i}`,
+        suburb: "Karratha",
+        landUse: "Rural",
+        valuation: 100_000 + i * 1_000,
+        ownerIds: [`Other${i}`],
+      }),
+    );
+    const props = [target, ...peers];
+    const linear = ctxFrom({ properties: props, owners: [owner()] });
+    const indexed: EvaluationContext = {
+      ...linear,
+      ruralBySuburb: new Map([
+        ["Karratha", props.filter((p) => p.landUse === "Rural")],
+      ]),
+    };
+
+    const linearIds = evaluateSignals(target, linear).map((h) => h.id);
+    const indexedIds = evaluateSignals(target, indexed).map((h) => h.id);
+    expect(indexedIds).toEqual(linearIds);
+    expect(indexedIds).toContain("spat.outlier.high_value_rural");
+  });
+});
+
+// ---- Sanity perf ceiling: 5000-property sweep ----
+
+describe("findMismatches perf-ceiling", () => {
+  it("completes a 5000-property sweep within 2s with indexes wired", () => {
+    const N = 5000;
+    const SUBURBS = 20;
+    const OWNERS_N = 250;
+    const properties: Property[] = [];
+    for (let i = 0; i < N; i++) {
+      const ownerId = `O${i % OWNERS_N}`;
+      const suburb = `S${i % SUBURBS}`;
+      const isRural = i % 3 === 0;
+      properties.push(
+        prop({
+          assessmentNumber: `A${i}`,
+          suburb,
+          landUse: isRural ? "Rural" : "Residential",
+          valuation: 100_000 + (i % 50) * 5_000,
+          ownerIds: [ownerId],
+        }),
+      );
+    }
+    const owners: Owner[] = Array.from({ length: OWNERS_N }, (_, i) =>
+      owner({ ownerId: `O${i}`, name: `Holder ${i} Pty Ltd` }),
+    );
+
+    // Tenements on every 7th rural property — enough to drive owner
+    // portfolio + outlier signals.
+    const tenMap = new Map<string, readonly Tenement[]>();
+    for (let i = 0; i < properties.length; i += 7) {
+      const p = properties[i]!;
+      if (p.landUse === "Rural") {
+        tenMap.set(p.assessmentNumber, [
+          ten({
+            tenementId: `M-${i}`,
+            type: "M",
+            isProducing: i % 14 === 0,
+          }),
+        ]);
+      }
+    }
+
+    const propertiesByOwnerId = new Map<string, Property[]>();
+    const ruralBySuburb = new Map<string, Property[]>();
+    for (const p of properties) {
+      for (const oid of p.ownerIds) {
+        const b = propertiesByOwnerId.get(oid);
+        if (b) b.push(p);
+        else propertiesByOwnerId.set(oid, [p]);
+      }
+      if (p.landUse === "Rural") {
+        const b = ruralBySuburb.get(p.suburb);
+        if (b) b.push(p);
+        else ruralBySuburb.set(p.suburb, [p]);
+      }
+    }
+
+    const ctx: EvaluationContext = {
+      properties,
+      ownersById: new Map(owners.map((o) => [o.ownerId, o])),
+      tenementsByAssessment: tenMap,
+      propertiesByOwnerId,
+      ruralBySuburb,
+    };
+
+    const t0 = Date.now();
+    const out = findMismatches(ctx);
+    const elapsed = Date.now() - t0;
+
+    expect(out.length).toBeGreaterThan(0);
+    // Sanity ceiling, not a real benchmark.
+    expect(elapsed).toBeLessThan(2_000);
   });
 });

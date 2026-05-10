@@ -5,10 +5,28 @@ export const RATE_LIMIT_WINDOW_MS = 60_000;
 
 const buckets = new Map<string, { count: number; resetAt: number }>();
 
+// SEC-008: only trust X-Forwarded-For when running behind a known proxy.
+// On Vercel that's the deployment edge; elsewhere XFF is spoofable. The
+// VERCEL=1 environment variable is set by the platform on every Vercel
+// deploy; we treat that as an implicit trusted-proxy signal. Operators on
+// other PaaS platforms must opt in explicitly via RA_TRUSTED_PROXY=1.
+function trustsForwardedFor(): boolean {
+  if (process.env.RA_TRUSTED_PROXY === "1") return true;
+  if (process.env.VERCEL === "1") return true;
+  return false;
+}
+
 export function getClientIp(req: NextRequest): string {
-  const fwd = req.headers.get("x-forwarded-for");
-  if (fwd) return fwd.split(",")[0]!.trim();
-  return req.headers.get("x-real-ip") ?? "unknown";
+  if (trustsForwardedFor()) {
+    const fwd = req.headers.get("x-forwarded-for");
+    if (fwd) return fwd.split(",")[0]!.trim();
+    const realIp = req.headers.get("x-real-ip");
+    if (realIp) return realIp;
+  }
+  // NextRequest exposes `ip` on Vercel and some adapters.
+  const reqIp = (req as unknown as { ip?: string }).ip;
+  if (reqIp && reqIp.length > 0) return reqIp;
+  return "unknown";
 }
 
 export function rateLimit(

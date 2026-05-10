@@ -143,8 +143,17 @@ export const SIGNAL_CATALOGUE: readonly SignalDef[] = [
   },
 ];
 
+/**
+ * O(1) lookup index built once at module load. Avoids the linear find()
+ * scan that ran on every call to getSignal() / computeComposite() — a hot
+ * path during portfolio sweeps (PERF-004).
+ */
+export const SIGNAL_BY_ID: ReadonlyMap<string, SignalDef> = new Map(
+  SIGNAL_CATALOGUE.map((s) => [s.id, s]),
+);
+
 export function getSignal(id: string): SignalDef | undefined {
-  return SIGNAL_CATALOGUE.find((s) => s.id === id);
+  return SIGNAL_BY_ID.get(id);
 }
 
 /**
