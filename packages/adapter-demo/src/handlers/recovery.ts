@@ -128,6 +128,13 @@ export async function generateEvidencePackHandler(
         data: { kind: "no_owner", property: result.property },
         mutated: false,
       };
+    case "no_state_template":
+      return {
+        ok: true,
+        output: `No statutory-citation template is available for ${result.state}. A council-grade evidence pack cannot be generated until the template is added.`,
+        data: { kind: "no_state_template", state: result.state },
+        mutated: false,
+      };
     case "ok": {
       const pack = result.pack;
       return {

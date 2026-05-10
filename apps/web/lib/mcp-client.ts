@@ -26,6 +26,9 @@ import fs from "node:fs";
 import path from "node:path";
 
 import type { schemas } from "@ratesassist/contract";
+import { scoped } from "./logger";
+
+const mcpLog = scoped("mcp-client");
 
 type ToolResult = schemas.ToolResult;
 
@@ -131,7 +134,7 @@ async function spawnLive(): Promise<Live> {
 
   const markDead = (err?: Error): void => {
     handle.dead = true;
-    if (err) console.error("[mcp-client] transport error", err.message);
+    if (err) mcpLog.error({ err: err.message }, "transport.error");
     if (live === handle) live = null;
   };
   transport.onclose = (): void => markDead();
@@ -224,16 +227,13 @@ export async function runMcpTool(
   const timeoutMs = opts.timeoutMs ?? resolveTimeoutMs();
 
   const log = (durationMs: number, ok: boolean, code?: string): void => {
-    console.log(
-      JSON.stringify({
-        scope: "mcp-client",
-        correlationId,
-        tool: name,
-        durationMs,
-        ok,
-        ...(code !== undefined ? { code } : {}),
-      }),
-    );
+    mcpLog.info({
+      correlationId,
+      tool: name,
+      durationMs,
+      ok,
+      ...(code !== undefined ? { code } : {}),
+    }, "tool.call");
   };
 
   try {

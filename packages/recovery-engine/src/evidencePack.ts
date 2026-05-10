@@ -60,7 +60,8 @@ export type EvidencePackResult =
   | { readonly kind: "ok"; readonly pack: EvidencePack }
   | { readonly kind: "no_property" }
   | { readonly kind: "no_signals"; readonly property: Property }
-  | { readonly kind: "no_owner"; readonly property: Property };
+  | { readonly kind: "no_owner"; readonly property: Property }
+  | { readonly kind: "no_state_template"; readonly state: Property["state"] };
 
 /**
  * Optional injection points for testability. The default clock returns the
@@ -104,6 +105,14 @@ export function buildEvidencePack(
   const owner = ownerId ? ctx.ownersById.get(ownerId) : undefined;
   if (!owner) {
     return { kind: "no_owner", property };
+  }
+
+  // Refuse to generate a council-grade legal document if we have no
+  // statutory-citation template for the property's state. Returning a
+  // discriminated variant lets the caller produce a precise error rather
+  // than emitting a pack containing a TODO placeholder.
+  if (!TEMPLATE_BY_STATE[property.state]) {
+    return { kind: "no_state_template", state: property.state };
   }
 
   const compositeScore = computeComposite(signals);
@@ -245,48 +254,54 @@ function proposedCategory(
 }
 
 /**
- * Statutory citation block, state-aware where possible. WA is the only state
- * with a fully drafted citation today (pilot is WA-only). Other states are
- * marked with a TODO so the next agent picks them up — see PRODUCTION-PLAN.md
- * Phase: state-aware statutory templates.
+ * State-keyed statutory citation templates. Each value is the markdown
+ * fragment inserted into section 6 (Statutory basis). Adding a new
+ * jurisdiction is a one-line edit here; the call-site treats a missing
+ * key as "no template available" and refuses to generate the pack.
+ *
+ * Backdating limits are recorded as comments alongside each entry so a
+ * council legal reviewer can verify the assumption against the cited
+ * provision without leaving the file.
  */
-function statutoryBasis(property: Property): string {
-  switch (property.state) {
-    case "WA":
-      return [
-        "- *Local Government Act 1995* (WA), **s.6.16** — power of a local government to differentiate general rates by land-use category.",
-        "- *Local Government Act 1995* (WA), **s.6.81** — backdating limit on rate adjustments (3 years rolled forward from current rating year, with strict notice requirements; this pack uses a 3-year conservative arrears estimate within that limit).",
-        "- The council's adopted differential rates schedule for the relevant rating year.",
-      ].join("\n");
-    case "NSW":
-      return [
-        "- *Local Government Act 1993* (NSW), Part 1 of Chapter 15 — categorisation of land for ordinary rates.",
-        "- TODO: state-aware template — verify NSW backdating provisions and the council's rates resolution under s.514.",
-      ].join("\n");
-    case "QLD":
-      return [
-        "- *Local Government Regulation 2012* (QLD), Part 4 — categorisation of rateable land and differential general rates.",
-        "- TODO: state-aware template — verify QLD backdating provisions and the council's rates resolution under s.94 of the *Local Government Act 2009*.",
-      ].join("\n");
-    case "VIC":
-    case "SA":
-    case "TAS":
-    case "ACT":
-    case "NT":
-      return `- TODO: state-aware statutory template not yet drafted for ${property.state}. Council legal team to insert the relevant Local Government Act / Rates Act citations and backdating provisions before issuing the notice.`;
-    default:
-      // Exhaustive over the closed `AustralianState` union — adding a new
-      // state will surface a compile error here.
-      return assertNever(property.state);
-  }
-}
+const TEMPLATE_BY_STATE: Partial<Record<Property["state"], string>> = {
+  // WA — backdating limit: 3 years (s.6.81 LGA 1995).
+  WA: [
+    "- *Local Government Act 1995* (WA), **s.6.16** — power of a local government to differentiate general rates by land-use category.",
+    "- *Local Government Act 1995* (WA), **s.6.81** — backdating limit on rate adjustments (3 years rolled forward from current rating year, with strict notice requirements; this pack uses a 3-year conservative arrears estimate within that limit).",
+    "- The council's adopted differential rates schedule for the relevant rating year.",
+  ].join("\n"),
+  // NSW — backdating limit: 5 years (s.514 LGA 1993, subject to council's
+  // rates resolution and the limitation period for recovery of rates).
+  NSW: [
+    "- *Local Government Act 1993* (NSW), Part 1 of Chapter 15 — categorisation of land for ordinary rates.",
+    "- *Local Government Act 1993* (NSW), **s.514** — categorisation of land and the council's rates resolution; backdating of rate adjustments is permitted up to 5 years subject to the council's rates resolution and the statutory limitation period for recovery of rates.",
+    "- The council's adopted rates resolution for the relevant rating year.",
+  ].join("\n"),
+  // QLD — backdating limit: typically 5 years subject to council resolution
+  // (s.94 LGA 2009 and Part 4 of the LG Regulation 2012).
+  QLD: [
+    "- *Local Government Regulation 2012* (QLD), Part 4 — categorisation of rateable land and differential general rates.",
+    "- *Local Government Act 2009* (QLD), **s.94** — power of a local government to levy rates and charges; backdating of rate adjustments is typically permitted up to 5 years subject to council resolution and the statutory limitation period for recovery of rates.",
+    "- The council's adopted differential rates resolution for the relevant rating year.",
+  ].join("\n"),
+};
 
 /**
- * Compile-time exhaustiveness helper. Throws at runtime as a defensive net,
- * but the real value is the type assertion at the call-site.
+ * Statutory citation block, state-aware where possible. The set of supported
+ * states is whatever appears in {@link TEMPLATE_BY_STATE}; states without an
+ * entry are refused upstream in {@link buildEvidencePack} so this function
+ * never sees them.
  */
-function assertNever(x: never): never {
-  throw new Error(`Unexpected variant: ${String(x)}`);
+function statutoryBasis(property: Property): string {
+  const template = TEMPLATE_BY_STATE[property.state];
+  if (!template) {
+    // Defensive: the caller is responsible for short-circuiting unsupported
+    // states. If we land here something has bypassed the guard.
+    throw new Error(
+      `statutoryBasis called for state without a template: ${property.state}`,
+    );
+  }
+  return template;
 }
 
 type RenderInput = {

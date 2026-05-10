@@ -26,10 +26,15 @@ function ctx() {
 }
 
 describe("dispatch", () => {
+  // Dispatcher writes structured logs to STDERR (fd 2) — STDOUT is reserved
+  // for MCP frames. Spy on process.stderr.write so the assertion matches the
+  // actual transport.
   let errorSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
-    errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    errorSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
   });
   afterEach(() => {
     errorSpy.mockRestore();

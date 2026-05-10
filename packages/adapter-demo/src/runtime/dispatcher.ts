@@ -24,6 +24,30 @@ import { HANDLERS } from "../handlers/index.js";
 import type { RequestContext } from "./context.js";
 import { failure } from "./errors.js";
 
+/**
+ * Structured log line on STDERR.
+ *
+ * The adapter's STDOUT is reserved for MCP frames — anything written there
+ * corrupts the protocol. We bypass console.* and write directly to fd 2
+ * so logging is independent of any inherited console binding the parent
+ * may have set up.
+ */
+function logErr(payload: Record<string, unknown>): void {
+  try {
+    const line =
+      JSON.stringify({
+        level: "error",
+        scope: "adapter-demo/dispatcher",
+        time: new Date().toISOString(),
+        ...payload,
+      }) + "\n";
+    // fd 2 = stderr. process.stderr.write is sync-ish on TTYs / pipes.
+    process.stderr.write(line);
+  } catch {
+    // never let logging throw
+  }
+}
+
 /** Set of all valid tool names, derived from the contract catalogue. */
 const KNOWN_TOOLS: ReadonlySet<ToolName> = new Set(
   Object.keys(inputs) as ToolName[],
@@ -93,8 +117,15 @@ export async function dispatch(args: {
     raw = await handler(parsed.data, context);
   } catch (e: unknown) {
     // Log the full error (including stack) here so it isn't lost when we
-    // construct the PII-clean failure result below.
-    console.error("[dispatch]", context.correlationId, toolName, e);
+    // construct the PII-clean failure result below. STDERR keeps the MCP
+    // STDOUT framing intact.
+    logErr({
+      msg: "dispatch.handler.threw",
+      correlationId: context.correlationId,
+      toolName,
+      err: e instanceof Error ? e.message : String(e),
+      stack: e instanceof Error ? e.stack : undefined,
+    });
     const message = e instanceof Error ? e.message : "handler threw";
     // Important: do NOT include payload or stack in the message — keep
     // log surfaces PII-clean. The full stack is logged via console.error
