@@ -24,6 +24,8 @@ export {
   parseTenidDisplay,
   buildMinedexUrl,
   tenementTypeLabel,
+  tenementBoundingBox,
+  pointInTenementBbox,
   MINEDEX_DETAIL_URL_BASE,
   WA_FULL_BBOX,
   SEEDED_GRANTS,

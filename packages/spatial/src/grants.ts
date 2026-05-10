@@ -538,3 +538,60 @@ export type { FetchSlipFeaturesOptions };
 
 /** Discoverable WA-wide bbox constant for callers who want it. */
 export { WA_FULL_BBOX };
+
+// ===== Helpers used by the per-grant detail page =====
+
+/**
+ * Compute a bounding box [minLng, minLat, maxLng, maxLat] for a tenement
+ * geometry. Used by the grant-detail page for fitBounds and centroid match.
+ *
+ * Returns null only when the geometry has no parseable points.
+ */
+export function tenementBoundingBox(
+  geom: GeoJsonGeometry,
+): readonly [number, number, number, number] | null {
+  if (geom.type === "Point") {
+    const c = geom.coordinates;
+    const lng = c[0];
+    const lat = c[1];
+    if (typeof lng !== "number" || typeof lat !== "number") return null;
+    return [lng, lat, lng, lat];
+  }
+  let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
+  const polys: ReadonlyArray<ReadonlyArray<ReadonlyArray<ReadonlyArray<number>>>> =
+    geom.type === "Polygon"
+      ? ([geom.coordinates] as ReadonlyArray<ReadonlyArray<ReadonlyArray<ReadonlyArray<number>>>>)
+      : (geom.coordinates as ReadonlyArray<ReadonlyArray<ReadonlyArray<ReadonlyArray<number>>>>);
+  for (const poly of polys) {
+    for (const ring of poly) {
+      for (const pt of ring) {
+        const lng = pt[0];
+        const lat = pt[1];
+        if (typeof lng !== "number" || typeof lat !== "number") continue;
+        if (lat < minLat) minLat = lat;
+        if (lat > maxLat) maxLat = lat;
+        if (lng < minLng) minLng = lng;
+        if (lng > maxLng) maxLng = lng;
+      }
+    }
+  }
+  if (!Number.isFinite(minLat) || !Number.isFinite(minLng)) return null;
+  return [minLng, minLat, maxLng, maxLat];
+}
+
+/**
+ * Predicate: does a [lng, lat] point fall within the tenement's bbox?
+ *
+ * This is the conservative cheap check used by the synthetic-fallback
+ * intersection in demo mode. A real PostGIS join replaces it in Phase 2.
+ */
+export function pointInTenementBbox(
+  geom: GeoJsonGeometry,
+  point: readonly [number, number],
+): boolean {
+  const bbox = tenementBoundingBox(geom);
+  if (bbox === null) return false;
+  const [minLng, minLat, maxLng, maxLat] = bbox;
+  const [lng, lat] = point;
+  return lng >= minLng && lng <= maxLng && lat >= minLat && lat <= maxLat;
+}

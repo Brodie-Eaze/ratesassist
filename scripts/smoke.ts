@@ -159,6 +159,34 @@ async function main(): Promise<number> {
     expect(Array.isArray(b.data?.grants), `grants not an array`);
   });
 
+  // --- API: GET /api/grants/[tenementId] (per-grant briefing) ---
+  await check("GET /api/grants/M%20%204701569 (detail)", async () => {
+    const { status, body } = await getJson(
+      "/api/grants/M%20%204701569?sinceDays=365",
+    );
+    expect(status === 200, `status ${status}`);
+    const b = body as {
+      ok?: boolean;
+      data?: {
+        grant?: { tenementId?: string };
+        intersectingParcels?: unknown[];
+        cadastreSource?: string;
+      };
+    };
+    expect(b.ok === true, `ok != true`);
+    expect(b.data?.grant?.tenementId === "M  4701569", `wrong tenement`);
+    expect(Array.isArray(b.data?.intersectingParcels), `parcels not array`);
+    expect(typeof b.data?.cadastreSource === "string", `missing cadastreSource`);
+  });
+
+  // --- Page: /alerts/[tenementId] (server renders HTML) ---
+  await check("GET /alerts/M%20%204701569 (page)", async () => {
+    const r = await fetch(`${BASE}/alerts/M%20%204701569`);
+    expect(r.status === 200, `status ${r.status}`);
+    const html = await r.text();
+    expect(html.length > 100, `empty page body`);
+  });
+
   // --- API: GET /api/discovery ---
   await check("GET /api/discovery", async () => {
     const { status, body } = await getJson("/api/discovery");

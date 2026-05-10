@@ -12,6 +12,8 @@ import {
   parseTenidDisplay,
   buildMinedexUrl,
   tenementTypeLabel,
+  tenementBoundingBox,
+  pointInTenementBbox,
   MINEDEX_DETAIL_URL_BASE,
   SEEDED_GRANTS,
 } from "../src/grants.js";
@@ -219,6 +221,49 @@ describe("fetchRecentlyGrantedTenements — error paths", () => {
     if (result.ok) return;
     expect(result.code).toBe("timeout");
     expect(fetcher).not.toHaveBeenCalled();
+  });
+});
+
+describe("tenementBoundingBox / pointInTenementBbox", () => {
+  it("returns a [lng,lat,lng,lat] tuple for a Point geometry", () => {
+    const bbox = tenementBoundingBox({
+      type: "Point",
+      coordinates: [117.7935, -22.694],
+    });
+    expect(bbox).toEqual([117.7935, -22.694, 117.7935, -22.694]);
+  });
+
+  it("computes a polygon bbox correctly", () => {
+    const bbox = tenementBoundingBox({
+      type: "Polygon",
+      coordinates: [
+        [
+          [117.0, -23.0],
+          [117.5, -23.0],
+          [117.5, -22.5],
+          [117.0, -22.5],
+          [117.0, -23.0],
+        ],
+      ],
+    });
+    expect(bbox).toEqual([117.0, -23.0, 117.5, -22.5]);
+  });
+
+  it("pointInTenementBbox returns true inside, false outside", () => {
+    const geom = {
+      type: "Polygon" as const,
+      coordinates: [
+        [
+          [117.0, -23.0],
+          [117.5, -23.0],
+          [117.5, -22.5],
+          [117.0, -22.5],
+          [117.0, -23.0],
+        ],
+      ],
+    };
+    expect(pointInTenementBbox(geom, [117.25, -22.75])).toBe(true);
+    expect(pointInTenementBbox(geom, [120.0, -22.75])).toBe(false);
   });
 });
 

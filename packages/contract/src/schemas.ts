@@ -145,6 +145,13 @@ export const inputs = {
     /** Optional type-code allow-list, e.g. ["M","G","L"]. */
     types: z.array(z.string().min(1).max(4)).max(10).optional(),
   }),
+
+  get_grant_detail: z.object({
+    /** Raw tenement id (e.g. `M  4701569`) — unencoded. */
+    tenementId: z.string().min(3).max(40),
+    /** Lookback window in days for resolving the tenement against the grants feed. */
+    sinceDays: z.number().int().min(1).max(365).default(90),
+  }),
 } as const;
 
 export type ToolInputs = {

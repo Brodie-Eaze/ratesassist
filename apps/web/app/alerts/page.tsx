@@ -10,6 +10,7 @@
  */
 
 import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Sidebar } from "@/components/Sidebar";
 import { LoadingState, ErrorState, useFetch } from "@/lib/useFetch";
 import type { Council } from "@/lib/types";
@@ -57,6 +58,7 @@ function relativeDays(grantDateMs: number): string {
 }
 
 export default function AlertsPage() {
+  const router = useRouter();
   const [sinceDays, setSinceDays] = useState<number>(30);
   const [lgaName, setLgaName] = useState<string>("");
   const councilsState = useFetch<CouncilsResponse>("/api/data");
@@ -174,10 +176,13 @@ export default function AlertsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {grants.map((g) => (
+                  {grants.map((g) => {
+                    const detailHref = `/alerts/${encodeURIComponent(g.tenementId)}`;
+                    return (
                     <tr
                       key={g.tenementId}
-                      className="border-t border-ink-200 hover:bg-ink-50"
+                      className="border-t border-ink-200 hover:bg-accent-50 cursor-pointer"
+                      onClick={() => router.push(detailHref)}
                     >
                       <td className="px-4 py-2 font-mono text-ink-900">
                         {g.tenementIdDisplay}
@@ -206,6 +211,7 @@ export default function AlertsPage() {
                           href={g.detailUrl}
                           target="_blank"
                           rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
                           className="inline-flex items-center gap-1 text-accent-700 hover:underline"
                         >
                           Open
@@ -213,7 +219,8 @@ export default function AlertsPage() {
                         </a>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
