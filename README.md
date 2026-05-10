@@ -33,7 +33,7 @@ The product is anchored on a domain co-founder currently running rates departmen
 
 | Path | Contents |
 |---|---|
-| [`apps/`](apps/) | Application workspaces (web app, MCP server, etc.). |
+| [`apps/`](apps/) | Application workspaces (web app, MCP server, etc.). The web app includes a dedicated **Grant Alerts** page at `/alerts` showing newly-granted live mining tenements (DMIRS via SLIP). |
 | [`packages/`](packages/) | Shared TypeScript packages (adapters, contracts, identity, recovery engine, spatial). |
 | [`internal/`](internal/) | Strategic and operational artefacts — pitch, brand, entity structure, founder discovery, partner outreach drafts. Not part of the technical product. |
 

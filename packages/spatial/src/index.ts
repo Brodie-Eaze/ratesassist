@@ -19,4 +19,16 @@ export {
   parseWfsFeatureCollection,
   type FetchDmirsOptions,
 } from "./dmirs.js";
+export {
+  fetchRecentlyGrantedTenements,
+  parseTenidDisplay,
+  buildMinedexUrl,
+  tenementTypeLabel,
+  MINEDEX_DETAIL_URL_BASE,
+  WA_FULL_BBOX,
+  SEEDED_GRANTS,
+  type GrantedTenement,
+  type GrantsFetchResult,
+  type RecentlyGrantedOpts,
+} from "./grants.js";
 export { bufferPolygon } from "./buffer.js";

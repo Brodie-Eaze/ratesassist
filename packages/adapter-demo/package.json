@@ -29,6 +29,7 @@
     "@ratesassist/contract": "*",
     "@ratesassist/identity": "*",
     "@ratesassist/recovery-engine": "*",
+    "@ratesassist/spatial": "*",
     "zod": "^3.23.8"
   },
   "devDependencies": {

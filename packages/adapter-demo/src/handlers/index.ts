@@ -48,6 +48,7 @@ import {
   verifyAbnHandler,
   listCouncilsHandler,
 } from "./identity.js";
+import { listRecentGrantsHandler } from "./recentGrants.js";
 
 /**
  * Generic handler signature. `Input` is the precise type for the matching
@@ -84,4 +85,5 @@ export const HANDLERS: {
   recovery_summary: recoverySummaryHandler,
   daily_briefing: dailyBriefingHandler,
   verify_abn: verifyAbnHandler,
+  list_recent_grants: listRecentGrantsHandler,
 };

@@ -136,6 +136,15 @@ export const inputs = {
   verify_abn: z.object({
     abn,
   }),
+
+  list_recent_grants: z.object({
+    /** LGA name filter (case-insensitive substring). Optional. */
+    lgaName: z.string().min(1).max(120).optional(),
+    /** Lookback window in days. Default 30, max 365. */
+    sinceDays: z.number().int().min(1).max(365).default(30),
+    /** Optional type-code allow-list, e.g. ["M","G","L"]. */
+    types: z.array(z.string().min(1).max(4)).max(10).optional(),
+  }),
 } as const;
 
 export type ToolInputs = {

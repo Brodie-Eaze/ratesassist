@@ -62,6 +62,8 @@ const descriptions: Record<keyof typeof inputs, string> = {
     "Morning briefing for a rates officer: overdue, recovery candidates, action items.",
   verify_abn:
     "Verify an Australian Business Number via the ATO public ABN Lookup API. Returns entity name, status, type, GST registration.",
+  list_recent_grants:
+    "List recently-granted live mining tenements (DMIRS via SLIP). The headline sales-trigger event: a fresh LIVE grant on a parcel currently rated rural/vacant lawfully unlocks a higher rate category. Returns typed grant records with MINEDEX deep-links and provisional-status flags for the 30-day appeal window.",
 };
 
 /**

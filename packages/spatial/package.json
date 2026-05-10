@@ -10,6 +10,7 @@
     ".": "./src/index.ts",
     "./slip": "./src/slip.ts",
     "./dmirs": "./src/dmirs.ts",
+    "./grants": "./src/grants.ts",
     "./buffer": "./src/buffer.ts"
   },
   "scripts": {

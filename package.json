@@ -16,6 +16,7 @@
     "ship-check": "bash scripts/ship-check.sh",
     "smoke": "tsx scripts/smoke.ts",
     "dmirs-pull": "tsx scripts/dmirs-lga-pull.ts",
+    "grants-poll": "tsx scripts/grants-poll.ts",
     "prepare": "husky"
   },
   "devDependencies": {

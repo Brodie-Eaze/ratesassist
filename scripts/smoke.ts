@@ -76,7 +76,7 @@ const PAGE_ROUTES = [
   "/",
   "/intel", "/reconciliation", "/activity", "/recovery", "/signals",
   "/discovery", "/certificates", "/citizen", "/tenants", "/connections",
-  "/map", "/aerial", "/properties",
+  "/map", "/aerial", "/properties", "/alerts",
 ];
 
 async function main(): Promise<number> {
@@ -148,6 +148,15 @@ async function main(): Promise<number> {
         Array.isArray((body as { catalogue?: unknown }).catalogue)
       ));
     expect(ok, `expected array, {signals:[]} or {catalogue:[]}, got ${JSON.stringify(body).slice(0, 120)}`);
+  });
+
+  // --- API: GET /api/grants ---
+  await check("GET /api/grants?sinceDays=30", async () => {
+    const { status, body } = await getJson("/api/grants?sinceDays=30");
+    expect(status === 200, `status ${status}`);
+    const b = body as { ok?: boolean; data?: { grants?: unknown[]; source?: string } };
+    expect(b.ok === true, `ok != true`);
+    expect(Array.isArray(b.data?.grants), `grants not an array`);
   });
 
   // --- API: GET /api/discovery ---
