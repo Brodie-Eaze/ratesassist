@@ -34,7 +34,12 @@ type DataResponse = {
 };
 
 export default function IntelPage() {
-  const fetchState = useFetch<DataResponse>("/api/data");
+  // PERF-007: /api/data no longer ships properties/owners/tenements in the
+  // default response. The intel page needs them for the council rollups,
+  // so we opt back in via the include= query param.
+  const fetchState = useFetch<DataResponse>(
+    "/api/data?include=properties,owners,tenements,mismatches",
+  );
   if (fetchState.status === "loading") return <LoadingState />;
   if (fetchState.status === "error") return <ErrorState message={fetchState.error} />;
   const data = fetchState.data;

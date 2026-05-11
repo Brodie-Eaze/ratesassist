@@ -30,7 +30,7 @@ type DataResponse = {
 };
 
 export default function MapPage() {
-  const fetchState = useFetch<DataResponse>("/api/data");
+  const fetchState = useFetch<DataResponse>("/api/data?include=properties,owners,tenements,mismatches");
   const [council, setCouncil] = useState<string>("");
   const [filterType, setFilterType] = useState<"all" | "mining" | "overdue">("all");
   const [basemapId, setBasemapId] = useState<string>("carto-positron");

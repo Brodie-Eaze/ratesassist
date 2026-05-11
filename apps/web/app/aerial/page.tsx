@@ -15,7 +15,7 @@ type DataResponse = {
 };
 
 export default function AerialPage() {
-  const fetchState = useFetch<DataResponse>("/api/data");
+  const fetchState = useFetch<DataResponse>("/api/data?include=properties,owners,tenements,mismatches");
   const [selectedAssess, setSelectedAssess] = useState<string>("");
 
   if (fetchState.status === "loading") return <LoadingState />;

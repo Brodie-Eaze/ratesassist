@@ -37,7 +37,7 @@ const CERT_TYPES = [
 ];
 
 export default function CertificatesPage() {
-  const fetchState = useFetch<DataResponse>("/api/data");
+  const fetchState = useFetch<DataResponse>("/api/data?include=properties,owners,tenements,mismatches");
   const [certType, setCertType] = useState(CERT_TYPES[0].id);
   const [assessmentNumber, setAssessmentNumber] = useState("");
   const [requesterName, setRequesterName] = useState("");

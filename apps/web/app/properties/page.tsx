@@ -16,7 +16,7 @@ type DataResponse = {
 };
 
 export default function PropertiesPage() {
-  const fetchState = useFetch<DataResponse>("/api/data");
+  const fetchState = useFetch<DataResponse>("/api/data?include=properties,owners,tenements,mismatches");
   const [query, setQuery] = useState("");
   const [council, setCouncil] = useState<string>("");
   const [selected, setSelected] = useState<Property | null>(null);
