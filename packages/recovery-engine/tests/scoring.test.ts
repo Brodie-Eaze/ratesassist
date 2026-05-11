@@ -678,3 +678,127 @@ describe("findMismatches perf-ceiling", () => {
     expect(elapsed).toBeLessThan(2_000);
   });
 });
+
+// ---- reg.address_mismatch_landgate ----
+
+describe("reg.address_mismatch_landgate", () => {
+  it("does not fire when addressDiscrepanciesByAssessment is absent", () => {
+    const p = prop({ assessmentNumber: "A1" });
+    const ctx = ctxFrom({ properties: [p], owners: [owner()] });
+    const hits = evaluateSignals(p, ctx);
+    expect(
+      hits.find((h) => h.id === "reg.address_mismatch_landgate"),
+    ).toBeUndefined();
+  });
+
+  it("does not fire when only a low-severity discrepancy is present", () => {
+    const p = prop({ assessmentNumber: "A1" });
+    const ctx: EvaluationContext = {
+      ...ctxFrom({ properties: [p], owners: [owner()] }),
+      addressDiscrepanciesByAssessment: new Map([
+        ["A1", [{ severityHint: "low", reasoning: "skip me" }]],
+      ]),
+    };
+    const hits = evaluateSignals(p, ctx);
+    expect(
+      hits.find((h) => h.id === "reg.address_mismatch_landgate"),
+    ).toBeUndefined();
+  });
+
+  it("fires with verbatim reasoning when a medium/high entry is mapped", () => {
+    const p = prop({ assessmentNumber: "A1" });
+    const reasoning =
+      "Landgate landuse 513 (Industrial) differs from council Rural — reclassification warranted.";
+    const ctx: EvaluationContext = {
+      ...ctxFrom({ properties: [p], owners: [owner()] }),
+      addressDiscrepanciesByAssessment: new Map([
+        ["A1", [{ severityHint: "high", reasoning }]],
+      ]),
+    };
+    const hits = evaluateSignals(p, ctx);
+    const am = hits.find((h) => h.id === "reg.address_mismatch_landgate");
+    expect(am).toBeDefined();
+    expect(am!.weight).toBeCloseTo(0.4, 10);
+    expect(am!.evidence).toBe(reasoning);
+  });
+
+  it("stacks additively with cadastre lag and recently_granted", () => {
+    const p = prop({ assessmentNumber: "A1", landUse: "Rural" });
+    const t = ten({
+      tenementId: "M-1",
+      type: "M",
+      isProducing: true,
+      grantedDate: new Date(FIXED_NOW_MS - 30 * 86400_000).toISOString(),
+    });
+    const ctx: EvaluationContext = {
+      ...ctxFrom({
+        properties: [p],
+        owners: [owner()],
+        tenementsByAssessment: new Map([["A1", [t]]]),
+        now: fixedNow,
+      }),
+      lagCandidatesByAssessment: new Map([
+        ["A1", [{ severityHint: "high", reasoning: "lag evidence" }]],
+      ]),
+      addressDiscrepanciesByAssessment: new Map([
+        ["A1", [{ severityHint: "high", reasoning: "address mismatch evidence" }]],
+      ]),
+    };
+    const hitIds = evaluateSignals(p, ctx).map((h) => h.id);
+    expect(hitIds).toContain("reg.tenement.producing.on_rural_or_vacant");
+    expect(hitIds).toContain("reg.tenement.recently_granted");
+    expect(hitIds).toContain("reg.dmirs_ahead_of_landgate");
+    expect(hitIds).toContain("reg.address_mismatch_landgate");
+  });
+});
+
+// ---- targetStateScope (WA-only GTM lock) ----
+
+describe("findMismatches targetStateScope filter", () => {
+  it("excludes non-WA properties when targetStateScope='WA' is set", () => {
+    const waProp = prop({ assessmentNumber: "W1", state: "WA", landUse: "Rural" });
+    const nswProp = prop({
+      assessmentNumber: "N1",
+      state: "NSW",
+      council: "BRK",
+      landUse: "Rural",
+    });
+    const tenMap = new Map([
+      ["W1", [ten({ tenementId: "M-W1", isProducing: true })] as readonly Tenement[]],
+      ["N1", [ten({ tenementId: "M-N1", isProducing: true })] as readonly Tenement[]],
+    ]);
+    const ctx: EvaluationContext = {
+      properties: [waProp, nswProp],
+      ownersById: new Map([[owner().ownerId, owner()]]),
+      tenementsByAssessment: tenMap,
+      targetStateScope: "WA",
+    };
+    const out = findMismatches(ctx);
+    const codes = out.map((c) => c.assessmentNumber);
+    expect(codes).toContain("W1");
+    expect(codes).not.toContain("N1");
+  });
+
+  it("returns both when targetStateScope is unset", () => {
+    const waProp = prop({ assessmentNumber: "W1", state: "WA", landUse: "Rural" });
+    const nswProp = prop({
+      assessmentNumber: "N1",
+      state: "NSW",
+      council: "BRK",
+      landUse: "Rural",
+    });
+    const tenMap = new Map([
+      ["W1", [ten({ tenementId: "M-W1", isProducing: true })] as readonly Tenement[]],
+      ["N1", [ten({ tenementId: "M-N1", isProducing: true })] as readonly Tenement[]],
+    ]);
+    const ctx: EvaluationContext = {
+      properties: [waProp, nswProp],
+      ownersById: new Map([[owner().ownerId, owner()]]),
+      tenementsByAssessment: tenMap,
+    };
+    const out = findMismatches(ctx);
+    const codes = out.map((c) => c.assessmentNumber);
+    expect(codes).toContain("W1");
+    expect(codes).toContain("N1");
+  });
+});

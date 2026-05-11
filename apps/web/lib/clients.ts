@@ -18,7 +18,12 @@ import {
   findMismatches,
   type EvaluationContext,
 } from "@ratesassist/recovery-engine";
-import type { MismatchCandidate, Property, Tenement } from "@ratesassist/contract";
+import {
+  TARGET_STATE_SCOPE,
+  type MismatchCandidate,
+  type Property,
+  type Tenement,
+} from "@ratesassist/contract";
 
 import { OWNERS, PROPERTIES, TENEMENTS } from "./data";
 
@@ -109,6 +114,8 @@ export function getEvaluationContext(): EvaluationContext {
     propertiesByOwnerId,
     ruralBySuburb,
     lagCandidatesByAssessment: MOCK_LAG_CANDIDATES_BY_ASSESSMENT,
+    addressDiscrepanciesByAssessment: MOCK_ADDRESS_DISCREPANCIES_BY_ASSESSMENT,
+    targetStateScope: TARGET_STATE_SCOPE,
   };
   return cachedContext;
 }
@@ -194,6 +201,94 @@ const MOCK_LAG_CANDIDATES_BY_ASSESSMENT: ReadonlyMap<
         severityHint: "high" as const,
         reasoning:
           "Tenement M 47/1655 (Mining Lease — iron ore, producing) granted 2026-01-28 (103 days ago) intersects Lot 1192 Auski Road. Landgate title shows the parcel free of mining interests. Current rating: Rural.",
+      },
+    ],
+  ],
+]);
+
+/**
+ * Mock Landgate × rating-record address-discrepancy entries.
+ *
+ * Each entry mirrors the {@link AddressDiscrepancy} contract from
+ * `@ratesassist/spatial`. The recovery engine consumes only
+ * `severityHint` and `reasoning` so the wider shape is informational only
+ * — the UI doesn't render this map directly. In production this map is
+ * populated by reconciling the council's TechOne export against the
+ * council-licensed Landgate restricted-tier feed (see
+ * internal/LANDGATE-ACCESS.md). For demo we hand-curate plausible
+ * narratives against WA-only assessments.
+ */
+const MOCK_ADDRESS_DISCREPANCIES_BY_ASSESSMENT: ReadonlyMap<
+  string,
+  ReadonlyArray<{ severityHint: "high" | "medium" | "low"; reasoning: string }>
+> = new Map([
+  [
+    "TPS-3041-12",
+    [
+      {
+        severityHint: "medium" as const,
+        reasoning:
+          "Landgate cadastre records the parcel as 14 Stadium Road, Tom Price (RPDLU 211, residential). Council rating record carries 12 Stadium Road — consistent with post-2024 street renumbering after lots 12 and 14 were consolidated. Address-of-record correction required before the next levy run.",
+      },
+    ],
+  ],
+  [
+    "ESH-7011-08",
+    [
+      {
+        severityHint: "high" as const,
+        reasoning:
+          "Landgate updated landuse to Industrial - heavy industry (RPDLU 511) following DA-2025-184 in Nov 2025. Council still rating Commercial. East Pilbara differential between commercial and industrial classes is ~2.4x.",
+      },
+    ],
+  ],
+  [
+    "KAL-7777-01",
+    [
+      {
+        severityHint: "high" as const,
+        reasoning:
+          "Landgate now records 211, 211A and 211B Hannan Street as three separately-titled child lots (SUB-2025-722, Sep 2025). Council is still rating the consolidated parent parcel. Three rateable parcels currently invoiced as one.",
+      },
+    ],
+  ],
+  [
+    "ASH-9911-04",
+    [
+      {
+        severityHint: "medium" as const,
+        reasoning:
+          "Landgate lot/plan revised to Lot 9914A DP 552108 after BA-2026-019 boundary amendment (Feb 2026). Council rating record still keyed to the pre-amendment lot reference — records-only discrepancy today but blocks reliable Landgate lookups for every future cross-reference.",
+      },
+    ],
+  ],
+  [
+    "TPS-1102-44",
+    [
+      {
+        severityHint: "high" as const,
+        reasoning:
+          "Landgate landuse code now 513 (Industrial - mining-related infrastructure) after parcel converted to a haul-road maintenance depot in 2025. Council still rating Rural at $1,820/yr. Mining differential rate applies — uplift likely 8x.",
+      },
+    ],
+  ],
+  [
+    "MEK-3303-58",
+    [
+      {
+        severityHint: "medium" as const,
+        reasoning:
+          "Landgate landuse now records tailings reprocessing (RPDLU 523) tied to M 51/0902 granted March 2026. Council rating still Vacant. Stacks with cadastre-lag signal on the same assessment.",
+      },
+    ],
+  ],
+  [
+    "KAL-4401-12",
+    [
+      {
+        severityHint: "high" as const,
+        reasoning:
+          "Landgate cadastre now references the southern portion of the parcel as 4412A after a 2025 boundary amendment registered the mining-lease footprint separately. Council rating record uses the pre-split address and rural classification. Stacks with cadastre-lag and recently-granted signals.",
       },
     ],
   ],

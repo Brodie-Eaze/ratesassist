@@ -28,6 +28,7 @@ import {
 
 const RECENTLY_GRANTED_SIGNAL_ID = "reg.tenement.recently_granted";
 const CADASTRE_LAG_SIGNAL_ID = "reg.dmirs_ahead_of_landgate";
+const ADDRESS_MISMATCH_SIGNAL_ID = "reg.address_mismatch_landgate";
 
 type DataResponse = {
   mismatches: MismatchCandidate[];
@@ -103,6 +104,7 @@ function RecoveryPageInner() {
   const [signalFilter, setSignalFilter] = useState<string | "all">("all");
   const [recentlyGrantedOnly, setRecentlyGrantedOnly] = useState<boolean>(false);
   const [cadastreLagOnly, setCadastreLagOnly] = useState<boolean>(false);
+  const [addressMismatchOnly, setAddressMismatchOnly] = useState<boolean>(false);
   const searchParams = useSearchParams();
 
   // Pre-apply the "Newly granted only" filter when arriving via
@@ -113,6 +115,9 @@ function RecoveryPageInner() {
     }
     if (searchParams?.get("signal") === "cadastre_lag") {
       setCadastreLagOnly(true);
+    }
+    if (searchParams?.get("signal") === "address_mismatch") {
+      setAddressMismatchOnly(true);
     }
   }, [searchParams]);
 
@@ -151,6 +156,15 @@ function RecoveryPageInner() {
     return n;
   }, [fetchState]);
 
+  const addressMismatchCount = useMemo(() => {
+    if (fetchState.status !== "ok") return 0;
+    let n = 0;
+    for (const m of fetchState.data.mismatches) {
+      if (m.signals.some((s) => s.id === ADDRESS_MISMATCH_SIGNAL_ID)) n++;
+    }
+    return n;
+  }, [fetchState]);
+
   if (fetchState.status === "loading") return <LoadingState />;
   if (fetchState.status === "error") return <ErrorState message={fetchState.error} />;
   const data = fetchState.data;
@@ -166,6 +180,10 @@ function RecoveryPageInner() {
   if (cadastreLagOnly)
     filtered = filtered.filter((m) =>
       m.signals.some((s) => s.id === CADASTRE_LAG_SIGNAL_ID),
+    );
+  if (addressMismatchOnly)
+    filtered = filtered.filter((m) =>
+      m.signals.some((s) => s.id === ADDRESS_MISMATCH_SIGNAL_ID),
     );
 
   return (
@@ -183,6 +201,9 @@ function RecoveryPageInner() {
           </div>
           <div className="text-sm text-ink-500">
             Cross-references against DMIRS, ABN/ASIC, portfolio + spatial signals · Composite scoring with auditable trail
+          </div>
+          <div className="text-xs text-ink-400 mt-1">
+            Scope: Western Australia (LGA-1995). Inter-state expansion in roadmap.
           </div>
         </div>
 
@@ -333,6 +354,21 @@ function RecoveryPageInner() {
                 {cadastreLagCount}
               </span>
             </button>
+            <button
+              onClick={() => setAddressMismatchOnly((v) => !v)}
+              className={`btn ${
+                addressMismatchOnly
+                  ? "bg-accent-700 text-white"
+                  : "bg-white border border-accent-300 text-accent-700 hover:bg-accent-50"
+              }`}
+              title="Filter to candidates where Landgate's address, lot/plan or landuse code differs from the council's rating record."
+            >
+              <FileText className="w-3 h-3" />
+              Address mismatch
+              <span className="text-[10px] opacity-70 ml-1">
+                {addressMismatchCount}
+              </span>
+            </button>
           </div>
 
           {/* Candidates */}
@@ -390,6 +426,9 @@ function CandidateCard({
     (s) => s.id === RECENTLY_GRANTED_SIGNAL_ID,
   );
   const cadastreLagSignal = c.signals.find((s) => s.id === CADASTRE_LAG_SIGNAL_ID);
+  const addressMismatchSignal = c.signals.find(
+    (s) => s.id === ADDRESS_MISMATCH_SIGNAL_ID,
+  );
   // Parse the lag-days figure out of the evidence string for a quick badge.
   const lagDaysMatch = cadastreLagSignal?.evidence.match(/Cadastre lag: (\d+) days?/);
   const lagDays = lagDaysMatch ? Number(lagDaysMatch[1]) : null;
@@ -424,6 +463,20 @@ function CandidateCard({
               >
                 <Sparkles className="w-3 h-3 mr-1 inline" />
                 CADASTRE LAG
+              </span>
+            )}
+            {addressMismatchSignal && (
+              <span
+                className="badge border"
+                style={{
+                  backgroundColor: "#ede9fe",
+                  color: "#5b21b6",
+                  borderColor: "#c4b5fd",
+                }}
+                title={addressMismatchSignal.evidence}
+              >
+                <FileText className="w-3 h-3 mr-1 inline" />
+                ADDRESS MISMATCH
               </span>
             )}
             {lagDays !== null && (

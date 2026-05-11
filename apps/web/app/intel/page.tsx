@@ -44,7 +44,21 @@ export default function IntelPage() {
   );
   if (fetchState.status === "loading") return <LoadingState />;
   if (fetchState.status === "error") return <ErrorState message={fetchState.error} />;
-  const data = fetchState.data;
+  const fullData = fetchState.data;
+  // Lock display scope to WA councils. The multi-state fixture stays in
+  // the API response so future inter-state expansion isn't a data migration —
+  // just a flag-flip. See packages/contract/src/constants.ts.
+  const waCouncilCodes = new Set(
+    fullData.councils.filter((c) => c.state === "WA").map((c) => c.code),
+  );
+  const data: DataResponse = {
+    ...fullData,
+    councils: fullData.councils.filter((c) => c.state === "WA"),
+    properties: fullData.properties.filter((p) => waCouncilCodes.has(p.council)),
+    mismatches: fullData.mismatches.filter((m) =>
+      waCouncilCodes.has(m.property.council),
+    ),
+  };
 
   const overdue = data.properties.filter((p) => p.balance > 0);
   const totalOverdue = overdue.reduce((s, p) => s + p.balance, 0);
@@ -81,6 +95,9 @@ export default function IntelPage() {
           <div className="text-sm text-ink-500">
             Cross-council portfolio view · {data.councils.length} councils ·{" "}
             {totalRateable.toLocaleString()} rateable properties
+          </div>
+          <div className="text-xs text-ink-400 mt-1">
+            Scope: Western Australia (LGA-1995). Inter-state expansion in roadmap.
           </div>
         </div>
 

@@ -52,6 +52,7 @@ import { listRecentGrantsHandler } from "./recentGrants.js";
 import { getGrantDetailHandler } from "./grantDetail.js";
 import { listAuditLogHandler } from "./listAuditLog.js";
 import { listLagWindowCandidatesHandler } from "./lagWindow.js";
+import { listAddressDiscrepanciesHandler } from "./addressDiscrepancies.js";
 import { addCouncilHandler } from "./addCouncil.js";
 
 /**
@@ -93,5 +94,6 @@ export const HANDLERS: {
   get_grant_detail: getGrantDetailHandler,
   list_audit_log: listAuditLogHandler,
   list_lag_window_candidates: listLagWindowCandidatesHandler,
+  list_address_discrepancies: listAddressDiscrepanciesHandler,
   add_council: addCouncilHandler,
 };

@@ -14,6 +14,10 @@ export * from "./types.js";
 export * as schemas from "./schemas.js";
 export * from "./tools.js";
 export * from "./auth.js";
+export {
+  TARGET_STATE_SCOPE,
+  TARGET_STATE_SCOPE_BANNER,
+} from "./constants.js";
 export { buildOpenApiDocument, type OpenApiOptions } from "./openapi.js";
 
 /** Current contract version. Adapters declare which contract version they support. */

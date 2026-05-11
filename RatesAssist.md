@@ -11,8 +11,17 @@
 # RatesAssist
 ### Master Specification
 
-> **Vertical AI software for Australian local government rates departments.**
+> **Vertical AI software for Western Australian local government rates departments.**
 > Productivity. Recovery. Intelligence. Citizen self-service.
+>
+> **Scope lock (May 2026):** WA-only first. The Local Government Act 1995 (WA)
+> gives councils explicit reclassification powers under s.6.28 that we model
+> directly, and the WA data stack (Landgate, DMIRS MINEDEX, SLIP) is the most
+> open in the country — every signal in the recovery engine depends on at
+> least one WA-specific upstream. Inter-state expansion (NSW LGA 1993, QLD
+> LGA 2009, SA, NT) is a roadmap item; see `packages/contract/src/constants.ts`
+> for the upgrade path and `internal/LANDGATE-ACCESS.md` for the WA cadastre
+> access pathway.
 
 ---
 

@@ -46,6 +46,18 @@ export type LagCandidateForScoring = {
   readonly reasoning: string;
 };
 
+/**
+ * Minimal address-discrepancy shape consumed by the scoring engine.
+ * Structurally compatible with {@link AddressDiscrepancy} from
+ * `@ratesassist/spatial`; the engine takes only the two fields it needs
+ * to fire `reg.address_mismatch_landgate` so the package stays free of
+ * the spatial dependency.
+ */
+export type AddressDiscrepancyForScoring = {
+  readonly severityHint: "high" | "medium" | "low";
+  readonly reasoning: string;
+};
+
 export type EvaluationContext = {
   /** All properties in the active tenant — used for portfolio + outlier signals. */
   readonly properties: readonly Property[];
@@ -75,6 +87,26 @@ export type EvaluationContext = {
    * caller hasn't done the cross-register pull. Honest by construction.
    */
   readonly lagCandidatesByAssessment?: ReadonlyMap<string, readonly LagCandidateForScoring[]>;
+  /**
+   * Optional Landgate × rating-record address-discrepancy map, keyed by
+   * assessmentNumber. When present and an entry has severityHint
+   * "medium" or "high", the `reg.address_mismatch_landgate` signal fires
+   * for that property. Absent map (or no entry) doesn't fire — no false
+   * positives. Mirrors the {@link AddressDiscrepancy} shape in
+   * `@ratesassist/spatial` but deliberately re-typed here to avoid a
+   * package cycle.
+   */
+  readonly addressDiscrepanciesByAssessment?: ReadonlyMap<
+    string,
+    readonly AddressDiscrepancyForScoring[]
+  >;
+  /**
+   * Optional state-scope filter. When set, only properties whose
+   * `state` matches this code are evaluated. Used to lock the WA-only
+   * GTM scope while keeping multi-state fixtures intact. See
+   * `TARGET_STATE_SCOPE` in `@ratesassist/contract`.
+   */
+  readonly targetStateScope?: string;
   /**
    * Wall clock injection point. Production callers can omit this and the
    * engine defaults to `Date.now`. Tests pin it to a fixed millisecond value
@@ -250,6 +282,20 @@ export function evaluateSignals(
   if (lagWorth !== undefined) {
     const sig = getSignal("reg.dmirs_ahead_of_landgate")!;
     hits.push(hit(sig, lagWorth.reasoning));
+  }
+
+  // ---- HEADLINE: Landgate × rating-record address mismatch ----
+  // Fires when the caller has done the Landgate × TechOne reconciliation
+  // and surfaced a medium/high-severity address discrepancy. Stacks with
+  // cadastre lag, recent grant, etc.
+  const discrepancies =
+    ctx.addressDiscrepanciesByAssessment?.get(p.assessmentNumber) ?? [];
+  const discrepancyWorth = discrepancies.find(
+    (d) => d.severityHint === "high" || d.severityHint === "medium",
+  );
+  if (discrepancyWorth !== undefined) {
+    const sig = getSignal("reg.address_mismatch_landgate")!;
+    hits.push(hit(sig, discrepancyWorth.reasoning));
   }
 
   // ---- Identity: ABN cancelled / suspended ----

@@ -168,7 +168,16 @@ export const inputs = {
         .string()
         .regex(/^[A-Z]{2,5}$/, "2-5 uppercase letters"),
       name: z.string().min(3).max(120),
-      state: australianState,
+      /**
+       * Locked to "WA" for the current product scope. The full
+       * `australianState` enum remains in the contract for the domain
+       * model (Property.state, Council.state) so the multi-state fixture
+       * survives; only the council-registration surface is gated. See
+       * `./constants.ts` and internal/LANDGATE-ACCESS.md for the
+       * inter-state-expansion upgrade path — flip this back to
+       * `australianState` when ready.
+       */
+      state: z.literal("WA"),
       centerLat: z.number().min(-45).max(-9),
       centerLng: z.number().min(110).max(156),
       population: z.number().int().min(0),
@@ -181,6 +190,28 @@ export const inputs = {
        */
       confirm: z.boolean().default(false),
       commitToken: z.string().uuid().optional(),
+    })
+    .strict(),
+
+  list_address_discrepancies: z
+    .object({
+      /** Kind filter: "all" returns every classified discrepancy. */
+      kind: z
+        .enum([
+          "address_renumber",
+          "subdivision",
+          "landuse_reclass",
+          "industrial_reuse",
+          "lot_plan_amend",
+          "all",
+        ])
+        .default("all"),
+      /**
+       * Minimum severity. Default "medium" mirrors `list_lag_window_candidates`
+       * — low-severity entries are officer-review only and would noise up
+       * the recovery dashboard.
+       */
+      minSeverity: z.enum(["high", "medium", "low"]).default("medium"),
     })
     .strict(),
 

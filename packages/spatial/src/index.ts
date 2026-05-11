@@ -35,6 +35,24 @@ export {
 } from "./grants.js";
 export { bufferPolygon } from "./buffer.js";
 export {
+  compareAddressRecords,
+  type AddressDiscrepancy,
+  type AddressDiscrepancyKind,
+  type AddressDiscrepancySeverity,
+  type CompareAddressRecordsInput,
+} from "./addressDiscrepancy.js";
+export {
+  createLandgateClient,
+  type LandgateRestrictedClient,
+  type LandgateParcelDetail,
+  type LandgateLogger,
+  type CreateLandgateClientConfig,
+} from "./landgateRestricted.js";
+export {
+  LANDGATE_MOCK_PARCELS,
+  createMockLandgateClient,
+} from "./__fixtures__/landgateMock.js";
+export {
   findLagWindowCandidates,
   classifyLanduse,
   severityHintFor,

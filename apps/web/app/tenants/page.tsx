@@ -101,6 +101,9 @@ export default function TenantsPage() {
             <div className="text-sm text-ink-500">
               Multi-tenant: each council is a tenant with isolated data, its own rating-system adapter, and opt-in cross-council intelligence
             </div>
+            <div className="text-xs text-ink-400 mt-1">
+              Scope: Western Australia (LGA-1995). Inter-state expansion in roadmap.
+            </div>
           </div>
           <AddCouncilDialog onAdded={() => setReloadKey((k) => k + 1)} />
         </div>

@@ -88,6 +88,21 @@ export const SIGNAL_CATALOGUE: readonly SignalDef[] = [
     source: "DMIRS MINEDEX × Landgate cadastre (Property_and_Planning/MapServer)",
   },
 
+  // ---- HEADLINE: Landgate address / landuse mismatch with rating record ----
+  {
+    id: "reg.address_mismatch_landgate",
+    name: "Landgate address/landuse differs from rating record",
+    short: "Address mismatch",
+    category: "register",
+    weight: 0.40,
+    // NOT in tenement-class exclusive group — stacks with cadastre lag,
+    // recent grant, etc. Each mismatch is a mis-rated parcel until
+    // reconciled.
+    description:
+      "Landgate cadastre carries a different address, lot/plan, or landuse code for this parcel than the council rating record. Covers residential renumbering, sub-divisions, reclassifications, and industrial reuse — each one is a mis-rated parcel until reconciled.",
+    source: "Landgate cadastre × council rating record",
+  },
+
   // ---- IDENTITY signals (ABN / ASIC) ----
   {
     id: "id.abn.cancelled_or_suspended",

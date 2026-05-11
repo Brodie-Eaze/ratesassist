@@ -63,6 +63,15 @@ export function findMismatches(
     if (council !== undefined && property.council !== council) {
       continue;
     }
+    // Honour the optional state-scope filter (WA-only GTM lock). Properties
+    // in other states stay in the fixture but are not surfaced as
+    // candidates until inter-state expansion lands.
+    if (
+      ctx.targetStateScope !== undefined &&
+      property.state !== ctx.targetStateScope
+    ) {
+      continue;
+    }
 
     const signals = evaluateSignals(property, ctx);
     if (signals.length === 0) {
