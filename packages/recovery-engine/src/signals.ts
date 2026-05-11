@@ -88,6 +88,21 @@ export const SIGNAL_CATALOGUE: readonly SignalDef[] = [
     source: "DMIRS MINEDEX × Landgate cadastre (Property_and_Planning/MapServer)",
   },
 
+  // ---- REGISTER: EMITS environmental approval active on a tenement ----
+  {
+    id: "reg.environmental_approval_active",
+    name: "Active environmental approval on tenement",
+    short: "Env. approval",
+    category: "register",
+    weight: 0.30,
+    // NOT in tenement-class exclusive group — stacks with cadastre-lag,
+    // recently_granted, producing_tenement, etc. Compounding evidence that
+    // the tenement is being actively worked on the ground.
+    description:
+      "EMITS records an active environmental approval (Mining Proposal, Programme of Work, or equivalent) for a tenement intersecting this parcel — strong evidence the tenement is being worked on the ground. Compounds with cadastre lag and recent-grant signals.",
+    source: "DMIRS EMITS (Environmental Management & Tracking)",
+  },
+
   // ---- HEADLINE: Landgate address / landuse mismatch with rating record ----
   {
     id: "reg.address_mismatch_landgate",

@@ -101,6 +101,19 @@ export type EvaluationContext = {
     readonly AddressDiscrepancyForScoring[]
   >;
   /**
+   * Optional EMITS environmental-approval index keyed by the raw DMIRS
+   * tenement id (e.g. `"M  4701612"`). When present and at least one entry
+   * for any tenement intersecting the property has `active: true`, the
+   * `reg.environmental_approval_active` signal fires once for the property
+   * — never multiple times per active approval, to avoid double-counting
+   * compounding evidence. Absent map (or no active entry) doesn't fire —
+   * honest by construction.
+   */
+  readonly emitsApprovalsByTenement?: ReadonlyMap<
+    string,
+    readonly { active: boolean; reasoning: string }[]
+  >;
+  /**
    * Optional state-scope filter. When set, only properties whose
    * `state` matches this code are evaluated. Used to lock the WA-only
    * GTM scope while keeping multi-state fixtures intact. See
@@ -282,6 +295,27 @@ export function evaluateSignals(
   if (lagWorth !== undefined) {
     const sig = getSignal("reg.dmirs_ahead_of_landgate")!;
     hits.push(hit(sig, lagWorth.reasoning));
+  }
+
+  // ---- REGISTER: EMITS active environmental approval on intersecting tenement ----
+  // Fires once per property when ANY tenement intersecting the property has
+  // at least one active EMITS approval. Deliberately not once-per-approval —
+  // compounding evidence is already captured by stacking with other signals
+  // (cadastre lag, recent grant). Absent map = no firing. No false positives.
+  if (ctx.emitsApprovalsByTenement !== undefined && tenements.length > 0) {
+    let firedReasoning: string | null = null;
+    for (const t of tenements) {
+      const list = ctx.emitsApprovalsByTenement.get(t.tenementId) ?? [];
+      const activeEntry = list.find((e) => e.active);
+      if (activeEntry !== undefined) {
+        firedReasoning = activeEntry.reasoning;
+        break;
+      }
+    }
+    if (firedReasoning !== null) {
+      const sig = getSignal("reg.environmental_approval_active")!;
+      hits.push(hit(sig, firedReasoning));
+    }
   }
 
   // ---- HEADLINE: Landgate × rating-record address mismatch ----

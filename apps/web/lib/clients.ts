@@ -115,6 +115,7 @@ export function getEvaluationContext(): EvaluationContext {
     ruralBySuburb,
     lagCandidatesByAssessment: MOCK_LAG_CANDIDATES_BY_ASSESSMENT,
     addressDiscrepanciesByAssessment: MOCK_ADDRESS_DISCREPANCIES_BY_ASSESSMENT,
+    emitsApprovalsByTenement: MOCK_EMITS_APPROVALS_BY_TENEMENT,
     targetStateScope: TARGET_STATE_SCOPE,
   };
   return cachedContext;
@@ -289,6 +290,96 @@ const MOCK_ADDRESS_DISCREPANCIES_BY_ASSESSMENT: ReadonlyMap<
         severityHint: "high" as const,
         reasoning:
           "Landgate cadastre now references the southern portion of the parcel as 4412A after a 2025 boundary amendment registered the mining-lease footprint separately. Council rating record uses the pre-split address and rural classification. Stacks with cadastre-lag and recently-granted signals.",
+      },
+    ],
+  ],
+]);
+
+/**
+ * Mock DMIRS EMITS environmental approvals, keyed by tenement id.
+ *
+ * EMITS publishes no public machine-readable export today (see
+ * internal/SIGNAL-environmental-approval.md). This map mirrors the seed
+ * pool the adapter-demo handler ships, but rekeyed against the
+ * slash-format tenement ids that the web-app's in-memory data layer
+ * uses (e.g. `M70/1284`) so the recovery engine's
+ * `reg.environmental_approval_active` signal compounds correctly with the
+ * cadastre-lag rows for the same assessments.
+ *
+ * Each entry carries `active: true|false` and a verbatim `reasoning`
+ * string the signal renders into the evidence pack.
+ */
+const MOCK_EMITS_APPROVALS_BY_TENEMENT: ReadonlyMap<
+  string,
+  ReadonlyArray<{ active: boolean; reasoning: string }>
+> = new Map([
+  [
+    "M70/1284",
+    [
+      {
+        active: true,
+        reasoning:
+          "EMITS records active Mining Proposal MP-12345 (approved 2025-09-12, expires 2030-09-12) for tenement M70/1284. Scope: iron ore open-pit pre-strip and ROM pad. Active environmental approval is strong evidence of on-ground works.",
+      },
+    ],
+  ],
+  [
+    "M70/1411",
+    [
+      {
+        active: true,
+        reasoning:
+          "EMITS records active Programme of Work POW-98711 (approved 2026-01-04, expires 2026-12-31) for tenement M70/1411. Scope: Year 1 iron-ore production at Tom Price.",
+      },
+    ],
+  ],
+  [
+    "M70/1502",
+    [
+      {
+        active: true,
+        reasoning:
+          "EMITS records active Mine Management Plan MMP-44091 (approved 2026-02-28, expires 2031-02-28) for tenement M70/1502. Scope: iron ore haul-road, water management and rehab schedule.",
+      },
+    ],
+  ],
+  [
+    "M26/0444",
+    [
+      {
+        active: true,
+        reasoning:
+          "EMITS records active Mining Proposal MP-13988 (approved 2026-01-28, expires 2031-01-28) for tenement M26/0444. Scope: gold production at Kalgoorlie-Boulder.",
+      },
+    ],
+  ],
+  [
+    "M51/0144",
+    [
+      {
+        active: true,
+        reasoning:
+          "EMITS records active Programme of Work POW-71248 (approved 2026-03-30, expires 2027-03-30) for tenement M51/0144. Scope: gold tailings reprocessing at Meekatharra.",
+      },
+    ],
+  ],
+  [
+    "M08/0211",
+    [
+      {
+        active: true,
+        reasoning:
+          "EMITS records active Mining Proposal MP-15004 (approved 2025-11-19, expires 2030-11-19) for tenement M08/0211. Scope: mineral-sands processing at Onslow.",
+      },
+    ],
+  ],
+  [
+    "G26/0119",
+    [
+      {
+        active: false,
+        reasoning:
+          "EMITS records expired Programme of Work POW-30221 (approved 2021-04-12, expired 2024-04-12) for tenement G26/0119. Historical entry only — included for completeness; does not fire the signal.",
       },
     ],
   ],

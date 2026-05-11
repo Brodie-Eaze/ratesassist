@@ -29,6 +29,7 @@ import {
   MapPin,
 } from "lucide-react";
 import IntersectionTable from "./_IntersectionTable";
+import { buildEmitsSearchUrl, buildTengraphUrl } from "@ratesassist/spatial";
 
 type GrantedTenementGeometry =
   | { type: "Polygon"; coordinates: number[][][] }
@@ -399,6 +400,57 @@ export default function GrantDetailPage() {
               <span className="text-[11px] uppercase tracking-widest text-ink-500">
                 {data.grantsSource === "live" ? "LIVE" : "SEEDED"}
               </span>
+            </Field>
+
+            {/* External registers — TENGRAPH + EMITS click-throughs.
+                MINEDEX is already reachable from the header "Open in MINEDEX"
+                button; we mirror it here for register-rail completeness. */}
+            <div className="pt-2 border-t border-ink-200" />
+            <Field k="MINEDEX (DMIRS textual register)">
+              <a
+                href={grant.detailUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-accent-700 hover:underline inline-flex items-center gap-1"
+              >
+                Open in MINEDEX <ExternalLink className="w-3 h-3" />
+              </a>
+            </Field>
+            <Field k="TENGRAPH (DMIRS spatial viewer)">
+              <a
+                href={buildTengraphUrl(grant.tenementId)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-accent-700 hover:underline inline-flex items-center gap-1"
+                title="TenGraph has no documented deep-link; paste the tenement id into the viewer search."
+              >
+                Open in TenGraph <ExternalLink className="w-3 h-3" />
+              </a>
+              <div className="text-[10px] text-ink-400 mt-0.5">
+                Viewer search; paste id once loaded.
+              </div>
+            </Field>
+            <Field k="Environmental approval (EMITS)">
+              <div className="flex items-center gap-2 flex-wrap">
+                <a
+                  href={buildEmitsSearchUrl(grant.tenementId)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-accent-700 hover:underline inline-flex items-center gap-1"
+                  title="EMITS portal requires a browser session; deep-linking not supported."
+                >
+                  Search EMITS <ExternalLink className="w-3 h-3" />
+                </a>
+                <span
+                  className="text-[10px] uppercase tracking-widest px-1.5 py-0.5 rounded bg-ink-100 text-ink-500 border border-ink-200"
+                  title="EMITS publishes no machine-readable export; UI uses seeded fixtures for the recovery signal."
+                >
+                  Source: SEEDED
+                </span>
+              </div>
+              <div className="text-[10px] text-ink-400 mt-0.5">
+                Public search; browser session required.
+              </div>
             </Field>
           </div>
         </div>

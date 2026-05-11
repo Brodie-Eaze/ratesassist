@@ -19,6 +19,15 @@ export {
   TARGET_STATE_SCOPE_BANNER,
 } from "./constants.js";
 export { buildOpenApiDocument, type OpenApiOptions } from "./openapi.js";
+export {
+  RatingRollRowSchema,
+  ratingRollLandUseEnum,
+  mapCsvLandUseToDomain,
+  parseRatingRollCsv,
+  type RatingRollRow,
+  type RowError,
+  type ParseRatingRollResult,
+} from "./csvSchema.js";
 
 /** Current contract version. Adapters declare which contract version they support. */
 export const CONTRACT_VERSION = "0.2.0";

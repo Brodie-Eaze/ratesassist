@@ -18,8 +18,9 @@
  */
 
 import { useState } from "react";
+import Link from "next/link";
 import * as Dialog from "@radix-ui/react-dialog";
-import { Plus, X, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { Plus, X, AlertTriangle, CheckCircle2, ArrowRight } from "lucide-react";
 import { schemas } from "@ratesassist/contract";
 
 type AustralianState =
@@ -292,16 +293,28 @@ export function AddCouncilDialog({
             )}
 
             {phase.kind === "success" && (
-              <div className="flex items-start gap-2 p-3 rounded bg-success-50 border border-success-200 text-sm">
-                <CheckCircle2 className="w-4 h-4 text-success-600 mt-0.5 shrink-0" />
-                <div className="text-ink-800">
-                  <div className="font-medium mb-1">Council added</div>
-                  <div className="text-xs">{phase.output}</div>
-                  <div className="text-xs text-ink-500 mt-2">
-                    New council added to this session. Persistence requires
-                    Phase 2 Postgres rollout.
+              <div className="space-y-2">
+                <div className="flex items-start gap-2 p-3 rounded bg-success-50 border border-success-200 text-sm">
+                  <CheckCircle2 className="w-4 h-4 text-success-600 mt-0.5 shrink-0" />
+                  <div className="text-ink-800">
+                    <div className="font-medium mb-1">Council added</div>
+                    <div className="text-xs">{phase.output}</div>
+                    <div className="text-xs text-ink-500 mt-2">
+                      New council added to this session. Persistence requires
+                      Phase 2 Postgres rollout.
+                    </div>
                   </div>
                 </div>
+                <Link
+                  href={`/onboarding/${form.code.trim().toUpperCase()}`}
+                  onClick={closeDialog}
+                  className="flex items-center justify-between p-3 rounded bg-accent-50 border border-accent-200 text-sm hover:bg-accent-100 transition-colors"
+                >
+                  <span className="text-accent-700 font-medium">
+                    Continue to import rating roll
+                  </span>
+                  <ArrowRight className="w-4 h-4 text-accent-700" />
+                </Link>
               </div>
             )}
           </div>

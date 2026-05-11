@@ -524,6 +524,82 @@ describe("reg.dmirs_ahead_of_landgate", () => {
   });
 });
 
+// ---- REGISTER: EMITS active environmental approval ----
+
+describe("reg.environmental_approval_active", () => {
+  it("does not fire when emitsApprovalsByTenement is absent", () => {
+    const p = prop({ assessmentNumber: "A1" });
+    const t = ten({ tenementId: "M-emits-1", isProducing: false });
+    const ctx = ctxFrom({
+      properties: [p],
+      owners: [owner()],
+      tenementsByAssessment: new Map([["A1", [t]]]),
+    });
+    const hits = evaluateSignals(p, ctx);
+    expect(
+      hits.find((h) => h.id === "reg.environmental_approval_active"),
+    ).toBeUndefined();
+  });
+
+  it("does not fire when the EMITS map carries only inactive entries", () => {
+    const p = prop({ assessmentNumber: "A1" });
+    const t = ten({ tenementId: "M-emits-2", isProducing: false });
+    const ctx: EvaluationContext = {
+      ...ctxFrom({
+        properties: [p],
+        owners: [owner()],
+        tenementsByAssessment: new Map([["A1", [t]]]),
+      }),
+      emitsApprovalsByTenement: new Map([
+        ["M-emits-2", [{ active: false, reasoning: "expired MP" }]],
+      ]),
+    };
+    const hits = evaluateSignals(p, ctx);
+    expect(
+      hits.find((h) => h.id === "reg.environmental_approval_active"),
+    ).toBeUndefined();
+  });
+
+  it("fires once per property when an intersecting tenement has an active approval", () => {
+    const p = prop({ assessmentNumber: "A1", landUse: "Rural" });
+    const t1 = ten({ tenementId: "M-emits-3a", isProducing: false });
+    const t2 = ten({ tenementId: "M-emits-3b", isProducing: false });
+    const ctx: EvaluationContext = {
+      ...ctxFrom({
+        properties: [p],
+        owners: [owner()],
+        tenementsByAssessment: new Map([["A1", [t1, t2]]]),
+      }),
+      emitsApprovalsByTenement: new Map([
+        [
+          "M-emits-3a",
+          [
+            {
+              active: true,
+              reasoning:
+                "EMITS records active Mining Proposal MP-12345 (approved 2025-09-12) for M-emits-3a.",
+            },
+            {
+              active: true,
+              reasoning: "Second active approval on the same tenement.",
+            },
+          ],
+        ],
+        [
+          "M-emits-3b",
+          [{ active: true, reasoning: "Another active approval — different tenement." }],
+        ],
+      ]),
+    };
+    const hits = evaluateSignals(p, ctx).filter(
+      (h) => h.id === "reg.environmental_approval_active",
+    );
+    expect(hits).toHaveLength(1);
+    expect(hits[0]!.weight).toBeCloseTo(0.3, 10);
+    expect(hits[0]!.evidence).toContain("MP-12345");
+  });
+});
+
 // ---- PERF-004: O(1) signal lookup ----
 
 describe("SIGNAL_BY_ID index", () => {

@@ -54,6 +54,8 @@ import { listAuditLogHandler } from "./listAuditLog.js";
 import { listLagWindowCandidatesHandler } from "./lagWindow.js";
 import { listAddressDiscrepanciesHandler } from "./addressDiscrepancies.js";
 import { addCouncilHandler } from "./addCouncil.js";
+import { importRatingRollHandler } from "./importRatingRoll.js";
+import { emitsApprovalsHandler } from "./emitsApprovals.js";
 
 /**
  * Generic handler signature. `Input` is the precise type for the matching
@@ -96,4 +98,6 @@ export const HANDLERS: {
   list_lag_window_candidates: listLagWindowCandidatesHandler,
   list_address_discrepancies: listAddressDiscrepanciesHandler,
   add_council: addCouncilHandler,
+  import_rating_roll: importRatingRollHandler,
+  list_environmental_approvals: emitsApprovalsHandler,
 };

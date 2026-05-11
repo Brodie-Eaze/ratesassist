@@ -215,6 +215,26 @@ export const inputs = {
     })
     .strict(),
 
+  import_rating_roll: z
+    .object({
+      councilCode: z.string().regex(/^[A-Z]{2,5}$/, "2-5 uppercase letters"),
+      /** Raw CSV text. Hard cap 10MB to match the route-layer body cap. */
+      csvText: z.string().min(50).max(10_000_000),
+      mergeStrategy: z.enum(["replace", "upsert"]).default("upsert"),
+      confirm: z.boolean().default(false),
+      commitToken: z.string().uuid().optional(),
+    })
+    .strict(),
+
+  list_environmental_approvals: z
+    .object({
+      /** Raw DMIRS tenement id (letter + 2 spaces + 7 digits). Optional — omit to list all. */
+      tenementId: z.string().min(3).max(40).optional(),
+      /** When true (default) return only active approvals. */
+      active: z.boolean().default(true),
+    })
+    .strict(),
+
   list_audit_log: z.object({
     /** Tenant scope. Defaults to the caller's tenant when omitted. */
     tenantId: z.string().min(1).max(80).optional(),

@@ -35,6 +35,21 @@ export {
 } from "./grants.js";
 export { bufferPolygon } from "./buffer.js";
 export {
+  EMITS_BASE,
+  EMITS_PUBLIC_SEARCH,
+  buildEmitsSearchUrl,
+  emitsAvailable,
+  fetchEmitsApprovalsForTenement,
+  type EmitsApproval,
+  type EmitsFetchResult,
+  type FetchEmitsOptions,
+} from "./emits.js";
+export {
+  TENGRAPH_BASE,
+  buildTengraphUrl,
+  tengraphAvailable,
+} from "./tengraph.js";
+export {
   compareAddressRecords,
   type AddressDiscrepancy,
   type AddressDiscrepancyKind,

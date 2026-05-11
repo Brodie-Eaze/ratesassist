@@ -212,6 +212,79 @@ export class DataStore {
   }
 
   /**
+   * Replace every property belonging to `councilCode` with the supplied set.
+   * Used by the rating-roll import (`mergeStrategy=replace`). Returns counts
+   * of removed + inserted properties.
+   */
+  public replaceProperties(
+    councilCode: string,
+    incoming: readonly Property[],
+  ): { readonly removed: number; readonly inserted: number } {
+    const before = this.properties.filter((p) => p.council === councilCode).length;
+    const keep = this.properties.filter((p) => p.council !== councilCode);
+    this.properties = [...keep, ...incoming];
+    return { removed: before, inserted: incoming.length };
+  }
+
+  /**
+   * Upsert properties keyed by `assessmentNumber`. Existing properties under
+   * the same council are updated in place; new rows are appended. Properties
+   * belonging to other councils are untouched.
+   */
+  public upsertProperties(
+    councilCode: string,
+    incoming: readonly Property[],
+  ): { readonly inserted: number; readonly updated: number } {
+    const byAssessment = new Map(
+      this.properties.map((p) => [p.assessmentNumber, p] as const),
+    );
+    let inserted = 0;
+    let updated = 0;
+    for (const row of incoming) {
+      if (row.council !== councilCode) continue;
+      if (byAssessment.has(row.assessmentNumber)) {
+        byAssessment.set(row.assessmentNumber, row);
+        updated += 1;
+      } else {
+        byAssessment.set(row.assessmentNumber, row);
+        inserted += 1;
+      }
+    }
+    this.properties = [...byAssessment.values()];
+    return { inserted, updated };
+  }
+
+  /**
+   * Upsert owner records. Existing owners (matched by `ownerId`) are
+   * replaced; new ones appended. Returns the count actually inserted.
+   */
+  public upsertOwners(
+    incoming: readonly Owner[],
+  ): { readonly inserted: number; readonly updated: number } {
+    const byId = new Map(this.owners.map((o) => [o.ownerId, o] as const));
+    let inserted = 0;
+    let updated = 0;
+    for (const o of incoming) {
+      if (byId.has(o.ownerId)) {
+        byId.set(o.ownerId, o);
+        updated += 1;
+      } else {
+        byId.set(o.ownerId, o);
+        inserted += 1;
+      }
+    }
+    this.owners = [...byId.values()];
+    return { inserted, updated };
+  }
+
+  /** Count properties for a council. Used by onboarding-state UI checks. */
+  public countPropertiesForCouncil(code: string): number {
+    let n = 0;
+    for (const p of this.properties) if (p.council === code) n += 1;
+    return n;
+  }
+
+  /**
    * Append a note to a property's `notes` array, returning the new property
    * record. No-op if the assessment is not found.
    */

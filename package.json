@@ -18,6 +18,7 @@
     "dmirs-pull": "tsx scripts/dmirs-lga-pull.ts",
     "grants-poll": "tsx scripts/grants-poll.ts",
     "lag-window": "tsx scripts/lag-window-pull.ts",
+    "import-roll": "tsx scripts/import-rating-roll.ts",
     "prepare": "husky"
   },
   "devDependencies": {

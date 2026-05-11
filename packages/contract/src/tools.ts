@@ -72,6 +72,10 @@ const descriptions: Record<keyof typeof inputs, string> = {
     "Register a new council (tenant) on the platform. Two-phase: first call returns preview + commit token; second call (confirm=true with token) actually applies. Requires write.user_management. Refuses if the code already exists.",
   list_address_discrepancies:
     "Find parcels where the Landgate cadastre carries a different address, lot/plan, or landuse code from the council's rating record. Each entry is a mis-rated parcel until reconciled — covers residential renumbering, sub-divisions, landuse reclassifications, lot/plan amendments, and rural-to-industrial reuse. Powers the headline 'address mismatch' signal alongside the cadastre-lag signal.",
+  import_rating_roll:
+    "Import a TechOne rating-roll CSV for a council. Two-phase: first call returns a preview (row count, error list, commit token); second call (confirm=true with token) applies the merge. mergeStrategy=replace wipes the council's properties before insert; upsert matches by assessmentNumber. Materialises owner records from the rows. Requires write.user_management.",
+  list_environmental_approvals:
+    "List DMIRS EMITS environmental approvals (Mining Proposals, Programmes of Work, Mine Management Plans) for a tenement. EMITS has no public machine-readable export today — results are seeded fixtures filtered by tenement id and active-flag, labelled source=seeded. Powers the environmental-approval recovery signal that compounds with cadastre lag.",
   list_audit_log:
     "List recent audit-log entries for a tenant. Supervisor-and-above only (read.audit_log permission). Returns the most recent entries newest-first; supports tenantId, limit, and since (ISO-8601) filters.",
 };

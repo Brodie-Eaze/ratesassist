@@ -1,0 +1,31 @@
+assessment_number,address,suburb,postcode,state,landuse,valuation,annual_rates,balance,owner_name,owner_abn,lot_plan,lat,lng
+TPS-9001-01,12 Hamersley Drive,Tom Price,6751,WA,Residential,420000,2100.00,0,Carter Holdings Pty Ltd,11223344556,Lot 12 DP 18337,-22.6940,117.7920
+TPS-9001-02,14 Hamersley Drive,Tom Price,6751,WA,Residential,395000,1975.00,150.00,J & K Murphy,,Lot 14 DP 18337,-22.6942,117.7922
+TPS-9002-03,7 Stadium Road,Tom Price,6751,WA,Residential,510000,2550.00,0,Pilbara Residential Trust,98765432109,Lot 7 DP 18901,-22.6957,117.7940
+TPS-9003-01,1450 Tom Price-Karratha Road,Wittenoom,6751,WA,Rural,135000,675.00,1200.00,Outback Pastoral Co,33445566778,Lot 1450 DP 22001,-22.5510,117.4400
+TPS-9003-02,Lot 1101 Mining Lease Way,Karijini,6751,WA,Vacant,82000,410.00,0,Hamersley Iron Pty Ltd,,Lot 1101 DP 22002,-22.5612,117.4501
+TPS-9004-01,42 Central Road,Tom Price,6751,WA,Commercial,1200000,9600.00,500.00,Tom Price Holdings,77889900112,Lot 42 DP 18901,-22.6929,117.7918
+TPS-9004-02,44 Central Road,Tom Price,6751,WA,Commercial,980000,7840.00,0,Tom Price Holdings,77889900112,Lot 44 DP 18901,-22.6930,117.7919
+TPS-9005-01,3 Industrial Way,Paraburdoo,6754,WA,Industrial,2300000,18400.00,0,Pilbara Logistics Group,55667788990,Lot 3 DP 19002,-23.2010,117.6810
+TPS-9005-02,5 Industrial Way,Paraburdoo,6754,WA,Industrial,1850000,14800.00,2300.00,Pilbara Logistics Group,55667788990,Lot 5 DP 19002,-23.2012,117.6812
+TPS-9006-01,22 Goldsworthy Place,Tom Price,6751,WA,Residential,460000,2300.00,0,M Singh,,Lot 22 DP 18338,-22.6950,117.7935
+TPS-9006-02,24 Goldsworthy Place,Tom Price,6751,WA,Residential,455000,2275.00,0,M Singh,,Lot 24 DP 18338,-22.6951,117.7936
+TPS-9007-01,Lot 4501 Auski Road,Auski,6751,WA,Rural,98000,490.00,0,Auski Station Pty Ltd,22334455667,Lot 4501 DP 23001,-22.3700,118.7100
+TPS-9007-02,Lot 4502 Auski Road,Auski,6751,WA,Rural,102000,510.00,820.00,Auski Station Pty Ltd,22334455667,Lot 4502 DP 23001,-22.3702,118.7102
+TPS-9008-01,15 Boronia Street,Paraburdoo,6754,WA,Residential,385000,1925.00,0,L Thompson,,Lot 15 DP 19101,-23.2050,117.6820
+TPS-9008-02,17 Boronia Street,Paraburdoo,6754,WA,Residential,390000,1950.00,75.00,L Thompson,,Lot 17 DP 19101,-23.2052,117.6821
+TPS-9009-01,Lot 7011 Mt Nameless Road,Tom Price,6751,WA,Vacant,55000,275.00,0,Speculative Holdings,,Lot 7011 DP 24001,-22.7100,117.8200
+TPS-9009-02,Lot 7012 Mt Nameless Road,Tom Price,6751,WA,Mixed,180000,900.00,0,Speculative Holdings,,Lot 7012 DP 24001,-22.7102,117.8202
+TPS-9010-01,4 Pilbara Avenue,Tom Price,6751,WA,Commercial,720000,5760.00,0,Hamersley Trade Pty Ltd,44556677889,Lot 4 DP 18906,-22.6938,117.7945
+TPS-9010-02,6 Pilbara Avenue,Tom Price,6751,WA,Commercial,690000,5520.00,0,Hamersley Trade Pty Ltd,44556677889,Lot 6 DP 18906,-22.6939,117.7946
+TPS-9011-01,Lot 220 Mining Loop Road,Karijini,6751,WA,Rural,145000,725.00,0,Karijini Pastoral,66778899001,Lot 220 DP 24502,-22.4900,118.0500
+TPS-9011-02,Lot 221 Mining Loop Road,Karijini,6751,WA,Industrial,890000,7120.00,0,Karijini Logistics,66778899001,Lot 221 DP 24502,-22.4902,118.0502
+TPS-9012-01,33 Banksia Crescent,Tom Price,6751,WA,Residential,420000,2100.00,0,P & R Anderson,,Lot 33 DP 18339,-22.6965,117.7950
+TPS-9012-02,35 Banksia Crescent,Tom Price,6751,WA,Residential,430000,2150.00,0,P & R Anderson,,Lot 35 DP 18339,-22.6966,117.7951
+TPS-9013-01,Lot 9090 Goldfields Highway,Tom Price,6751,WA,Vacant,72000,360.00,0,Pilbara Speculator Pty Ltd,88990011223,Lot 9090 DP 25001,-22.7300,117.8500
+TPS-9013-02,Lot 9091 Goldfields Highway,Tom Price,6751,WA,Vacant,75000,375.00,0,Pilbara Speculator Pty Ltd,88990011223,Lot 9091 DP 25001,-22.7301,117.8501
+TPS-9014-01,8 Marble Bar Lane,Tom Price,6751,WA,Other,310000,1550.00,0,Pilbara Civic Trust,11335577990,Lot 8 DP 18345,-22.6975,117.7960
+TPS-9014-02,10 Marble Bar Lane,Tom Price,6751,WA,Residential,400000,2000.00,0,Pilbara Civic Trust,11335577990,Lot 10 DP 18345,-22.6976,117.7961
+TPS-9015-01,Lot 5001 Karratha Road,Wittenoom,6751,WA,Industrial,2900000,23200.00,0,Iron Belt Industrial,99001122334,Lot 5001 DP 26001,-22.5300,117.4200
+TPS-BAD-01,99 Broken Postcode Road,Tom Price,675,WA,Residential,300000,1500.00,0,Bad Row Tester,,Lot 99 DP 18999,-22.7000,117.8000
+TPS-BAD-02,100 Broken ABN Avenue,Tom Price,6751,WA,Residential,300000,1500.00,0,Bad ABN Tester,1234ABCD567,Lot 100 DP 18999,-22.7001,117.8001

@@ -34,7 +34,8 @@ export const COMMIT_TOKEN_TTL_MS = 5 * 60 * 1_000;
 export type CommitOperation =
   | "update_owner_contact"
   | "add_property_note"
-  | "add_council";
+  | "add_council"
+  | "import_rating_roll";
 
 /**
  * A pending mutation captured at preview time. The dispatcher uses this to
@@ -72,6 +73,14 @@ export type PendingMutation =
       readonly population: number;
       readonly rateableProperties: number;
       readonly rateRevenue: number;
+    }
+  | {
+      readonly operation: "import_rating_roll";
+      readonly councilCode: string;
+      readonly mergeStrategy: "replace" | "upsert";
+      readonly rowCount: number;
+      // Rows are captured at preview time and re-applied verbatim at confirm time.
+      readonly rows: ReadonlyArray<Record<string, unknown>>;
     };
 
 /**
