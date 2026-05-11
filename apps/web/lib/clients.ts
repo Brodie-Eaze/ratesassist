@@ -108,9 +108,96 @@ export function getEvaluationContext(): EvaluationContext {
     tenementsByAssessment,
     propertiesByOwnerId,
     ruralBySuburb,
+    lagCandidatesByAssessment: MOCK_LAG_CANDIDATES_BY_ASSESSMENT,
   };
   return cachedContext;
 }
+
+/**
+ * Mock cadastre-lag candidates for the demo.
+ *
+ * Each entry represents a parcel where a DMIRS tenement is registered but
+ * the underlying Landgate title record does NOT yet list that tenement
+ * number as an interest/encumbrance. The council's normal Lot-Plan lookup
+ * therefore misses the mining activity and the parcel keeps being rated
+ * from its old landuse code (Rural / Vacant).
+ *
+ * In production this map is populated by the cross-register pull in
+ * scripts/lag-window-pull.ts (DMIRS × Landgate-restricted-tier). For demo
+ * we hand-curate plausible entries against properties whose addresses
+ * already telegraph the narrative (Tom Price Mining Road, Goldfields
+ * Highway, Auski Road, etc.).
+ *
+ * Each reasoning string follows the shape the
+ * `reg.dmirs_ahead_of_landgate` signal renders verbatim into the evidence
+ * pack — tenement id, type, grant date, parcel landuse, lag days,
+ * reclassification consequence.
+ */
+const MOCK_LAG_CANDIDATES_BY_ASSESSMENT: ReadonlyMap<
+  string,
+  ReadonlyArray<{ severityHint: "high" | "medium" | "low"; reasoning: string }>
+> = new Map([
+  [
+    "TPS-1102-91",
+    [
+      {
+        severityHint: "high" as const,
+        reasoning:
+          "Tenement M 47/1612 (Mining Lease — iron ore) granted 2026-03-18 (54 days ago) intersects Lot 1191 Tom Price Mining Road. Landgate title does not yet list M 47/1612 as a registered interest. Current rating: Rural. Reclassification window open.",
+      },
+    ],
+  ],
+  [
+    "KAL-4401-12",
+    [
+      {
+        severityHint: "high" as const,
+        reasoning:
+          "Tenement M 26/0987 (Mining Lease — gold, producing) granted 2026-04-02 (39 days ago) intersects Lot 4412 Goldfields Highway. Landgate title omits the tenement number. Current rating: Rural at $2,800/yr; Kalgoorlie-Boulder mining differential rate applies.",
+      },
+    ],
+  ],
+  [
+    "ASH-9911-22",
+    [
+      {
+        severityHint: "high" as const,
+        reasoning:
+          "Tenement M 47/1709 (Mining Lease — iron ore) granted 2026-02-11 (89 days ago) intersects Lot 9922 Tom Price-Karratha Road. Landgate title last refreshed 2025-12; tenement notation missing. Current rating: Rural.",
+      },
+    ],
+  ],
+  [
+    "KAL-4401-77",
+    [
+      {
+        severityHint: "medium" as const,
+        reasoning:
+          "Tenement G 26/0123 (General-Purpose Lease — mineral processing infrastructure) granted 2026-04-19 (22 days ago) intersects Lot 4477 Coolgardie Esplanade. Landgate title shows no interest. Current rating: Vacant.",
+      },
+    ],
+  ],
+  [
+    "MEK-3303-58",
+    [
+      {
+        severityHint: "medium" as const,
+        reasoning:
+          "Tenement M 51/0902 (Mining Lease — gold tailings reprocessing) granted 2026-03-30 (42 days ago) intersects Lot 358 Yulgan Road. Adjacent to gold-rush era dump. Landgate title not updated. Current rating: Vacant.",
+      },
+    ],
+  ],
+  [
+    "ESH-1102-92",
+    [
+      {
+        severityHint: "high" as const,
+        reasoning:
+          "Tenement M 47/1655 (Mining Lease — iron ore, producing) granted 2026-01-28 (103 days ago) intersects Lot 1192 Auski Road. Landgate title shows the parcel free of mining interests. Current rating: Rural.",
+      },
+    ],
+  ],
+]);
 
 /**
  * Reset the memoised {@link EvaluationContext} so the next call to
