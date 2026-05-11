@@ -7,6 +7,7 @@ import { useState, useEffect, useMemo, Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Sidebar } from "@/components/Sidebar";
+import { LiveGrantsWidget } from "@/components/LiveGrantsWidget";
 import { formatAud } from "@/lib/utils";
 import { useFetch, LoadingState, ErrorState } from "@/lib/useFetch";
 import type { MismatchCandidate, SignalCategory, SignalHit } from "@/lib/types";
@@ -214,6 +215,10 @@ function RecoveryPageInner() {
               highlight
             />
           </div>
+
+          {/* Pinned live DMIRS feed — proves the upstream connection is
+              real even when downstream candidates run over demo fixtures. */}
+          <LiveGrantsWidget />
 
           {/* Signal contribution rollup */}
           <div className="card p-5">

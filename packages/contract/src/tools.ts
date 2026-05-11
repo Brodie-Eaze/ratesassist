@@ -68,6 +68,8 @@ const descriptions: Record<keyof typeof inputs, string> = {
     "Full briefing for a single recently-granted tenement: tenement metadata, geometry, intersecting council-registered parcels, and an estimated rates uplift per affected parcel. Powers the /alerts/[tenementId] detail page.",
   list_lag_window_candidates:
     "Find parcels where a live DMIRS tenement has been granted but the public WA landuse classification (Landgate / DPIRD) still reflects the pre-mining state. The headline cross-register signal — the cadastre-lag window is the highest-confidence recovery opportunity available before any council audit cycle.",
+  add_council:
+    "Register a new council (tenant) on the platform. Two-phase: first call returns preview + commit token; second call (confirm=true with token) actually applies. Requires write.user_management. Refuses if the code already exists.",
   list_audit_log:
     "List recent audit-log entries for a tenant. Supervisor-and-above only (read.audit_log permission). Returns the most recent entries newest-first; supports tenantId, limit, and since (ISO-8601) filters.",
 };

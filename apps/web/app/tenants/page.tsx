@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Sidebar } from "@/components/Sidebar";
+import { AddCouncilDialog } from "@/components/AddCouncilDialog";
 import { formatAud } from "@/lib/utils";
 import { useFetch, LoadingState, ErrorState } from "@/lib/useFetch";
 import {
@@ -72,7 +73,10 @@ const STATE_META: Record<
 };
 
 export default function TenantsPage() {
-  const fetchState = useFetch<DataResponse>("/api/tenants");
+  const [reloadKey, setReloadKey] = useState(0);
+  const fetchState = useFetch<DataResponse>(
+    `/api/tenants?r=${reloadKey}`,
+  );
   const [tab, setTab] = useState<"tenants" | "catalogue" | "benchmarks">("tenants");
 
   if (fetchState.status === "loading") return <LoadingState />;
@@ -88,14 +92,17 @@ export default function TenantsPage() {
     <div className="flex h-screen">
       <Sidebar />
       <main className="flex-1 flex flex-col overflow-hidden">
-        <div className="px-6 py-4 border-b border-ink-200 bg-white">
-          <h1 className="text-xl font-semibold text-ink-900 flex items-center gap-2">
-            <Building className="w-5 h-5 text-accent-500" />
-            Tenants & Plug-in Architecture
-          </h1>
-          <div className="text-sm text-ink-500">
-            Multi-tenant: each council is a tenant with isolated data, its own rating-system adapter, and opt-in cross-council intelligence
+        <div className="px-6 py-4 border-b border-ink-200 bg-white flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-xl font-semibold text-ink-900 flex items-center gap-2">
+              <Building className="w-5 h-5 text-accent-500" />
+              Tenants & Plug-in Architecture
+            </h1>
+            <div className="text-sm text-ink-500">
+              Multi-tenant: each council is a tenant with isolated data, its own rating-system adapter, and opt-in cross-council intelligence
+            </div>
           </div>
+          <AddCouncilDialog onAdded={() => setReloadKey((k) => k + 1)} />
         </div>
 
         {/* Tab strip */}

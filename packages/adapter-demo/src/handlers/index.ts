@@ -52,6 +52,7 @@ import { listRecentGrantsHandler } from "./recentGrants.js";
 import { getGrantDetailHandler } from "./grantDetail.js";
 import { listAuditLogHandler } from "./listAuditLog.js";
 import { listLagWindowCandidatesHandler } from "./lagWindow.js";
+import { addCouncilHandler } from "./addCouncil.js";
 
 /**
  * Generic handler signature. `Input` is the precise type for the matching
@@ -92,4 +93,5 @@ export const HANDLERS: {
   get_grant_detail: getGrantDetailHandler,
   list_audit_log: listAuditLogHandler,
   list_lag_window_candidates: listLagWindowCandidatesHandler,
+  add_council: addCouncilHandler,
 };

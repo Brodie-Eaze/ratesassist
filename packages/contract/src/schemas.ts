@@ -162,6 +162,28 @@ export const inputs = {
     minSeverity: z.enum(["high", "medium", "low"]).default("medium"),
   }).strict(),
 
+  add_council: z
+    .object({
+      code: z
+        .string()
+        .regex(/^[A-Z]{2,5}$/, "2-5 uppercase letters"),
+      name: z.string().min(3).max(120),
+      state: australianState,
+      centerLat: z.number().min(-45).max(-9),
+      centerLng: z.number().min(110).max(156),
+      population: z.number().int().min(0),
+      rateableProperties: z.number().int().min(0),
+      rateRevenue: z.number().min(0),
+      /**
+       * Two-phase commit. First call with confirm=false returns a preview
+       * + a server-issued commit token. Second call with confirm=true and
+       * the token actually applies the change.
+       */
+      confirm: z.boolean().default(false),
+      commitToken: z.string().uuid().optional(),
+    })
+    .strict(),
+
   list_audit_log: z.object({
     /** Tenant scope. Defaults to the caller's tenant when omitted. */
     tenantId: z.string().min(1).max(80).optional(),
@@ -231,6 +253,7 @@ export const adapterCapability = z.enum([
   "write.pensioner_rebate",
   "write.address_change",
   "generate.statutory_certificate",
+  "write.user_management",
 ]);
 
 export const adapterIdentity = z.object({

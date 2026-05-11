@@ -40,6 +40,8 @@ export class DataStore {
   private properties: Property[];
   /** Defensive copy of the owner seed, mutable internally only. */
   private owners: Owner[];
+  /** Defensive copy of the council seed, mutable internally for add_council. */
+  private councils: Council[];
 
   /**
    * Construct a store from the seeded data. Each instance is independent,
@@ -49,16 +51,28 @@ export class DataStore {
   public constructor() {
     this.properties = [...SEED_PROPERTIES];
     this.owners = [...SEED_OWNERS];
+    this.councils = [...COUNCILS];
   }
 
   /** All councils (tenants) advertised by this adapter. */
   public listCouncils(): readonly Council[] {
-    return COUNCILS;
+    return this.councils;
   }
 
   /** Look up a council by code. Returns `undefined` when unknown. */
   public getCouncil(code: string): Council | undefined {
-    return COUNCILS.find((c) => c.code === code);
+    return this.councils.find((c) => c.code === code);
+  }
+
+  /**
+   * Append a new council to the in-memory tenant registry. Returns the
+   * stored record on success, or `undefined` if a council with the same
+   * code already exists.
+   */
+  public addCouncil(council: Council): Council | undefined {
+    if (this.councils.some((c) => c.code === council.code)) return undefined;
+    this.councils = [...this.councils, council];
+    return council;
   }
 
   /** All properties across all tenants. Optionally filtered by council code. */

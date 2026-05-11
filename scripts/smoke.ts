@@ -114,7 +114,11 @@ async function main(): Promise<number> {
         PORT: String(PORT),
         // Round 4: every /api/* requires auth. Mint a stub session for the
         // duration of the smoke run so existing assertions keep working.
-        RA_DEV_AUTOLOGIN_SESSION: process.env.RA_DEV_AUTOLOGIN_SESSION ?? "default",
+        // council_admin grants write.user_management so the smoke run can
+        // exercise POST /api/tenants. The role-name shortcut is honoured by
+        // parseDevAutologin (auth-stub.ts).
+        RA_DEV_AUTOLOGIN_SESSION:
+          process.env.RA_DEV_AUTOLOGIN_SESSION ?? "council_admin",
       },
       stdio: ["ignore", "pipe", "pipe"],
     },
@@ -404,6 +408,43 @@ async function main(): Promise<number> {
       Object.keys(b.paths ?? {}).includes("/api/properties/{assessmentNumber}"),
       `missing property path`,
     );
+  });
+
+  // --- POST /api/tenants two-phase add_council ---
+  await check("POST /api/tenants add_council (two-phase)", async () => {
+    const body = {
+      code: "SMK",
+      name: "Shire of Smoke Test",
+      state: "WA" as const,
+      centerLat: -31.5,
+      centerLng: 117.0,
+      population: 1234,
+      rateableProperties: 567,
+      rateRevenue: 1_234_567,
+      confirm: false,
+    };
+    const preview = await getJson("/api/tenants", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    expect(preview.status === 200, `preview status ${preview.status}: ${preview.raw.slice(0, 200)}`);
+    const previewBody = preview.body as { ok?: boolean; commitToken?: string };
+    expect(previewBody.ok === true, `preview ok != true`);
+    expect(typeof previewBody.commitToken === "string", `no commitToken`);
+    const confirm = await getJson("/api/tenants", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        ...body,
+        confirm: true,
+        commitToken: previewBody.commitToken,
+      }),
+    });
+    expect(confirm.status === 200, `confirm status ${confirm.status}: ${confirm.raw.slice(0, 200)}`);
+    const confirmBody = confirm.body as { ok?: boolean; mutated?: boolean };
+    expect(confirmBody.ok === true, `confirm ok != true`);
+    expect(confirmBody.mutated === true, `confirm mutated != true`);
   });
 
   // --- Rate limit: hammer 70x within the 60s window ---

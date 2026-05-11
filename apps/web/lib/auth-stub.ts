@@ -84,6 +84,12 @@ export function parseDevAutologin(): StubSessionInput | null {
   const raw = process.env["RA_DEV_AUTOLOGIN_SESSION"];
   if (!raw) return null;
   if (raw === "default" || raw === "1" || raw === "true") return {};
+  // Role-name shortcut: `RA_DEV_AUTOLOGIN_SESSION=council_admin` mints a
+  // default principal elevated to that role. Convenient for smoke tests
+  // exercising RBAC-gated endpoints without crafting a JSON blob.
+  if (ALL_ROLES.includes(raw as Role)) {
+    return { roles: [raw as Role] };
+  }
   try {
     const parsed = JSON.parse(raw) as StubSessionInput;
     if (parsed.roles && !parsed.roles.every((r) => ALL_ROLES.includes(r))) {

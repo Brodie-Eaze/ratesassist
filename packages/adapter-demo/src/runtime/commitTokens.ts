@@ -33,7 +33,8 @@ export const COMMIT_TOKEN_TTL_MS = 5 * 60 * 1_000;
  */
 export type CommitOperation =
   | "update_owner_contact"
-  | "add_property_note";
+  | "add_property_note"
+  | "add_council";
 
 /**
  * A pending mutation captured at preview time. The dispatcher uses this to
@@ -52,6 +53,25 @@ export type PendingMutation =
       readonly operation: "add_property_note";
       readonly assessmentNumber: string;
       readonly note: string;
+    }
+  | {
+      readonly operation: "add_council";
+      readonly code: string;
+      readonly name: string;
+      readonly state:
+        | "WA"
+        | "NSW"
+        | "QLD"
+        | "VIC"
+        | "SA"
+        | "TAS"
+        | "ACT"
+        | "NT";
+      readonly centerLat: number;
+      readonly centerLng: number;
+      readonly population: number;
+      readonly rateableProperties: number;
+      readonly rateRevenue: number;
     };
 
 /**

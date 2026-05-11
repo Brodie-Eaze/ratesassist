@@ -1,6 +1,8 @@
 "use client";
 
 import { Sidebar } from "@/components/Sidebar";
+import { LiveGrantsWidget } from "@/components/LiveGrantsWidget";
+import { AddCouncilDialog } from "@/components/AddCouncilDialog";
 import { formatAud } from "@/lib/utils";
 import { useFetch, LoadingState, ErrorState } from "@/lib/useFetch";
 import type { Council, MismatchCandidate, Property } from "@/lib/types";
@@ -139,6 +141,10 @@ export default function IntelPage() {
             </div>
           </div>
 
+          {/* Live DMIRS feed — proves the spatial connection is real even
+              when the candidates pipeline runs over demo property fixtures. */}
+          <LiveGrantsWidget />
+
           <div className="card p-5">
             <div className="flex items-center justify-between mb-3">
               <div>
@@ -159,10 +165,13 @@ export default function IntelPage() {
 
           {/* Per-council */}
           <div className="card overflow-hidden">
-            <div className="px-5 py-3 border-b border-ink-200 flex items-center justify-between">
+            <div className="px-5 py-3 border-b border-ink-200 flex items-center justify-between gap-3">
               <div className="font-medium text-ink-900">By council</div>
-              <div className="text-xs text-ink-500">
-                Anonymised peer comparison available with cross-council opt-in
+              <div className="flex items-center gap-3">
+                <div className="text-xs text-ink-500">
+                  Anonymised peer comparison available with cross-council opt-in
+                </div>
+                <AddCouncilDialog variant="compact" />
               </div>
             </div>
             <table className="w-full text-sm">
