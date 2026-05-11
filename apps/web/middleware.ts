@@ -40,7 +40,12 @@ const PUBLIC_API_PREFIXES: readonly string[] = [
   "/api/auth/",
 ];
 
-const PUBLIC_HTML_PATHS: readonly string[] = ["/login"];
+/**
+ * HTML routes that bypass the auth gate. The root "/" is public so unauth
+ * visitors can land on the marketing page; page.tsx itself decides whether
+ * to render the dashboard (authed) or the landing surface (unauthed).
+ */
+const PUBLIC_HTML_PATHS: readonly string[] = ["/login", "/landing", "/"];
 
 function isPublicApi(path: string): boolean {
   return PUBLIC_API_PREFIXES.some(
@@ -191,6 +196,16 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
 
   let session: Session | null = null;
   let mintedToken: string | null = null;
+
+  // Resolve session opportunistically on public HTML routes too — pages
+  // like "/" want to know if the visitor is signed in so they can render
+  // the dashboard instead of the marketing landing. Public API routes skip
+  // this to keep the unauth path zero-cost.
+  if (isPublic && !isApi) {
+    const resolved = await resolveSession(req);
+    session = resolved.session;
+    mintedToken = resolved.mintedToken;
+  }
 
   if (!isPublic) {
     const resolved = await resolveSession(req);

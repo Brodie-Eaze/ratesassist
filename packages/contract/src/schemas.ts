@@ -243,6 +243,32 @@ export const inputs = {
     /** ISO-8601 floor; only entries at-or-after this instant are returned. */
     since: z.string().datetime().optional(),
   }),
+
+  verify_audit_chain: z
+    .object({
+      /** Tenant scope. Defaults to the caller's tenant when omitted. Cross-tenant: platform_admin only. */
+      tenantId: z.string().min(1).max(80).optional(),
+      /** How many of the most-recent rows to verify (chain-ordered). */
+      limit: z.number().int().min(1).max(10_000).default(1000),
+    })
+    .strict(),
+
+  notify_clerk: z
+    .object({
+      /** Recipient email — typically a council clerk or duty officer. */
+      recipientEmail: z.string().email().max(200),
+      /** Email subject; rendered verbatim by the transport. */
+      subject: z.string().min(3).max(200),
+      /** The recovery candidate this notification is about. */
+      candidateAssessmentNumber: z
+        .string()
+        .min(3)
+        .max(40)
+        .regex(/^[A-Z0-9][A-Z0-9-]*$/i, "assessment numbers are alphanumeric with dashes"),
+      /** Surfaced in the email body and used for routing/styling. */
+      severity: severity.default("medium"),
+    })
+    .strict(),
 } as const;
 
 export type ToolInputs = {

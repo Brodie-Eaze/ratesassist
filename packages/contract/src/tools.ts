@@ -78,6 +78,10 @@ const descriptions: Record<keyof typeof inputs, string> = {
     "List DMIRS EMITS environmental approvals (Mining Proposals, Programmes of Work, Mine Management Plans) for a tenement. EMITS has no public machine-readable export today — results are seeded fixtures filtered by tenement id and active-flag, labelled source=seeded. Powers the environmental-approval recovery signal that compounds with cadastre lag.",
   list_audit_log:
     "List recent audit-log entries for a tenant. Supervisor-and-above only (read.audit_log permission). Returns the most recent entries newest-first; supports tenantId, limit, and since (ISO-8601) filters.",
+  verify_audit_chain:
+    "Verify the tamper-evident hash chain for a tenant's audit log. Walks the most recent N rows in chain order, recomputes each rowHash and reports the first break (if any). Supervisor-and-above only (read.audit_log permission).",
+  notify_clerk:
+    "Send an email to a council clerk about a recovery candidate. Provider depends on environment: console-logged by default; live Resend send when RA_NOTIFY_PROVIDER=resend and RA_NOTIFY_API_KEY are set. Audit-logged in either case.",
 };
 
 /**

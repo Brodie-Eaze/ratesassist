@@ -56,6 +56,8 @@ import { listAddressDiscrepanciesHandler } from "./addressDiscrepancies.js";
 import { addCouncilHandler } from "./addCouncil.js";
 import { importRatingRollHandler } from "./importRatingRoll.js";
 import { emitsApprovalsHandler } from "./emitsApprovals.js";
+import { verifyAuditChainHandler } from "./verifyAuditChain.js";
+import { notifyClerkHandler } from "./notify.js";
 
 /**
  * Generic handler signature. `Input` is the precise type for the matching
@@ -100,4 +102,6 @@ export const HANDLERS: {
   add_council: addCouncilHandler,
   import_rating_roll: importRatingRollHandler,
   list_environmental_approvals: emitsApprovalsHandler,
+  verify_audit_chain: verifyAuditChainHandler,
+  notify_clerk: notifyClerkHandler,
 };

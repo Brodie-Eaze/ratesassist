@@ -26,6 +26,8 @@ export {
   append,
   readRecent,
   readById,
+  readChainOrdered,
+  readChainOrderedAllTenants,
   size,
   _resetForTests,
   FAIL_CLOSED_ACTIONS,
@@ -34,6 +36,16 @@ export {
   type AuditEntry,
   type AuditEntryInput,
 } from "./inMemoryAuditStore.js";
+
+export {
+  canonicalise,
+  computeRowHash,
+  genesisHash,
+  verifyChain,
+  type AuditRowWithHashes,
+  type AuditRowWithoutHash,
+  type VerifyChainResult,
+} from "./hashChain.js";
 
 function logErr(payload: Record<string, unknown>): void {
   try {

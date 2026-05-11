@@ -17,7 +17,25 @@
 
 import { randomUUID } from "node:crypto";
 
+import { computeRowHash, genesisHash } from "./hashChain.js";
+
 export const MAX_ENTRIES = 10_000;
+
+/**
+ * NOTE on tamper-evidence: every row carries a {@link AuditEntry.prevHash}
+ * and {@link AuditEntry.rowHash}, chained per-tenant. The verifier
+ * (`verifyChain` in ./hashChain.ts) walks rows in (occurredAt, id) order and
+ * recomputes each hash; a mutated `before`/`after` field shows up as a break
+ * at the offending index.
+ *
+ * IMPORTANT: this in-memory store is a ring buffer that evicts the oldest
+ * row when it overflows MAX_ENTRIES. Eviction BREAKS the chain — once the
+ * genesis row is evicted, a fresh verification will report a break at index
+ * 0 because the surviving head row's prevHash no longer matches the seed
+ * derived from the tenantId. Production-grade tamper-evidence requires
+ * persistent append-only storage (Phase 9); the in-memory variant supports
+ * verification only over the un-evicted prefix.
+ */
 
 /**
  * Actions that MUST have a successful audit write to be considered
@@ -58,7 +76,14 @@ export interface AuditEntry {
   readonly ip: string | null;
   readonly userAgent: string | null;
   readonly occurredAt: string; // ISO-8601
+  /** Hash of the immediately preceding row in this tenant's chain (or genesisHash for the first). */
+  readonly prevHash: string;
+  /** sha256(prevHash + canonical(this-row-without-hashes)). */
+  readonly rowHash: string;
 }
+
+/** Track the per-tenant tail hash for chain continuation. */
+const lastHashByTenant: Map<string, string> = new Map();
 
 /**
  * Module-scoped FIFO buffer. We keep insertion order via array push and
@@ -80,7 +105,7 @@ export function append(
   input: AuditEntryInput,
   opts?: { readonly now?: () => Date },
 ): AuditEntry {
-  const entry: AuditEntry = {
+  const body = {
     id: randomUUID(),
     tenantId: input.tenantId,
     actorId: input.actorId,
@@ -95,8 +120,12 @@ export function append(
     userAgent: input.userAgent ?? null,
     occurredAt: nowIso(opts?.now),
   };
+  const prevHash = lastHashByTenant.get(input.tenantId) ?? genesisHash(input.tenantId);
+  const rowHash = computeRowHash(prevHash, body);
+  const entry: AuditEntry = { ...body, prevHash, rowHash };
   buffer.push(entry);
   byId.set(entry.id, entry);
+  lastHashByTenant.set(input.tenantId, rowHash);
   if (buffer.length > MAX_ENTRIES) {
     const evicted = buffer.shift();
     if (evicted) byId.delete(evicted.id);
@@ -137,4 +166,34 @@ export function size(): number {
 export function _resetForTests(): void {
   buffer.length = 0;
   byId.clear();
+  lastHashByTenant.clear();
+}
+
+/**
+ * Read all rows for a tenant in chain-verification order: occurredAt ASC,
+ * then id ASC for stable ties. Caps the result at `limit` newest rows so
+ * the verifier can scope to a recent window; rows are returned oldest-first
+ * within that window so the chain walks forward naturally.
+ */
+export function readChainOrdered(
+  tenantId: string,
+  limit: number,
+): readonly AuditEntry[] {
+  // Insertion order is the canonical chain order; occurredAt would tie-break
+  // ambiguously when multiple rows share the same millisecond. The buffer is
+  // append-only within the un-evicted window, so its natural order is the
+  // chain order.
+  const tenantRows = buffer.filter((e) => e.tenantId === tenantId);
+  return tenantRows.slice(-Math.max(1, limit));
+}
+
+/** Cross-tenant chain dump for platform_admin verification. */
+export function readChainOrderedAllTenants(limit: number): readonly AuditEntry[] {
+  const tenantSet = new Set(buffer.map((e) => e.tenantId));
+  const out: AuditEntry[] = [];
+  for (const t of tenantSet) {
+    out.push(...readChainOrdered(t, limit));
+  }
+  // Group by tenant in the output — verifier handles per-tenant segments.
+  return out;
 }
