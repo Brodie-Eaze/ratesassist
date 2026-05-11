@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 
 const RECENTLY_GRANTED_SIGNAL_ID = "reg.tenement.recently_granted";
+const CADASTRE_LAG_SIGNAL_ID = "reg.dmirs_ahead_of_landgate";
 
 type DataResponse = {
   mismatches: MismatchCandidate[];
@@ -100,6 +101,7 @@ function RecoveryPageInner() {
   const [filter, setFilter] = useState<"all" | "high" | "medium" | "low">("all");
   const [signalFilter, setSignalFilter] = useState<string | "all">("all");
   const [recentlyGrantedOnly, setRecentlyGrantedOnly] = useState<boolean>(false);
+  const [cadastreLagOnly, setCadastreLagOnly] = useState<boolean>(false);
   const searchParams = useSearchParams();
 
   // Pre-apply the "Newly granted only" filter when arriving via
@@ -107,6 +109,9 @@ function RecoveryPageInner() {
   useEffect(() => {
     if (searchParams?.get("signal") === "recently_granted") {
       setRecentlyGrantedOnly(true);
+    }
+    if (searchParams?.get("signal") === "cadastre_lag") {
+      setCadastreLagOnly(true);
     }
   }, [searchParams]);
 
@@ -136,6 +141,15 @@ function RecoveryPageInner() {
     return n;
   }, [fetchState]);
 
+  const cadastreLagCount = useMemo(() => {
+    if (fetchState.status !== "ok") return 0;
+    let n = 0;
+    for (const m of fetchState.data.mismatches) {
+      if (m.signals.some((s) => s.id === CADASTRE_LAG_SIGNAL_ID)) n++;
+    }
+    return n;
+  }, [fetchState]);
+
   if (fetchState.status === "loading") return <LoadingState />;
   if (fetchState.status === "error") return <ErrorState message={fetchState.error} />;
   const data = fetchState.data;
@@ -147,6 +161,10 @@ function RecoveryPageInner() {
   if (recentlyGrantedOnly)
     filtered = filtered.filter((m) =>
       m.signals.some((s) => s.id === RECENTLY_GRANTED_SIGNAL_ID),
+    );
+  if (cadastreLagOnly)
+    filtered = filtered.filter((m) =>
+      m.signals.some((s) => s.id === CADASTRE_LAG_SIGNAL_ID),
     );
 
   return (
@@ -295,6 +313,21 @@ function RecoveryPageInner() {
                 {recentlyGrantedCount}
               </span>
             </button>
+            <button
+              onClick={() => setCadastreLagOnly((v) => !v)}
+              className={`btn ${
+                cadastreLagOnly
+                  ? "bg-accent-600 text-white"
+                  : "bg-white border border-accent-300 text-accent-700 hover:bg-accent-50"
+              }`}
+              title="Filter to candidates where DMIRS has granted a tenement but Landgate landuse hasn't caught up — the highest-confidence recovery window."
+            >
+              <Sparkles className="w-3 h-3" />
+              Cadastre lag (high-confidence)
+              <span className="text-[10px] opacity-70 ml-1">
+                {cadastreLagCount}
+              </span>
+            </button>
           </div>
 
           {/* Candidates */}
@@ -351,6 +384,10 @@ function CandidateCard({
   const isRecentlyGranted = c.signals.some(
     (s) => s.id === RECENTLY_GRANTED_SIGNAL_ID,
   );
+  const cadastreLagSignal = c.signals.find((s) => s.id === CADASTRE_LAG_SIGNAL_ID);
+  // Parse the lag-days figure out of the evidence string for a quick badge.
+  const lagDaysMatch = cadastreLagSignal?.evidence.match(/Cadastre lag: (\d+) days?/);
+  const lagDays = lagDaysMatch ? Number(lagDaysMatch[1]) : null;
   return (
     <Link
       href={`/recovery/${c.assessmentNumber}`}
@@ -373,6 +410,23 @@ function CandidateCard({
               >
                 <BellRing className="w-3 h-3 mr-1 inline" />
                 NEW GRANT
+              </span>
+            )}
+            {cadastreLagSignal && (
+              <span
+                className="badge bg-accent-100 text-accent-700 border border-accent-300"
+                title={cadastreLagSignal.evidence}
+              >
+                <Sparkles className="w-3 h-3 mr-1 inline" />
+                CADASTRE LAG
+              </span>
+            )}
+            {lagDays !== null && (
+              <span
+                className="badge bg-warn-100 text-warn-700 border border-warn-300"
+                title="Days since DMIRS grant vs Landgate landuse classification"
+              >
+                {lagDays}d lag
               </span>
             )}
             <span className="badge badge-neutral">

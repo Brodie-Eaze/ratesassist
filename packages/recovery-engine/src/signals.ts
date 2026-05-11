@@ -74,6 +74,20 @@ export const SIGNAL_CATALOGUE: readonly SignalDef[] = [
     source: "DMIRS MINEDEX",
   },
 
+  // ---- HEADLINE: DMIRS ahead of Landgate cadastre ----
+  {
+    id: "reg.dmirs_ahead_of_landgate",
+    name: "DMIRS tenement ahead of Landgate cadastre",
+    short: "Cadastre lag",
+    category: "register",
+    weight: 0.50,
+    // NOT in tenement-class exclusive group — stacks with recently_granted,
+    // producing_tenement, etc. The headline edge of the platform.
+    description:
+      "Live DMIRS tenement intersects a Landgate cadastre parcel whose landuse code does not yet reflect the mining activity. This is the reclassification lag window — the highest-confidence recovery opportunity, ahead of any council audit cycle.",
+    source: "DMIRS MINEDEX × Landgate cadastre (Property_and_Planning/MapServer)",
+  },
+
   // ---- IDENTITY signals (ABN / ASIC) ----
   {
     id: "id.abn.cancelled_or_suspended",

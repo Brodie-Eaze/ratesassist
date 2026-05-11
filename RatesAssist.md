@@ -315,6 +315,7 @@ All write operations follow the **preview-then-confirm** pattern: tool returns a
 ### 5.6 Anomaly detection (RatesRecovery core)
 
 - Mining tenement vs. rating classification mismatch
+- **DMIRS ahead of Landgate cadastre** (`reg.dmirs_ahead_of_landgate`, weight 0.50): the platform's headline cross-register signal. Joins live DMIRS grants against the public WA landuse classification (Landgate / DPIRD); fires inside the multi-week-to-multi-month lag window where a producing mining lease sits on a parcel still classified Rural / Vacant. The highest-confidence recovery opportunity available before any council audit cycle, surfaced live at `/recovery` under the "⚡ Cadastre lag (high-confidence)" filter. See `internal/SIGNAL-dmirs-ahead-of-landgate.md`.
 - **Newly-granted tenement alerts** (DMIRS via SLIP): a fresh LIVE grant on a parcel currently rated rural/vacant is the headline sales-trigger event — the council can lawfully reclassify the parcel to a higher rate category and recover up to three years of backdated arrears within statutory limits. Surfaced live in the officer console at `/alerts`, with the 30-day wardens-court appeal window flagged as "provisional".
 - Vacant-land-not-vacant detection via aerial imagery
 - Undeclared improvement detection (new structures since last valuation)

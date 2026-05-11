@@ -35,6 +35,17 @@ function hit(sig: SignalDef, evidence: string): SignalHit {
   };
 }
 
+/**
+ * Minimal lag-candidate shape consumed by the scoring engine. Mirrors
+ * `@ratesassist/spatial`'s `LagCandidate` but the engine deliberately does
+ * NOT depend on the spatial package (it would create a cycle through
+ * adapter-demo). Callers map their richer LagCandidate down to this shape.
+ */
+export type LagCandidateForScoring = {
+  readonly severityHint: "high" | "medium" | "low";
+  readonly reasoning: string;
+};
+
 export type EvaluationContext = {
   /** All properties in the active tenant — used for portfolio + outlier signals. */
   readonly properties: readonly Property[];
@@ -56,6 +67,14 @@ export type EvaluationContext = {
    * fallback.
    */
   readonly ruralBySuburb?: ReadonlyMap<string, readonly Property[]>;
+  /**
+   * Optional cross-register lag-window join, keyed by assessmentNumber.
+   * When present and the entry's severityHint is "medium" or "high", the
+   * `reg.dmirs_ahead_of_landgate` signal fires for that property. Absent
+   * map (or no entry) silently doesn't fire — no false positives if the
+   * caller hasn't done the cross-register pull. Honest by construction.
+   */
+  readonly lagCandidatesByAssessment?: ReadonlyMap<string, readonly LagCandidateForScoring[]>;
   /**
    * Wall clock injection point. Production callers can omit this and the
    * engine defaults to `Date.now`. Tests pin it to a fixed millisecond value
@@ -218,6 +237,19 @@ export function evaluateSignals(
         ),
       );
     }
+  }
+
+  // ---- HEADLINE: DMIRS ahead of Landgate cadastre ----
+  // Fires when the caller has done the cross-register pull and surfaced a
+  // medium/high-severity lag candidate for this assessment. No false positives
+  // without an explicit lag join, no exclusive group — stacks with everything.
+  const lagEntries = ctx.lagCandidatesByAssessment?.get(p.assessmentNumber) ?? [];
+  const lagWorth = lagEntries.find(
+    (c) => c.severityHint === "high" || c.severityHint === "medium",
+  );
+  if (lagWorth !== undefined) {
+    const sig = getSignal("reg.dmirs_ahead_of_landgate")!;
+    hits.push(hit(sig, lagWorth.reasoning));
   }
 
   // ---- Identity: ABN cancelled / suspended ----

@@ -428,6 +428,102 @@ describe("evaluateSignals", () => {
   });
 });
 
+// ---- HEADLINE: DMIRS ahead of Landgate ----
+
+describe("reg.dmirs_ahead_of_landgate", () => {
+  it("does not fire when lagCandidatesByAssessment is absent", () => {
+    const p = prop({ assessmentNumber: "A1" });
+    const ctx = ctxFrom({ properties: [p], owners: [owner()] });
+    const hits = evaluateSignals(p, ctx);
+    expect(hits.find((h) => h.id === "reg.dmirs_ahead_of_landgate")).toBeUndefined();
+  });
+
+  it("does not fire when the lag map has no entry for the assessment", () => {
+    const p = prop({ assessmentNumber: "A1" });
+    const ctx: EvaluationContext = {
+      ...ctxFrom({ properties: [p], owners: [owner()] }),
+      lagCandidatesByAssessment: new Map([
+        ["OTHER", [{ severityHint: "high", reasoning: "irrelevant" }]],
+      ]),
+    };
+    const hits = evaluateSignals(p, ctx);
+    expect(hits.find((h) => h.id === "reg.dmirs_ahead_of_landgate")).toBeUndefined();
+  });
+
+  it("does not fire when only a low-severity lag candidate is present", () => {
+    const p = prop({ assessmentNumber: "A1" });
+    const ctx: EvaluationContext = {
+      ...ctxFrom({ properties: [p], owners: [owner()] }),
+      lagCandidatesByAssessment: new Map([
+        ["A1", [{ severityHint: "low", reasoning: "skip me" }]],
+      ]),
+    };
+    const hits = evaluateSignals(p, ctx);
+    expect(hits.find((h) => h.id === "reg.dmirs_ahead_of_landgate")).toBeUndefined();
+  });
+
+  it("fires with the reasoning string when a medium/high candidate is mapped", () => {
+    const p = prop({ assessmentNumber: "A1" });
+    const ctx: EvaluationContext = {
+      ...ctxFrom({ properties: [p], owners: [owner()] }),
+      lagCandidatesByAssessment: new Map([
+        [
+          "A1",
+          [
+            {
+              severityHint: "high",
+              reasoning:
+                "Tenement M 47/1569 (Mining Lease) granted 2026-04-20 intersects parcel classified as \"Livestock grazing\". Cadastre lag: 20 days. Reclassification window open.",
+            },
+          ],
+        ],
+      ]),
+    };
+    const hits = evaluateSignals(p, ctx);
+    const lag = hits.find((h) => h.id === "reg.dmirs_ahead_of_landgate");
+    expect(lag).toBeDefined();
+    expect(lag!.weight).toBeCloseTo(0.5, 10);
+    expect(lag!.evidence).toContain("Cadastre lag: 20 days");
+  });
+
+  it("stacks additively with recently_granted (no exclusive group)", () => {
+    // M-class lease producing + rural, plus a recent grantedDate and a
+    // matching lag candidate — the producing + recently-granted + lag signals
+    // all fire and the composite stays capped at 1.0.
+    const p = prop({ assessmentNumber: "A1", landUse: "Rural" });
+    const t = ten({
+      tenementId: "M-1",
+      type: "M",
+      isProducing: true,
+      // Granted 30 days before fixed clock → fires recently_granted.
+      grantedDate: new Date(FIXED_NOW_MS - 30 * 86400_000).toISOString(),
+    });
+    const ctx: EvaluationContext = {
+      ...ctxFrom({
+        properties: [p],
+        owners: [owner()],
+        tenementsByAssessment: new Map([["A1", [t]]]),
+        now: fixedNow,
+      }),
+      lagCandidatesByAssessment: new Map([
+        [
+          "A1",
+          [
+            {
+              severityHint: "high",
+              reasoning: "cadastre-lag evidence string for test",
+            },
+          ],
+        ],
+      ]),
+    };
+    const hitIds = evaluateSignals(p, ctx).map((h) => h.id);
+    expect(hitIds).toContain("reg.tenement.producing.on_rural_or_vacant");
+    expect(hitIds).toContain("reg.tenement.recently_granted");
+    expect(hitIds).toContain("reg.dmirs_ahead_of_landgate");
+  });
+});
+
 // ---- PERF-004: O(1) signal lookup ----
 
 describe("SIGNAL_BY_ID index", () => {

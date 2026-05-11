@@ -153,6 +153,15 @@ export const inputs = {
     sinceDays: z.number().int().min(1).max(365).default(90),
   }),
 
+  list_lag_window_candidates: z.object({
+    /** LGA name filter (case-insensitive substring). Optional hint. */
+    lgaName: z.string().min(1).max(120).optional(),
+    /** Lookback window in days. Default 90, max 365. */
+    sinceDays: z.number().int().min(1).max(365).default(90),
+    /** Minimum severity to surface. Default medium (low is officer-review). */
+    minSeverity: z.enum(["high", "medium", "low"]).default("medium"),
+  }).strict(),
+
   list_audit_log: z.object({
     /** Tenant scope. Defaults to the caller's tenant when omitted. */
     tenantId: z.string().min(1).max(80).optional(),

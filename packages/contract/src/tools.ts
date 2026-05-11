@@ -66,6 +66,8 @@ const descriptions: Record<keyof typeof inputs, string> = {
     "List recently-granted live mining tenements (DMIRS via SLIP). The headline sales-trigger event: a fresh LIVE grant on a parcel currently rated rural/vacant lawfully unlocks a higher rate category. Returns typed grant records with MINEDEX deep-links and provisional-status flags for the 30-day appeal window.",
   get_grant_detail:
     "Full briefing for a single recently-granted tenement: tenement metadata, geometry, intersecting council-registered parcels, and an estimated rates uplift per affected parcel. Powers the /alerts/[tenementId] detail page.",
+  list_lag_window_candidates:
+    "Find parcels where a live DMIRS tenement has been granted but the public WA landuse classification (Landgate / DPIRD) still reflects the pre-mining state. The headline cross-register signal — the cadastre-lag window is the highest-confidence recovery opportunity available before any council audit cycle.",
   list_audit_log:
     "List recent audit-log entries for a tenant. Supervisor-and-above only (read.audit_log permission). Returns the most recent entries newest-first; supports tenantId, limit, and since (ISO-8601) filters.",
 };

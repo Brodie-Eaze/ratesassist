@@ -34,3 +34,18 @@ export {
   type RecentlyGrantedOpts,
 } from "./grants.js";
 export { bufferPolygon } from "./buffer.js";
+export {
+  findLagWindowCandidates,
+  classifyLanduse,
+  severityHintFor,
+  buildLandgateLocateUrl,
+  SEEDED_LAGWINDOW_PARCELS,
+  DPIRD_LANDUSE_LAYER_URL,
+  LANDGATE_LOCATE_BASE,
+  type LagCandidate,
+  type LandgateParcel,
+  type LanduseCategory,
+  type LagSeverityHint,
+  type LagFetchResult,
+  type FindLagWindowOptions,
+} from "./lagWindow.js";
