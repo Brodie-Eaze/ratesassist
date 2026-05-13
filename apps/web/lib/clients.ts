@@ -16,12 +16,15 @@ import { createAbnClient, type AbnClient } from "@ratesassist/identity";
 import {
   recoveryStats as engineRecoveryStats,
   findMismatches,
+  type ChangeDetectionEntry,
   type EvaluationContext,
 } from "@ratesassist/recovery-engine";
 import {
   TARGET_STATE_SCOPE,
+  WA_RATE_TABLES,
   type MismatchCandidate,
   type Property,
+  type RateTable,
   type Tenement,
 } from "@ratesassist/contract";
 
@@ -66,6 +69,39 @@ let cachedContext: EvaluationContext | null = null;
  * Phase 1B will replace this in-process context with one populated through
  * the MCP client; the engine's signature stays the same.
  */
+/**
+ * Synthetic GRV / UV overlays for the demo properties that the accurate
+ * uplift calculator needs. Production runs receive these from the
+ * Valuer-General's record via the rating-system adapter. For the demo we
+ * pin plausible numbers against the same assessments the lifecycle-change
+ * mocks reference so the accurate path fires end-to-end.
+ */
+const VALUATIONS_OVERLAY: ReadonlyMap<
+  string,
+  { readonly grv?: number; readonly uv?: number }
+> = new Map([
+  ["TPS-1102-91", { grv: 18_000, uv: 40_400 }],
+  ["KAL-4401-12", { grv: 22_500, uv: 63_100 }],
+  ["ESH-1102-92", { grv: 19_800, uv: 71_200 }],
+  ["TPS-3041-12", { grv: 32_500, uv: 280_000 }],
+  ["ESH-7011-08", { grv: 184_000, uv: 1_120_000 }],
+  ["KAL-7777-01", { grv: 168_000, uv: 1_350_000 }],
+  ["ASH-9911-04", { grv: 412_000, uv: 2_800_000 }],
+  ["TPS-1102-44", { grv: 22_000, uv: 55_000 }],
+  ["MEK-3303-58", { grv: 8_400, uv: 23_500 }],
+  ["NEW-9001-12", { grv: 14_200, uv: 42_000 }],
+  ["KAL-7000-08", { grv: 28_500, uv: 145_000 }],
+  ["IND-EXP-2200", { grv: 96_000, uv: 540_000 }],
+]);
+
+function overlayValuations(props: readonly Property[]): readonly Property[] {
+  return props.map((p) => {
+    const overlay = VALUATIONS_OVERLAY.get(p.assessmentNumber);
+    if (overlay === undefined) return p;
+    return { ...p, grv: overlay.grv, uv: overlay.uv };
+  });
+}
+
 export function getEvaluationContext(): EvaluationContext {
   if (cachedContext !== null) return cachedContext;
 
@@ -86,9 +122,10 @@ export function getEvaluationContext(): EvaluationContext {
   // PERF-002 / PERF-003: build per-owner and per-suburb-rural indexes in a
   // single pass over PROPERTIES so the scoring engine can look up O(1)
   // instead of re-scanning the full property list on every signal eval.
+  const enrichedProperties = overlayValuations(PROPERTIES);
   const propertiesByOwnerId = new Map<string, Property[]>();
   const ruralBySuburb = new Map<string, Property[]>();
-  for (const p of PROPERTIES) {
+  for (const p of enrichedProperties) {
     for (const ownerId of p.ownerIds) {
       const bucket = propertiesByOwnerId.get(ownerId);
       if (bucket === undefined) {
@@ -108,7 +145,7 @@ export function getEvaluationContext(): EvaluationContext {
   }
 
   cachedContext = {
-    properties: PROPERTIES,
+    properties: enrichedProperties,
     ownersById,
     tenementsByAssessment,
     propertiesByOwnerId,
@@ -116,10 +153,175 @@ export function getEvaluationContext(): EvaluationContext {
     lagCandidatesByAssessment: MOCK_LAG_CANDIDATES_BY_ASSESSMENT,
     addressDiscrepanciesByAssessment: MOCK_ADDRESS_DISCREPANCIES_BY_ASSESSMENT,
     emitsApprovalsByTenement: MOCK_EMITS_APPROVALS_BY_TENEMENT,
+    changeDetectionByAssessment: MOCK_CHANGE_DETECTION_BY_ASSESSMENT,
+    rateTablesByCouncil: RATE_TABLES_BY_COUNCIL,
     targetStateScope: TARGET_STATE_SCOPE,
   };
   return cachedContext;
 }
+
+const RATE_TABLES_BY_COUNCIL: ReadonlyMap<string, RateTable> = new Map(
+  Object.entries(WA_RATE_TABLES),
+);
+
+/**
+ * Mock property-lifecycle change-detection records. Each entry carries
+ * `kind` (matching one of the six `change.*` signals), an ISO
+ * `detectedAt` date for backdating math, and an optional `correctLandUse`
+ * hypothesis that routes the accurate uplift calculator. Plausible WA
+ * narratives across the demo assessments.
+ */
+const MOCK_CHANGE_DETECTION_BY_ASSESSMENT: ReadonlyMap<
+  string,
+  readonly ChangeDetectionEntry[]
+> = new Map<string, readonly ChangeDetectionEntry[]>([
+  [
+    "KAL-4401-12",
+    [
+      {
+        kind: "commercial_use_observed",
+        detectedAt: "2024-02-15",
+        correctLandUse: "Mining",
+        reasoning:
+          "Nearmap change-feed confirms continuous heavy-vehicle activity and ROM pad construction on Lot 4412 since Feb 2024; tenement M 26/0987 (producing gold) intersects. Rural rating is stale.",
+      },
+    ],
+  ],
+  [
+    "ESH-1102-92",
+    [
+      {
+        kind: "commercial_use_observed",
+        detectedAt: "2023-09-01",
+        correctLandUse: "Mining",
+        reasoning:
+          "Producing iron-ore mining lease M 47/1655 on a parcel still rated Rural since Sep 2023; backdating period exceeds practical 3y cap — statutory 5y cap applies.",
+      },
+    ],
+  ],
+  [
+    "TPS-3041-12",
+    [
+      {
+        kind: "renovation_detected",
+        detectedAt: "2025-03-20",
+        correctLandUse: "Residential",
+        reasoning:
+          "Landgate cadastre records post-renumber address; GRV likely stale after consolidation of lots 12 and 14 (March 2025).",
+      },
+    ],
+  ],
+  [
+    "ESH-7011-08",
+    [
+      {
+        kind: "construction_completed",
+        detectedAt: "2024-07-08",
+        correctLandUse: "Industrial",
+        reasoning:
+          "DA-2025-184 occupancy certificate issued July 2024 for heavy-industrial fitout; council still rating Commercial.",
+      },
+    ],
+  ],
+  [
+    "KAL-7777-01",
+    [
+      {
+        kind: "subdivision_detected",
+        detectedAt: "2025-01-10",
+        correctLandUse: "Commercial",
+        reasoning:
+          "Landgate records 211, 211A, 211B Hannan St as three separately-titled child lots since Jan 2025 (SUB-2025-722). Parent still rated as one parcel.",
+      },
+    ],
+  ],
+  [
+    "ASH-9911-04",
+    [
+      {
+        kind: "renovation_detected",
+        detectedAt: "2024-11-22",
+        correctLandUse: "Industrial",
+        reasoning:
+          "BA-2026-019 boundary amendment in Nov 2024 added processing-plant footprint; GRV revaluation not yet flowed through.",
+      },
+    ],
+  ],
+  [
+    "TPS-1102-44",
+    [
+      {
+        kind: "commercial_use_observed",
+        detectedAt: "2024-05-30",
+        correctLandUse: "Industrial",
+        reasoning:
+          "Aerial feed confirms haul-road maintenance depot on parcel rated Rural since May 2024. Industrial reclassification overdue.",
+      },
+    ],
+  ],
+  [
+    "MEK-3303-58",
+    [
+      {
+        kind: "commercial_use_observed",
+        detectedAt: "2025-02-14",
+        correctLandUse: "Mining",
+        reasoning:
+          "Gold tailings reprocessing tied to M 51/0902 commenced Feb 2025 on parcel still rated Vacant.",
+      },
+    ],
+  ],
+
+  // ----- New lifecycle-demo records (residential / commercial / industrial) -----
+  [
+    "NEW-9001-12",
+    [
+      {
+        kind: "subdivision_detected",
+        detectedAt: "2025-08-04",
+        correctLandUse: "Residential",
+        reasoning:
+          "Landgate registered four child lots (Lots 12A-D) carved from a vacant Karratha block in Aug 2025; council still issues a single rate notice against the parent.",
+      },
+      {
+        kind: "construction_approved",
+        detectedAt: "2025-11-10",
+        reasoning:
+          "DA-2025-411 approves four single-storey dwellings on the subdivided lots; pre-emptive rating-system review prevents arrears compounding.",
+      },
+    ],
+  ],
+  [
+    "KAL-7000-08",
+    [
+      {
+        kind: "commercial_use_observed",
+        detectedAt: "2024-12-01",
+        correctLandUse: "Commercial",
+        reasoning:
+          "Rural shed at Lot 7000 fitted out as a roadside retail outlet since Dec 2024 — signage, customer parking, and EFTPOS activity visible in aerial feed.",
+      },
+    ],
+  ],
+  [
+    "IND-EXP-2200",
+    [
+      {
+        kind: "construction_completed",
+        detectedAt: "2025-06-18",
+        correctLandUse: "Industrial",
+        reasoning:
+          "Factory extension completed June 2025 (occupancy certificate OC-2025-088); GRV revaluation pending.",
+      },
+      {
+        kind: "gru_revaluation_pending",
+        detectedAt: "2025-07-01",
+        reasoning:
+          "Valuer-General's last GRV for this parcel dates from 2022 — past the 3-year cycle for this district.",
+      },
+    ],
+  ],
+]);
 
 /**
  * Mock cadastre-lag candidates for the demo.

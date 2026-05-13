@@ -106,6 +106,17 @@ export type Property = {
    * SLIP etc.) when available.
    */
   readonly parcel?: readonly LatLng[];
+  /**
+   * Gross Rental Value (AUD), set by the WA Valuer-General. Used by the
+   * accurate uplift calculator for non-rural rate lines (basis = GRV).
+   * Optional because some fixtures pre-date the field.
+   */
+  readonly grv?: number;
+  /**
+   * Unimproved Value (AUD), set by the Valuer-General. Used for rural,
+   * pastoral, and mining rate lines (basis = UV). Optional.
+   */
+  readonly uv?: number;
 };
 
 // ===== Owner / ABN =====
@@ -243,6 +254,26 @@ export type MismatchCandidate = {
   /** Alias of compositeScore for backward compatibility; prefer compositeScore. */
   readonly confidence: number;
   readonly signals: readonly SignalHit[];
+
+  // ===== Accurate rate-recovery breakdown (optional; populated when the
+  // recovery engine has a per-council rate table + change-detected date). =====
+
+  /** Re-statement of estAnnualRatesNew under the accurate formula path. */
+  readonly correctAnnualRates?: number;
+  /** Backdated arrears at the WA LGA s.6.81 statutory 5-year cap. */
+  readonly backdatedAmountStatutory?: number;
+  /** Backdated arrears at the conservative 3-year practical cap. */
+  readonly backdatedAmountConservative?: number;
+  /** Years between change detection date and evaluation date (un-capped). */
+  readonly yearsSinceChange?: number;
+  /** ISO date the change was first detectable in upstream registers. */
+  readonly changeDetectedAt?: string;
+  /** Human-readable formula trail, e.g. "GRV $620,000 × 22.5c/$ = $1,395". */
+  readonly rateFormula?: string;
+  /** URL of the council's published schedule of rates this calc relied on. */
+  readonly rateSourceUrl?: string;
+  /** True when the rate table was pulled from the council's own published schedule. */
+  readonly rateTableVerified?: boolean;
 };
 
 // ===== Communications drafting =====

@@ -185,6 +185,72 @@ export const SIGNAL_CATALOGUE: readonly SignalDef[] = [
       "Nearmap AI change-detection feed flagged a structural or land-use change since last rates classification review (new structures, clearing, solar arrays, vehicle/equipment activity).",
     source: "Nearmap AI change feed",
   },
+
+  // ---- PROPERTY-LIFECYCLE CHANGE signals ----
+  // Each fires from a changeDetectionByAssessment map entry. They stack
+  // additively — a parcel that was subdivided, then had construction
+  // approved, then had construction completed compounds. No exclusiveGroup
+  // because each is independent evidence of a distinct lifecycle step.
+  {
+    id: "change.subdivision_detected",
+    name: "Subdivision detected — parent still rated as one parcel",
+    short: "Subdivision",
+    category: "register",
+    weight: 0.45,
+    description:
+      "Landgate has registered child lots from a subdivision but council is still rating the consolidated parent. Each child lot is separately rateable from registration date.",
+    source: "Landgate cadastre (parent/child lot diff)",
+  },
+  {
+    id: "change.construction_approved",
+    name: "Construction approved (DA register hit)",
+    short: "DA approved",
+    category: "register",
+    weight: 0.30,
+    description:
+      "Development Application register shows an approval that has not yet flowed to the rating record. Pre-emptive review prevents arrears compounding silently.",
+    source: "Council DA register",
+  },
+  {
+    id: "change.construction_completed",
+    name: "Construction completed (occupancy / aerial)",
+    short: "Construction complete",
+    category: "aerial",
+    weight: 0.40,
+    description:
+      "Occupancy certificate issued or aerial change feed shows completed structures on a parcel still rated Vacant. Reclassification is overdue.",
+    source: "Council occupancy register / Nearmap AI",
+  },
+  {
+    id: "change.renovation_detected",
+    name: "Renovation / alteration detected",
+    short: "Renovation",
+    category: "aerial",
+    weight: 0.20,
+    description:
+      "DA amendment or aerial change-feed indicates structural alteration since last GRV; valuation likely stale.",
+    source: "Council DA amendments / Nearmap AI",
+  },
+  {
+    id: "change.gru_revaluation_pending",
+    name: "GRV revaluation pending — stale Valuer-General record",
+    short: "GRV stale",
+    category: "register",
+    weight: 0.15,
+    description:
+      "Valuer-General's GRV record is past its 3-year revaluation cycle; rates are being struck against a stale value while a documented change is on file.",
+    source: "Landgate / Valuer-General revaluation cycle",
+  },
+  {
+    id: "change.commercial_use_observed",
+    name: "Commercial activity observed on rural-rated land",
+    short: "Commercial use",
+    category: "aerial",
+    weight: 0.35,
+    description:
+      "Aerial / change-feed shows sustained commercial activity (signage, vehicle activity, customer parking, fitout) on land still rated Rural. Reclassification to Commercial likely applies.",
+    source: "Nearmap AI change feed + council fieldcheck",
+  },
 ];
 
 /**

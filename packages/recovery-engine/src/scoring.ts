@@ -6,9 +6,11 @@
  */
 
 import type {
+  LandUseCategory,
   MismatchSeverity,
   Owner,
   Property,
+  RateTable,
   SignalDef,
   SignalHit,
   Tenement,
@@ -56,6 +58,28 @@ export type LagCandidateForScoring = {
 export type AddressDiscrepancyForScoring = {
   readonly severityHint: "high" | "medium" | "low";
   readonly reasoning: string;
+};
+
+/**
+ * Property-lifecycle change record consumed by the six `change.*` signals
+ * and the accurate uplift calculator. `kind` selects which signal fires;
+ * `correctLandUse` (when known) routes the accurate uplift path;
+ * `detectedAt` drives backdating math.
+ */
+export type ChangeDetectionKind =
+  | "subdivision_detected"
+  | "construction_approved"
+  | "construction_completed"
+  | "renovation_detected"
+  | "gru_revaluation_pending"
+  | "commercial_use_observed";
+
+export type ChangeDetectionEntry = {
+  readonly kind: ChangeDetectionKind;
+  readonly detectedAt: string;
+  readonly reasoning: string;
+  /** Hypothesised correct land-use category for the accurate uplift path. */
+  readonly correctLandUse?: LandUseCategory;
 };
 
 export type EvaluationContext = {
@@ -113,6 +137,25 @@ export type EvaluationContext = {
     string,
     readonly { active: boolean; reasoning: string }[]
   >;
+  /**
+   * Property-lifecycle change-detection records keyed by assessment
+   * number. Each entry carries a `kind` matching one of the six lifecycle
+   * change signals plus a `detectedAt` ISO date the accurate uplift
+   * calculator uses for backdating math. Absent map = lifecycle signals
+   * don't fire.
+   */
+  readonly changeDetectionByAssessment?: ReadonlyMap<
+    string,
+    readonly ChangeDetectionEntry[]
+  >;
+  /**
+   * Per-council rate tables keyed by council code. When present and a
+   * candidate carries a `correctLandUse` hypothesis + matching change
+   * record, `findMismatches` routes through the accurate uplift
+   * calculator instead of the heuristic multiplier. Absent map =
+   * heuristic-only path.
+   */
+  readonly rateTablesByCouncil?: ReadonlyMap<string, RateTable>;
   /**
    * Optional state-scope filter. When set, only properties whose
    * `state` matches this code are evaluated. Used to lock the WA-only
@@ -332,6 +375,18 @@ export function evaluateSignals(
     hits.push(hit(sig, discrepancyWorth.reasoning));
   }
 
+  // ---- PROPERTY-LIFECYCLE CHANGE signals ----
+  // Each kind maps to one signal id; all stack additively.
+  const changeEntries =
+    ctx.changeDetectionByAssessment?.get(p.assessmentNumber) ?? [];
+  for (const entry of changeEntries) {
+    const sigId = `change.${entry.kind}`;
+    const sig = getSignal(sigId);
+    if (sig !== undefined) {
+      hits.push(hit(sig, entry.reasoning));
+    }
+  }
+
   // ---- Identity: ABN cancelled / suspended ----
   if (owner?.abnCheck.kind === "checked" && owner.abnCheck.status !== "Active") {
     const sig = getSignal("id.abn.cancelled_or_suspended")!;
@@ -446,7 +501,16 @@ export function severityForScore(score: number): MismatchSeverity {
   return "low";
 }
 
-export function estimateUplift(
+/**
+ * Heuristic uplift estimator — kept as a fallback for paths that don't have
+ * a per-council rate table + change-detected date wired in. The accurate
+ * path is `calculateUplift` in `./upliftCalculator.ts`.
+ *
+ * Multipliers (8x / 4x / 1.5x) approximate WA Pilbara general:mining,
+ * rural:commercial, and review-only uplift ratios respectively. Honest
+ * stand-in until rate-table provenance is verified for the council.
+ */
+export function estimateUpliftHeuristic(
   annualRatesNow: number,
   severity: MismatchSeverity,
 ): { estAnnualRatesNew: number; estUplift: number; estArrears3y: number } {
@@ -455,3 +519,10 @@ export function estimateUplift(
   const estArrears3y = estUplift * 3;
   return { estAnnualRatesNew, estUplift, estArrears3y };
 }
+
+/**
+ * @deprecated Use {@link estimateUpliftHeuristic} (or the accurate path via
+ * `calculateUplift`). Retained as an alias for backwards compatibility with
+ * existing consumers.
+ */
+export const estimateUplift = estimateUpliftHeuristic;

@@ -100,24 +100,99 @@ export default async function EvidencePackPage({
                 <div className="card p-4 mb-4 bg-accent-50/40 border-accent-300">
                   <div className="grid grid-cols-3 gap-4">
                     <div>
-                      <div className="label">Annual uplift</div>
+                      <div className="label">Current annual rates</div>
                       <div className="text-xl font-semibold text-ink-900">
-                        {formatAud(pack.candidate.estUplift)}
+                        {formatAud(pack.candidate.property.annualRates)}
+                      </div>
+                      <div className="text-xs text-ink-500 mt-0.5">
+                        as rated ({pack.candidate.property.landUse})
                       </div>
                     </div>
                     <div>
-                      <div className="label">3-year arrears (est.)</div>
+                      <div className="label">Correct annual rates</div>
                       <div className="text-xl font-semibold text-ink-900">
-                        {formatAud(pack.candidate.estArrears3y)}
+                        {formatAud(
+                          pack.candidate.correctAnnualRates ??
+                            pack.candidate.estAnnualRatesNew,
+                        )}
+                      </div>
+                      <div className="text-xs text-ink-500 mt-0.5">
+                        Δ {formatAud(pack.candidate.estUplift)}/yr
                       </div>
                     </div>
                     <div>
-                      <div className="label">Total recovery (est.)</div>
+                      <div className="label">Total recoverable</div>
                       <div className="text-xl font-semibold text-success-700">
-                        {formatAud(pack.candidate.estUplift + pack.candidate.estArrears3y)}
+                        {formatAud(
+                          (pack.candidate.backdatedAmountConservative ??
+                            pack.candidate.estArrears3y) +
+                            pack.candidate.estUplift,
+                        )}
+                      </div>
+                      <div className="text-xs text-ink-500 mt-0.5">
+                        3y conservative + 1y forward
                       </div>
                     </div>
                   </div>
+                  {pack.candidate.rateFormula &&
+                  pack.candidate.rateFormula !== "heuristic" ? (
+                    <div className="mt-4 pt-3 border-t border-accent-200 text-xs text-ink-600 space-y-2">
+                      <div>
+                        <span className="font-medium text-ink-900">Formula:</span>{" "}
+                        {pack.candidate.rateFormula}
+                      </div>
+                      <div className="flex flex-wrap gap-x-4 gap-y-1">
+                        {pack.candidate.changeDetectedAt && (
+                          <div>
+                            <span className="text-ink-500">Change detected:</span>{" "}
+                            {pack.candidate.changeDetectedAt}
+                            {typeof pack.candidate.yearsSinceChange === "number"
+                              ? ` (${pack.candidate.yearsSinceChange.toFixed(2)}y ago)`
+                              : ""}
+                          </div>
+                        )}
+                        {typeof pack.candidate.backdatedAmountConservative === "number" && (
+                          <div>
+                            <span className="text-ink-500">
+                              Backdated 3y conservative:
+                            </span>{" "}
+                            {formatAud(pack.candidate.backdatedAmountConservative)}
+                          </div>
+                        )}
+                        {typeof pack.candidate.backdatedAmountStatutory === "number" && (
+                          <div>
+                            <span className="text-ink-500">
+                              Backdated 5y statutory (LGA s.6.81):
+                            </span>{" "}
+                            {formatAud(pack.candidate.backdatedAmountStatutory)}
+                          </div>
+                        )}
+                      </div>
+                      {pack.candidate.rateSourceUrl && (
+                        <div className="text-ink-500">
+                          Source:{" "}
+                          <a
+                            href={pack.candidate.rateSourceUrl}
+                            target="_blank"
+                            rel="noopener"
+                            className="text-accent-700 hover:underline"
+                          >
+                            {pack.candidate.rateSourceUrl}
+                          </a>{" "}
+                          {pack.candidate.rateTableVerified === true ? (
+                            <span className="text-success-700">[verified]</span>
+                          ) : (
+                            <span className="text-warn-700">[unverified — see caveats]</span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="mt-3 pt-2 border-t border-accent-200 text-xs text-ink-500">
+                      Uplift estimated via heuristic multiplier — accurate rate-table
+                      path not available for this candidate.
+                    </div>
+                  )}
                 </div>
                 <div className="card p-0 overflow-hidden mb-4">
                   <div className="px-5 py-3 border-b border-ink-200 flex items-center justify-between">

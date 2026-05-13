@@ -12,7 +12,16 @@
  * + this package — no platform-specific code lives here.
  */
 
-export type { EvaluationContext } from "./scoring.js";
+export type {
+  EvaluationContext,
+  ChangeDetectionEntry,
+  ChangeDetectionKind,
+} from "./scoring.js";
+export type {
+  UpliftInput,
+  UpliftResult,
+  UpliftErrorCode,
+} from "./upliftCalculator.js";
 export type { FindMismatchesOptions } from "./findMismatches.js";
 export type {
   EvidencePack,
@@ -33,7 +42,14 @@ export {
   computeComposite,
   severityForScore,
   estimateUplift,
+  estimateUpliftHeuristic,
 } from "./scoring.js";
+
+export {
+  calculateUplift,
+  BACKDATING_CONSERVATIVE_YEARS,
+  BACKDATING_STATUTORY_YEARS,
+} from "./upliftCalculator.js";
 
 export { findMismatches } from "./findMismatches.js";
 export { buildEvidencePack } from "./evidencePack.js";

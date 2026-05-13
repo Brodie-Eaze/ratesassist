@@ -29,5 +29,15 @@ export {
   type ParseRatingRollResult,
 } from "./csvSchema.js";
 
+export {
+  WA_RATE_TABLES,
+  findRateLine,
+  getRateTable,
+  type DifferentialRateLine,
+  type LandUseCategory,
+  type RateBasis,
+  type RateTable,
+} from "./rateTables/wa-2025-26.js";
+
 /** Current contract version. Adapters declare which contract version they support. */
 export const CONTRACT_VERSION = "0.2.0";
