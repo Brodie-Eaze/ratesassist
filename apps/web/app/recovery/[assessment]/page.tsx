@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Sidebar } from "@/components/Sidebar";
 import { Markdown } from "@/components/Markdown";
-import { PortfolioMap } from "@/components/PortfolioMap";
+import { PropertyMapClientShell } from "./_PropertyMapShell";
 import { buildEvidencePack } from "@ratesassist/recovery-engine";
 import { getProperty } from "@/lib/data";
 import { getEvaluationContext } from "@/lib/clients";
@@ -123,17 +123,57 @@ export default async function EvidencePackPage({
                   <div className="px-5 py-3 border-b border-ink-200 flex items-center justify-between">
                     <div className="label">Visual evidence</div>
                     <span className="text-xs text-ink-500">
-                      Aerial · DMIRS tenement overlay · Esri imagery
+                      Cadastre · DMIRS tenement · Esri imagery
                     </span>
                   </div>
-                  <div className="h-[360px]">
-                    <PortfolioMap
-                      properties={[pack.candidate.property]}
-                      tenements={pack.candidate.tenements}
-                      centre={[pack.candidate.property.lat, pack.candidate.property.lng]}
-                      zoom={14}
-                      highlightAssessment={pack.candidate.property.assessmentNumber}
-                      showAerial={true}
+                  <div className="h-[480px]">
+                    <PropertyMapClientShell
+                      focusMode="parcel"
+                      tenement={
+                        pack.candidate.tenements[0]
+                          ? {
+                              id: pack.candidate.tenements[0].tenementId,
+                              geometry: {
+                                type: "Polygon",
+                                coordinates: [
+                                  pack.candidate.tenements[0].polygon.map(
+                                    ([lat, lng]) => [lng, lat] as [number, number],
+                                  ),
+                                ],
+                              },
+                              holder: pack.candidate.tenements[0].holder,
+                            }
+                          : null
+                      }
+                      parcels={
+                        pack.candidate.property.parcel &&
+                        pack.candidate.property.parcel.length >= 3
+                          ? [
+                              {
+                                id: pack.candidate.property.assessmentNumber,
+                                geometry: {
+                                  type: "Polygon",
+                                  coordinates: [
+                                    pack.candidate.property.parcel.map(
+                                      ([lat, lng]) => [lng, lat] as [number, number],
+                                    ),
+                                  ],
+                                },
+                              },
+                            ]
+                          : undefined
+                      }
+                      assessmentNumber={pack.candidate.property.assessmentNumber}
+                      stats={{
+                        assessmentNumber: pack.candidate.property.assessmentNumber,
+                        address: pack.candidate.property.address,
+                        landUse: pack.candidate.property.landUse,
+                        valuation: pack.candidate.property.valuation,
+                        currentAnnualRates: pack.candidate.property.annualRates,
+                        projectedAnnualRates: pack.candidate.estAnnualRatesNew,
+                        estimatedUplift: pack.candidate.estUplift,
+                      }}
+                      evidenceHref={`/api/evidence/${pack.candidate.property.assessmentNumber}.html`}
                     />
                   </div>
                 </div>

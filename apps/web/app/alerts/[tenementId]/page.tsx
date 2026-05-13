@@ -75,7 +75,7 @@ type GrantDetailResponse = {
   output: string;
 };
 
-const GrantMap = dynamic(() => import("./_GrantMap"), {
+const PropertyMap = dynamic(() => import("@/components/PropertyMap"), {
   ssr: false,
   loading: () => (
     <div className="h-full w-full bg-ink-100 flex items-center justify-center text-ink-400 text-sm">
@@ -305,12 +305,28 @@ export default function GrantDetailPage() {
 
         {/* Map panel */}
         <div className="bg-white border-b border-ink-200">
-          <div className="h-[400px]">
-            <GrantMap
-              grant={grant}
-              parcels={intersectingParcels}
-              highlightedAssessment={highlightedParcel}
-              onSelectParcel={(a) => setHighlightedParcel(a)}
+          <div className="h-[480px]">
+            <PropertyMap
+              focusMode="tenement"
+              tenement={{
+                id: grant.tenementId,
+                idDisplay: grant.tenementIdDisplay,
+                geometry: grant.geometry,
+                holder: grant.holder,
+              }}
+              stats={{
+                assessmentNumber: intersectingParcels[0]?.assessmentNumber,
+                address: intersectingParcels[0]?.address,
+                landUse: intersectingParcels[0]?.landUse,
+                valuation: intersectingParcels[0]?.valuation,
+                currentAnnualRates: intersectingParcels[0]?.annualRates,
+                estimatedUplift: intersectingParcels[0]?.estimatedUpliftAmount,
+              }}
+              evidenceHref={
+                intersectingParcels[0]
+                  ? `/recovery/${intersectingParcels[0].assessmentNumber}`
+                  : undefined
+              }
             />
           </div>
         </div>
