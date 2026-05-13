@@ -212,11 +212,45 @@ function FlyTo({ bounds }: { bounds: L.LatLngBounds | null }) {
   return null;
 }
 
-function CursorReadout({ onMove }: { onMove: (lat: number, lng: number) => void }) {
+/**
+ * Listens for mousemove and pipes throttled lat/lng to the inner readout.
+ *
+ * Isolated as its own subtree so 60Hz mousemoves only rerender the readout
+ * div, not the whole PropertyMap (which would otherwise recompute overlaps
+ * and rerun memoised geometry conversions on every pixel of cursor travel).
+ */
+function CursorReadoutInner({ isPrint }: { isPrint: boolean }) {
+  const [pos, setPos] = useState<[number, number] | null>(null);
+  const lastMove = useRef(0);
   useMapEvents({
-    mousemove: (e) => onMove(e.latlng.lat, e.latlng.lng),
+    mousemove: (e) => {
+      const now = Date.now();
+      if (now - lastMove.current < 100) return;
+      lastMove.current = now;
+      setPos([e.latlng.lat, e.latlng.lng]);
+    },
   });
-  return null;
+  if (!pos || isPrint) return null;
+  return (
+    <div
+      style={{
+        position: "absolute",
+        bottom: 8,
+        right: 8,
+        zIndex: 1000,
+        background: "rgba(255,255,255,0.92)",
+        padding: "3px 8px",
+        borderRadius: 4,
+        fontFamily: "ui-monospace, monospace",
+        fontSize: 11,
+        color: "#374151",
+        boxShadow: "0 1px 3px rgba(0,0,0,0.18)",
+        pointerEvents: "none",
+      }}
+    >
+      {formatLatLng(pos[0], pos[1])}
+    </div>
+  );
 }
 
 /**
@@ -334,12 +368,14 @@ const cadastreCache = new Map<string, Geometry[]>();
 async function fetchCadastreForBounds(
   bbox: [number, number, number, number],
   cacheKey: string,
+  signal?: AbortSignal,
 ): Promise<Geometry[]> {
   const cached = cadastreCache.get(cacheKey);
   if (cached) return cached;
   try {
     const r = await fetch(
       `/api/spatial/cadastre?bbox=${bbox.join(",")}&limit=20`,
+      { signal },
     );
     if (!r.ok) return [];
     const j = (await r.json()) as {
@@ -377,7 +413,6 @@ export default function PropertyMap({
   const [basemap, setBasemap] = useState<BasemapKey>("sentinel");
   const [statsOpen, setStatsOpen] = useState(true);
   const [measureOn, setMeasureOn] = useState(false);
-  const [cursor, setCursor] = useState<[number, number] | null>(null);
   const [cadastre, setCadastre] = useState<Geometry[]>([]);
   const [cadastreSource, setCadastreSource] =
     useState<"prop" | "live" | "synthetic">("synthetic");
@@ -386,9 +421,15 @@ export default function PropertyMap({
     focusMode === "parcel" ? "parcel" : "all",
   );
 
-  const isPrint =
-    typeof window !== "undefined" &&
-    new URLSearchParams(window.location.search).get("print") === "1";
+  // Read ?print=1 client-side only so the first server-rendered HTML and the
+  // first client render match (no hydration mismatch). The print-specific
+  // styling toggles on the second client paint.
+  const [isPrint, setIsPrint] = useState(false);
+  useEffect(() => {
+    setIsPrint(
+      new URLSearchParams(window.location.search).get("print") === "1",
+    );
+  }, []);
 
   // ---- Probe SLIP aerial once on mount ----
   useEffect(() => {
@@ -420,7 +461,9 @@ export default function PropertyMap({
       b.getNorth(),
     ];
     const key = bbox.map((n) => n.toFixed(4)).join(",");
-    void fetchCadastreForBounds(bbox, key).then((polys) => {
+    const ctrl = new AbortController();
+    void fetchCadastreForBounds(bbox, key, ctrl.signal).then((polys) => {
+      if (ctrl.signal.aborted) return;
       if (polys.length === 0) {
         // Synthetic stand-in — a small square slightly inset from the tenement
         // centre. Honest label is surfaced in the stats card.
@@ -446,6 +489,9 @@ export default function PropertyMap({
         setCadastreSource("live");
       }
     });
+    return () => {
+      ctrl.abort();
+    };
   }, [tenement, parcels]);
 
   // ---- Memoise geometry conversions ----
@@ -580,7 +626,7 @@ export default function PropertyMap({
         <ScaleControl position="bottomleft" metric imperial={false} />
 
         <FlyTo bounds={flyBounds} />
-        <CursorReadout onMove={(lat, lng) => setCursor([lat, lng])} />
+        <CursorReadoutInner isPrint={isPrint} />
         <MeasureTool active={measureOn} onClear={() => setMeasureOn(false)} />
 
         {/* Tenement polygon — amber */}
@@ -771,6 +817,8 @@ export default function PropertyMap({
         <button
           type="button"
           onClick={() => setStatsOpen((v) => !v)}
+          aria-label={statsOpen ? "Collapse property snapshot" : "Expand property snapshot"}
+          aria-expanded={statsOpen}
           style={{
             width: "100%",
             display: "flex",
@@ -838,7 +886,11 @@ export default function PropertyMap({
             )}
             {overlap && (
               <Row
-                k="Tenement coverage"
+                k={
+                  overlap.method === "bbox_fallback"
+                    ? "Overlap (approximate)"
+                    : "Tenement coverage"
+                }
                 v={
                   <span>
                     {m2ToHa(overlap.areaM2).toFixed(2)} ha (
@@ -931,26 +983,8 @@ export default function PropertyMap({
         <LegendRow swatch="#facc15" label="Overlap area (reclassification candidate)" />
       </div>
 
-      {/* Cursor lat/lng readout (bottom-right) */}
-      {cursor && !isPrint && (
-        <div
-          style={{
-            position: "absolute",
-            bottom: 8,
-            right: 8,
-            zIndex: 1000,
-            background: "rgba(255,255,255,0.92)",
-            padding: "3px 8px",
-            borderRadius: 4,
-            fontFamily: "ui-monospace, monospace",
-            fontSize: 11,
-            color: "#374151",
-            boxShadow: "0 1px 3px rgba(0,0,0,0.18)",
-          }}
-        >
-          {formatLatLng(cursor[0], cursor[1])}
-        </div>
-      )}
+      {/* Cursor lat/lng readout — rendered by <CursorReadoutInner /> inside
+          the MapContainer so 60Hz mousemoves don't rerender this whole tree. */}
 
       {/* Print watermark */}
       {isPrint && (

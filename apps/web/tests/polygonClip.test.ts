@@ -5,6 +5,7 @@ import {
   geodesicAreaM2,
   haversineDistanceM,
   overlapStats,
+  isConvex,
   m2ToHa,
   type Ring,
 } from "../lib/polygonClip";
@@ -70,6 +71,55 @@ describe("polygonClip — Sutherland-Hodgman", () => {
     const clip = square(0, 0, 5);
     const out = sutherlandHodgmanClip(cw, clip);
     expect(out.length).toBe(4);
+    expect(shoelaceArea(out)).toBeCloseTo(4, 6);
+  });
+});
+
+describe("polygonClip — isConvex", () => {
+  it("returns true for a 4-corner square", () => {
+    expect(isConvex(square(0, 0, 1))).toBe(true);
+  });
+
+  it("returns false for an L-shape (non-convex)", () => {
+    const lshape: Ring = [
+      [0, 0],
+      [2, 0],
+      [2, 1],
+      [1, 1],
+      [1, 2],
+      [0, 2],
+    ];
+    expect(isConvex(lshape)).toBe(false);
+  });
+
+  it("returns true for a triangle", () => {
+    expect(isConvex([[0, 0], [1, 0], [0, 1]])).toBe(true);
+  });
+});
+
+describe("polygonClip — parallel edges", () => {
+  it("handles a clip edge perfectly parallel to subject edge without producing NaN points", () => {
+    // Subject and clipper share the same top edge orientation; the
+    // intersect() call for the shared edge would have denom === 0.
+    const subj: Ring = [
+      [0, 0],
+      [4, 0],
+      [4, 2],
+      [0, 2],
+    ];
+    const clip: Ring = [
+      [1, 0], // bottom edge collinear with subject's bottom edge
+      [3, 0],
+      [3, 2], // top edge collinear with subject's top edge
+      [1, 2],
+    ];
+    const out = sutherlandHodgmanClip(subj, clip);
+    // Output must be a valid 2x2 rect, no NaN/Infinity vertices.
+    expect(out.length).toBeGreaterThanOrEqual(3);
+    for (const [x, y] of out) {
+      expect(Number.isFinite(x)).toBe(true);
+      expect(Number.isFinite(y)).toBe(true);
+    }
     expect(shoelaceArea(out)).toBeCloseTo(4, 6);
   });
 });
@@ -140,6 +190,31 @@ describe("polygonClip — overlapStats", () => {
     const r = overlapStats(tenement, parcel);
     expect(r).not.toBeNull();
     expect(r!.percentOfParcel).toBeCloseTo(100, 0);
+  });
+
+  it("uses convex_clip method for a convex (square) parcel", () => {
+    const tenement = square(115.86, -31.95, 0.01);
+    const parcel = square(115.86, -31.95, 0.001);
+    const r = overlapStats(tenement, parcel);
+    expect(r).not.toBeNull();
+    expect(r!.method).toBe("convex_clip");
+  });
+
+  it("falls back to bbox_fallback for non-convex (L-shape) parcels", () => {
+    // L-shape parcel: not convex.
+    const parcel: Ring = [
+      [115.86, -31.95],
+      [115.862, -31.95],
+      [115.862, -31.951],
+      [115.861, -31.951],
+      [115.861, -31.952],
+      [115.86, -31.952],
+    ];
+    const tenement = square(115.861, -31.951, 0.001);
+    const r = overlapStats(tenement, parcel);
+    expect(r).not.toBeNull();
+    expect(r!.method).toBe("bbox_fallback");
+    expect(r!.areaM2).toBeGreaterThan(0);
   });
 
   it("returns ~50% when tenement covers half the parcel", () => {

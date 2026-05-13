@@ -428,6 +428,40 @@ describe("evaluateSignals", () => {
   });
 });
 
+// ---- C3: lifecycle change-signal dedup ----
+
+describe("lifecycle change-signal dedup (C3)", () => {
+  it("two `construction_completed` entries fire the signal exactly once", () => {
+    const p = prop({ assessmentNumber: "DUP", landUse: "Residential" });
+    const ctx: EvaluationContext = {
+      ...ctxFrom({ properties: [p], owners: [owner()] }),
+      changeDetectionByAssessment: new Map([
+        [
+          "DUP",
+          [
+            {
+              kind: "construction_completed",
+              detectedAt: "2025-01-01",
+              reasoning: "First entry",
+            },
+            {
+              kind: "construction_completed",
+              detectedAt: "2025-02-01",
+              reasoning: "Duplicate from upstream feed",
+            },
+          ],
+        ],
+      ]),
+    };
+    const hits = evaluateSignals(p, ctx);
+    const completed = hits.filter((h) => h.id === "change.construction_completed");
+    expect(completed).toHaveLength(1);
+    // The composite must reflect the signal's nominal weight (0.40), not 0.80.
+    const composite = computeComposite(hits);
+    expect(composite).toBeCloseTo(0.40, 10);
+  });
+});
+
 // ---- HEADLINE: DMIRS ahead of Landgate ----
 
 describe("reg.dmirs_ahead_of_landgate", () => {
@@ -825,6 +859,69 @@ describe("reg.address_mismatch_landgate", () => {
     expect(hitIds).toContain("reg.tenement.recently_granted");
     expect(hitIds).toContain("reg.dmirs_ahead_of_landgate");
     expect(hitIds).toContain("reg.address_mismatch_landgate");
+  });
+});
+
+// ---- C2: overtaxed candidates routed to a separate bucket ----
+
+describe("findMismatches — overtaxedCandidates (C2)", () => {
+  it("negative-uplift candidate appears in overtaxedCandidates, not the headline list", () => {
+    // Use a rate table where Commercial is cheaper than Industrial so a
+    // currently-Industrial property reclassified to Commercial sees negative
+    // uplift.
+    const table = {
+      councilCode: "KAL",
+      financialYear: "2025-26",
+      effectiveFrom: "2025-07-01",
+      effectiveTo: "2026-06-30",
+      sourceUrl: "https://example.com/kal",
+      retrievedAt: "2026-05-14",
+      verified: true,
+      lines: [
+        { landUse: "Residential" as const, rateInDollar: 0.085, minimumPayment: 1_200, basis: "GRV" as const },
+        { landUse: "Commercial" as const, rateInDollar: 0.05, minimumPayment: 1_000, basis: "GRV" as const },
+        { landUse: "Industrial" as const, rateInDollar: 0.16, minimumPayment: 1_500, basis: "GRV" as const },
+        { landUse: "Vacant" as const, rateInDollar: 0.17, minimumPayment: 1_200, basis: "GRV" as const },
+        { landUse: "Rural" as const, rateInDollar: 0.045, minimumPayment: 1_100, basis: "UV" as const },
+        { landUse: "Mining" as const, rateInDollar: 0.225, minimumPayment: 1_500, basis: "UV" as const },
+        { landUse: "Pastoral" as const, rateInDollar: 0.06, minimumPayment: 1_100, basis: "UV" as const },
+        { landUse: "MiningOther" as const, rateInDollar: 0.18, minimumPayment: 1_500, basis: "UV" as const },
+      ],
+    };
+
+    const p = prop({
+      assessmentNumber: "OV-1",
+      council: "KAL",
+      landUse: "Industrial",
+      grv: 400_000,
+      annualRates: 64_000,
+    } as Partial<Property>);
+
+    const ctx: EvaluationContext = {
+      ...ctxFrom({ properties: [p], owners: [owner()] }),
+      rateTablesByCouncil: new Map([["KAL", table]]),
+      changeDetectionByAssessment: new Map([
+        [
+          "OV-1",
+          [
+            {
+              kind: "commercial_use_observed",
+              detectedAt: "2025-01-01",
+              reasoning: "On-site inspection shows light-commercial use only.",
+              correctLandUse: "Commercial",
+            },
+          ],
+        ],
+      ]),
+    };
+
+    const out = findMismatches(ctx);
+    expect(out.find((c) => c.assessmentNumber === "OV-1")).toBeUndefined();
+    expect(out.overtaxedCandidates.length).toBeGreaterThan(0);
+    const overtax = out.overtaxedCandidates.find((c) => c.assessmentNumber === "OV-1");
+    expect(overtax).toBeDefined();
+    expect(overtax!.kind).toBe("overtax_review");
+    expect(overtax!.estUplift).toBeLessThan(0);
   });
 });
 

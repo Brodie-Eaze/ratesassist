@@ -82,16 +82,42 @@ function inside(p: Point, a: Point, b: Point): boolean {
   return (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0]) >= 0;
 }
 
-/** Intersect segment s1-s2 with the (infinite) line a-b. Returns the point. */
-function intersect(s1: Point, s2: Point, a: Point, b: Point): Point {
+/**
+ * Intersect segment s1-s2 with the (infinite) line a-b.
+ * Returns null if the lines are parallel or collinear (denom === 0) — callers
+ * must filter these out of the clipped output.
+ */
+function intersect(s1: Point, s2: Point, a: Point, b: Point): Point | null {
   const x1 = s1[0], y1 = s1[1];
   const x2 = s2[0], y2 = s2[1];
   const x3 = a[0], y3 = a[1];
   const x4 = b[0], y4 = b[1];
   const denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
-  if (denom === 0) return s2;
+  if (denom === 0) return null;
   const t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / denom;
   return [x1 + t * (x2 - x1), y1 + t * (y2 - y1)];
+}
+
+/**
+ * Returns true if the ring is convex (all cross-products of consecutive edges
+ * share the same sign). Degenerate / collinear-only rings return false.
+ */
+export function isConvex(ring: Ring): boolean {
+  if (ring.length < 3) return false;
+  let sign = 0;
+  const n = ring.length;
+  for (let i = 0; i < n; i++) {
+    const [ax, ay] = ring[i]!;
+    const [bx, by] = ring[(i + 1) % n]!;
+    const [cx, cy] = ring[(i + 2) % n]!;
+    const cross = (bx - ax) * (cy - by) - (by - ay) * (cx - bx);
+    if (cross !== 0) {
+      const s = cross > 0 ? 1 : -1;
+      if (sign === 0) sign = s;
+      else if (sign !== s) return false;
+    }
+  }
+  return sign !== 0;
 }
 
 /** Force a ring into CCW order (positive shoelace signed area). */
@@ -132,30 +158,85 @@ export function sutherlandHodgmanClip(subject: Ring, clip: Ring): Ring {
       const curIn = inside(current, a, b);
       const prevIn = inside(prev, a, b);
       if (curIn) {
-        if (!prevIn) output.push(intersect(prev, current, a, b));
+        if (!prevIn) {
+          const ix = intersect(prev, current, a, b);
+          if (ix) output.push(ix);
+        }
         output.push(current);
       } else if (prevIn) {
-        output.push(intersect(prev, current, a, b));
+        const ix = intersect(prev, current, a, b);
+        if (ix) output.push(ix);
       }
     }
   }
   return output;
 }
 
+/** Axis-aligned bbox of a [lng, lat] ring as a closed rectangular ring. */
+function bboxRing(ring: Ring): Ring {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const [x, y] of ring) {
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+  }
+  return [
+    [minX, minY],
+    [maxX, minY],
+    [maxX, maxY],
+    [minX, maxY],
+  ];
+}
+
 /**
  * Compute overlap stats for a tenement polygon against a parcel polygon.
+ *
+ * If the parcel is non-convex, Sutherland-Hodgman would produce wrong results,
+ * so we fall back to a bounding-box intersection and label the result as
+ * approximate via `method: "bbox_fallback"`.
  *
  * Returns `null` when there is no overlap. Both inputs are [lng, lat] rings.
  */
 export function overlapStats(
   tenement: Ring,
   parcel: Ring,
-): { ring: Ring; areaM2: number; percentOfParcel: number } | null {
+): {
+  ring: Ring;
+  areaM2: number;
+  percentOfParcel: number;
+  method: "convex_clip" | "bbox_fallback";
+} | null {
+  if (parcel.length < 3 || tenement.length < 3) return null;
+
+  const useFallback = !isConvex(parcel);
+  if (useFallback) {
+    // bbox-of-parcel ∩ bbox-of-tenement, both axis-aligned in [lng, lat] space.
+    const pb = bboxRing(parcel);
+    const tb = bboxRing(tenement);
+    const minX = Math.max(pb[0]![0], tb[0]![0]);
+    const minY = Math.max(pb[0]![1], tb[0]![1]);
+    const maxX = Math.min(pb[2]![0], tb[2]![0]);
+    const maxY = Math.min(pb[2]![1], tb[2]![1]);
+    if (minX >= maxX || minY >= maxY) return null;
+    const ring: Ring = [
+      [minX, minY],
+      [maxX, minY],
+      [maxX, maxY],
+      [minX, maxY],
+    ];
+    const overlapArea = geodesicAreaM2(ring);
+    if (overlapArea <= 0) return null;
+    const parcelArea = geodesicAreaM2(parcel);
+    const pct = parcelArea > 0 ? (overlapArea / parcelArea) * 100 : 0;
+    return { ring, areaM2: overlapArea, percentOfParcel: pct, method: "bbox_fallback" };
+  }
+
   const clipped = sutherlandHodgmanClip(tenement, parcel);
   if (clipped.length < 3) return null;
   const overlapArea = geodesicAreaM2(clipped);
   if (overlapArea <= 0) return null;
   const parcelArea = geodesicAreaM2(parcel);
   const pct = parcelArea > 0 ? (overlapArea / parcelArea) * 100 : 0;
-  return { ring: clipped, areaM2: overlapArea, percentOfParcel: pct };
+  return { ring: clipped, areaM2: overlapArea, percentOfParcel: pct, method: "convex_clip" };
 }

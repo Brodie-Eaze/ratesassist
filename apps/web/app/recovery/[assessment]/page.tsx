@@ -8,6 +8,31 @@ import { getEvaluationContext } from "@/lib/clients";
 import { ArrowLeft, Download } from "lucide-react";
 import { formatAud } from "@/lib/utils";
 
+/**
+ * Validate a rate-source URL before rendering as an `<a href>`. Only allows
+ * https URLs on the .gov.au TLD or a small allowlist of known WA council
+ * domains. Returns null for anything else — protects against open-redirect
+ * / phishing payloads via injected source URLs (SEC-004).
+ */
+const RATE_SOURCE_DOMAIN_ALLOWLIST = new Set<string>([
+  // Reserved for known WA council vanity domains that don't end in .gov.au.
+]);
+
+function safeRateSourceUrl(url: string | undefined | null): string | null {
+  if (!url) return null;
+  try {
+    const u = new URL(url);
+    if (u.protocol !== "https:") return null;
+    const host = u.hostname.toLowerCase();
+    if (host.endsWith(".gov.au") || RATE_SOURCE_DOMAIN_ALLOWLIST.has(host)) {
+      return u.toString();
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export default async function EvidencePackPage({
   params,
 }: {
@@ -168,24 +193,33 @@ export default async function EvidencePackPage({
                           </div>
                         )}
                       </div>
-                      {pack.candidate.rateSourceUrl && (
-                        <div className="text-ink-500">
-                          Source:{" "}
-                          <a
-                            href={pack.candidate.rateSourceUrl}
-                            target="_blank"
-                            rel="noopener"
-                            className="text-accent-700 hover:underline"
-                          >
-                            {pack.candidate.rateSourceUrl}
-                          </a>{" "}
-                          {pack.candidate.rateTableVerified === true ? (
-                            <span className="text-success-700">[verified]</span>
-                          ) : (
-                            <span className="text-warn-700">[unverified — see caveats]</span>
-                          )}
-                        </div>
-                      )}
+                      {pack.candidate.rateSourceUrl && (() => {
+                        const safe = safeRateSourceUrl(pack.candidate.rateSourceUrl);
+                        return (
+                          <div className="text-ink-500">
+                            Source:{" "}
+                            {safe ? (
+                              <a
+                                href={safe}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-accent-700 hover:underline"
+                              >
+                                {safe}
+                              </a>
+                            ) : (
+                              <span className="text-ink-500">
+                                [URL withheld — invalid]
+                              </span>
+                            )}{" "}
+                            {pack.candidate.rateTableVerified === true ? (
+                              <span className="text-success-700">[verified]</span>
+                            ) : (
+                              <span className="text-warn-700">[unverified — see caveats]</span>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </div>
                   ) : (
                     <div className="mt-3 pt-2 border-t border-accent-200 text-xs text-ink-500">

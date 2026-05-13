@@ -376,14 +376,22 @@ export function evaluateSignals(
   }
 
   // ---- PROPERTY-LIFECYCLE CHANGE signals ----
-  // Each kind maps to one signal id; all stack additively.
+  // Each kind maps to one signal id; signals stack additively across
+  // *distinct* kinds. Within a kind we deduplicate so duplicate upstream
+  // change-detection feed entries cannot double-count the composite (C3).
   const changeEntries =
     ctx.changeDetectionByAssessment?.get(p.assessmentNumber) ?? [];
+  const seenChangeKinds = new Set<ChangeDetectionKind>();
   for (const entry of changeEntries) {
+    if (seenChangeKinds.has(entry.kind)) {
+      // Duplicate upstream entry suppressed — protects composite score.
+      continue;
+    }
     const sigId = `change.${entry.kind}`;
     const sig = getSignal(sigId);
     if (sig !== undefined) {
       hits.push(hit(sig, entry.reasoning));
+      seenChangeKinds.add(entry.kind);
     }
   }
 

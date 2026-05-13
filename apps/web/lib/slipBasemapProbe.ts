@@ -70,12 +70,26 @@ export async function probeSlipAerial(): Promise<SlipAerialProbeResult> {
   if (cached) return cached;
   if (inFlight) return inFlight;
   inFlight = (async () => {
-    for (const url of CANDIDATES) {
-      const r = await probeOne(url);
-      if (r.ok) {
-        cached = r;
-        return r;
+    // Run all candidates in parallel and bound the total wall-clock to 6s,
+    // so the basemap toggle never delays UI by the per-probe timeout × N.
+    const deadline = new Promise<SlipAerialProbeResult>((_, reject) =>
+      setTimeout(() => reject(new Error("probe deadline")), 6_000),
+    );
+    try {
+      const results = await Promise.race([
+        Promise.allSettled(CANDIDATES.map((u) => probeOne(u))),
+        deadline,
+      ]);
+      if (Array.isArray(results)) {
+        for (const settled of results) {
+          if (settled.status === "fulfilled" && settled.value.ok) {
+            cached = settled.value;
+            return cached;
+          }
+        }
       }
+    } catch {
+      // fall through to negative cache
     }
     cached = { ok: false, reason: "no public-tier SLIP aerial endpoint" };
     return cached;

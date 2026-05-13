@@ -22,7 +22,10 @@ export type {
   UpliftResult,
   UpliftErrorCode,
 } from "./upliftCalculator.js";
-export type { FindMismatchesOptions } from "./findMismatches.js";
+export type {
+  FindMismatchesOptions,
+  FindMismatchesResult,
+} from "./findMismatches.js";
 export type {
   EvidencePack,
   EvidencePackResult,

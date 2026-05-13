@@ -40,6 +40,18 @@ export type FindMismatchesOptions = {
   readonly evaluationDate?: string;
 };
 
+/**
+ * findMismatches returns an array of headline (positive-uplift) candidates
+ * with a non-enumerable `overtaxedCandidates` property carrying the separate
+ * overtaxation-review list. Consumers can use `.overtaxedCandidates` to
+ * surface "this council is overtaxing these properties" without polluting
+ * the recovery-headline sort.
+ */
+export interface FindMismatchesResult
+  extends ReadonlyArray<MismatchCandidate> {
+  readonly overtaxedCandidates: readonly MismatchCandidate[];
+}
+
 const SEVERITY_RANK: Readonly<Record<MismatchSeverity, number>> = {
   low: 0,
   medium: 1,
@@ -85,11 +97,12 @@ function pickChangeForUplift(
 export function findMismatches(
   ctx: EvaluationContext,
   options: FindMismatchesOptions = {},
-): readonly MismatchCandidate[] {
+): FindMismatchesResult {
   const { council, minSeverity, evaluationDate } = options;
   const minRank = SEVERITY_RANK[minSeverity ?? "low"];
 
   const out: MismatchCandidate[] = [];
+  const overtaxed: MismatchCandidate[] = [];
 
   for (const property of ctx.properties) {
     if (council !== undefined && property.council !== council) {
@@ -200,11 +213,20 @@ export function findMismatches(
       }
     }
 
-    out.push({
+    // Negative uplift means the correct category produces LOWER rates than
+    // current — i.e. the property is being overtaxed. We route these to a
+    // separate `overtaxedCandidates` bucket so they don't pollute the
+    // recovery-headline sort but downstream UI can still surface them.
+    // Zero-uplift (e.g. same-category guard) is dropped entirely.
+    if (estUplift === 0) {
+      continue;
+    }
+    const isOvertax = estUplift < 0;
+    const candidate: MismatchCandidate = {
       assessmentNumber: property.assessmentNumber,
       property,
       tenements,
-      kind,
+      kind: isOvertax ? "overtax_review" : kind,
       severity,
       reason,
       estAnnualRatesNew,
@@ -221,9 +243,23 @@ export function findMismatches(
       rateFormula,
       rateSourceUrl,
       rateTableVerified,
-    });
+    };
+    if (isOvertax) {
+      overtaxed.push(candidate);
+    } else {
+      out.push(candidate);
+    }
   }
 
   out.sort((a, b) => b.estUplift - a.estUplift);
-  return out;
+  // Attach overtaxed list as a non-enumerable property so existing
+  // array-spread / JSON consumers don't accidentally pick it up, while typed
+  // callers using FindMismatchesResult can read it directly.
+  Object.defineProperty(out, "overtaxedCandidates", {
+    value: Object.freeze(overtaxed) as readonly MismatchCandidate[],
+    enumerable: false,
+    writable: false,
+    configurable: false,
+  });
+  return out as unknown as FindMismatchesResult;
 }

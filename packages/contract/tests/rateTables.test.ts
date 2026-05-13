@@ -23,6 +23,8 @@ const REQUIRED_CATEGORIES: readonly LandUseCategory[] = [
   "Rural",
   "Vacant",
   "Mining",
+  "Pastoral",
+  "MiningOther",
 ];
 
 describe("WA_RATE_TABLES — per-council shape", () => {
