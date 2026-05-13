@@ -127,11 +127,13 @@ const ESRI_ATTR = "Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics"
 const CARTO_ATTR =
   '© <a href="https://www.openstreetmap.org/copyright">OSM</a> © <a href="https://carto.com/attributions">CARTO</a>';
 
-// Esri World Imagery has 30cm-1m resolution in AU metro but only ~zoom-15
-// coverage in remote WA. Setting maxNativeZoom upsamples the deepest
-// available tile instead of showing the "Map data not yet available"
-// placeholder when the viewport zooms past the source resolution.
-const ESRI_IMAGERY_MAX_NATIVE = 18;
+// Esri World Imagery serves real imagery to zoom 17 across remote WA
+// (verified by probing tile sizes against Kalgoorlie: 16KB real tile at
+// zoom 17, drops to a 2.5KB "Map data not yet available" placeholder at
+// zoom 18+). Capping maxNativeZoom at 17 makes Leaflet upsample the real
+// zoom-17 tile when the viewport zooms further, instead of falling
+// through to the placeholder.
+const ESRI_IMAGERY_MAX_NATIVE = 17;
 const ESRI_IMAGERY_MAX_DISPLAY = 22; // user may zoom past; Leaflet upsamples
 
 // =================================================================
@@ -195,11 +197,14 @@ function FlyTo({ bounds }: { bounds: L.LatLngBounds | null }) {
   const map = useMap();
   useEffect(() => {
     if (!bounds || !bounds.isValid()) return;
+    // Cap fly-to zoom at 17 — beyond that, Esri imagery falls through to
+    // the "Map data not yet available" placeholder for remote WA. The
+    // user can still scroll-zoom further; tiles will upsample.
     map.flyToBounds(bounds, {
       duration: 0.6,
       easeLinearity: 0.25,
       padding: [40, 40],
-      maxZoom: 18,
+      maxZoom: 17,
     });
     const t = setTimeout(() => map.invalidateSize(), 300);
     return () => clearTimeout(t);
