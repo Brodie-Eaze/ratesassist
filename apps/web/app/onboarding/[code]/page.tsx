@@ -13,7 +13,7 @@
  * in the in-memory DataStore via /api/councils/[code]/import.
  */
 
-import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -77,9 +77,11 @@ const SOFT_WARN_BYTES = 5 * 1024 * 1024;
 export default function OnboardingPage({
   params,
 }: {
-  params: Promise<{ code: string }>;
+  params: { code: string };
 }) {
-  const { code } = use(params);
+  // Next.js 14: params is a plain object in client components. (Next 15
+  // would wrap it in a Promise unwrapped via `use(params)`.)
+  const { code } = params;
   const router = useRouter();
   const [step, setStep] = useState<Step>(1);
   const [council, setCouncil] = useState<Council | null>(null);
