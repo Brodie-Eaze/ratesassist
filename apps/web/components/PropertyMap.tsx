@@ -370,7 +370,11 @@ export default function PropertyMap({
   evidenceHref,
   height,
 }: PropertyMapProps) {
-  const [basemap, setBasemap] = useState<BasemapKey>("hybrid");
+  // Default to Sentinel-2 cloudless mosaic — global 10m/pixel imagery
+  // that ALWAYS renders ground (no "Map data not yet available"
+  // placeholder, no zoom-coverage gaps). Esri Hybrid is one click away
+  // via the toggle for the metro areas where it has higher detail.
+  const [basemap, setBasemap] = useState<BasemapKey>("sentinel");
   const [statsOpen, setStatsOpen] = useState(true);
   const [measureOn, setMeasureOn] = useState(false);
   const [cursor, setCursor] = useState<[number, number] | null>(null);
