@@ -6,7 +6,7 @@ const CSP_DIRECTIVES = [
   "default-src 'self'",
   "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://server.arcgisonline.com https://*.basemaps.cartocdn.com",
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: https://server.arcgisonline.com https://*.basemaps.cartocdn.com https://*.tile.openstreetmap.org",
+  "img-src 'self' data: https://server.arcgisonline.com https://*.basemaps.cartocdn.com https://*.tile.openstreetmap.org https://tiles.maps.eox.at https://*.tiles.maps.eox.at",
   "connect-src 'self' https://services.slip.wa.gov.au https://abr.business.gov.au https://api.anthropic.com https://api.anthropic.com.au",
   "font-src 'self' data:",
   "frame-ancestors 'none'",

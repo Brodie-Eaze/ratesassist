@@ -97,7 +97,13 @@ export type PropertyMapProps = {
 // Basemap registry — kept inline so the component is self-contained.
 // =================================================================
 
-type BasemapKey = "hybrid" | "satellite" | "street" | "topo" | "slip-aerial";
+type BasemapKey =
+  | "hybrid"
+  | "satellite"
+  | "sentinel"
+  | "street"
+  | "topo"
+  | "slip-aerial";
 
 const ESRI_IMAGERY =
   "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
@@ -108,9 +114,25 @@ const ESRI_TOPO =
 const CARTO_LIGHT =
   "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png";
 
+// Sentinel-2 cloudless mosaic from EOX (ESA Copernicus data, ~10m resolution,
+// global coverage with no API key). The 2024 build is the freshest public-tier
+// composite. Always has imagery anywhere on Earth — fixes the "Map data not
+// yet available" blank tiles Esri shows for remote WA at high zoom.
+const SENTINEL_BASE =
+  "https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2024_3857/default/g/{z}/{y}/{x}.jpg";
+const SENTINEL_ATTR =
+  'Sentinel-2 cloudless 2024 by <a href="https://s2maps.eu">EOX IT</a> (ESA Copernicus)';
+
 const ESRI_ATTR = "Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics";
 const CARTO_ATTR =
   '© <a href="https://www.openstreetmap.org/copyright">OSM</a> © <a href="https://carto.com/attributions">CARTO</a>';
+
+// Esri World Imagery has 30cm-1m resolution in AU metro but only ~zoom-15
+// coverage in remote WA. Setting maxNativeZoom upsamples the deepest
+// available tile instead of showing the "Map data not yet available"
+// placeholder when the viewport zooms past the source resolution.
+const ESRI_IMAGERY_MAX_NATIVE = 18;
+const ESRI_IMAGERY_MAX_DISPLAY = 22; // user may zoom past; Leaflet upsamples
 
 // =================================================================
 // Helpers
@@ -488,21 +510,48 @@ export default function PropertyMap({
         preferCanvas
         doubleClickZoom={!measureOn}
       >
-        {/* Base tile layer */}
+        {/* Base tile layer — note maxNativeZoom upsamples the deepest
+            available tile in remote WA instead of showing Esri's "Map data
+            not yet available" placeholder at high zoom. */}
         {basemap === "hybrid" && (
           <>
-            <TileLayer key="hybrid-base" url={ESRI_IMAGERY} attribution={ESRI_ATTR} maxZoom={19} />
+            <TileLayer
+              key="hybrid-base"
+              url={ESRI_IMAGERY}
+              attribution={ESRI_ATTR}
+              maxNativeZoom={ESRI_IMAGERY_MAX_NATIVE}
+              maxZoom={ESRI_IMAGERY_MAX_DISPLAY}
+            />
             <TileLayer
               key="hybrid-ref"
               url={ESRI_REF}
               attribution=""
-              maxZoom={19}
+              maxNativeZoom={ESRI_IMAGERY_MAX_NATIVE}
+              maxZoom={ESRI_IMAGERY_MAX_DISPLAY}
               opacity={0.85}
             />
           </>
         )}
         {basemap === "satellite" && (
-          <TileLayer key="sat" url={ESRI_IMAGERY} attribution={ESRI_ATTR} maxZoom={19} />
+          <TileLayer
+            key="sat"
+            url={ESRI_IMAGERY}
+            attribution={ESRI_ATTR}
+            maxNativeZoom={ESRI_IMAGERY_MAX_NATIVE}
+            maxZoom={ESRI_IMAGERY_MAX_DISPLAY}
+          />
+        )}
+        {basemap === "sentinel" && (
+          // Sentinel-2 cloudless mosaic — 10m/pixel, global, always
+          // available. Lower resolution than Esri at zoom 18 but never
+          // shows the "Map data not yet available" placeholder.
+          <TileLayer
+            key="sentinel"
+            url={SENTINEL_BASE}
+            attribution={SENTINEL_ATTR}
+            maxNativeZoom={14}
+            maxZoom={ESRI_IMAGERY_MAX_DISPLAY}
+          />
         )}
         {basemap === "street" && (
           <TileLayer key="street" url={CARTO_LIGHT} attribution={CARTO_ATTR} maxZoom={19} />
@@ -608,6 +657,7 @@ export default function PropertyMap({
             [
               ["hybrid", "Hybrid"],
               ["satellite", "Satellite"],
+              ["sentinel", "Sentinel‑2"],
               ["street", "Street"],
               ["topo", "Topo"],
               ...(slipProbe && slipProbe.ok
