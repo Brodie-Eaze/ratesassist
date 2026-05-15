@@ -22,7 +22,7 @@
     "lag-window": "tsx scripts/lag-window-pull.ts",
     "import-roll": "tsx scripts/import-rating-roll.ts",
     "refresh-rate-tables": "tsx scripts/refresh-rate-tables.ts",
-    "prepare": "husky"
+    "prepare": "husky 2>/dev/null || true"
   },
   "devDependencies": {
     "@types/node": "^22.9.0",
