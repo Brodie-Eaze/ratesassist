@@ -23,15 +23,28 @@
  */
 const isProd = process.env.NODE_ENV === "production";
 
+// Next.js 14 App Router bootstraps every page with 5+ inline <script> tags
+// containing hydration metadata, RSC payloads, and Next's runtime config.
+// CSP without 'unsafe-inline' blocks all of them and the page never
+// hydrates — server renders but client stays frozen.
+//
+// Until we migrate to nonce-based CSP (next.config + middleware emit a
+// per-request nonce, every script element carries it, CSP uses
+// 'strict-dynamic' with the nonce), 'unsafe-inline' must be present in
+// production too. The other security controls (HSTS, frame-ancestors,
+// CSRF, audit chain, AU region) remain strong; the inline-script risk is
+// mitigated by the auth gate + RBAC.
+//
+// 'unsafe-eval' is dropped in production — Next.js prod bundles do NOT
+// need it; only HMR/dev does.
 const scriptSrcDirectives = [
   "'self'",
-  // Esri and Carto don't serve script — they're only listed here for
-  // strict-dynamic compatibility with a future tightening step.
+  "'unsafe-inline'",
   "https://server.arcgisonline.com",
   "https://*.basemaps.cartocdn.com",
 ];
 if (!isProd) {
-  scriptSrcDirectives.push("'unsafe-inline'", "'unsafe-eval'");
+  scriptSrcDirectives.push("'unsafe-eval'");
 }
 
 const CSP_DIRECTIVES = [
