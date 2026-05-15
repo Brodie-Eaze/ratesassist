@@ -1,5 +1,5 @@
 /**
- * Recovery dashboard — filter-pill regression tests.
+ * Recovery dashboard — filter regression tests.
  *
  * The vitest harness is Node-only with no DOM, so this file pins the
  * contract the dashboard renders against:
@@ -8,6 +8,9 @@
  *     concession-review, strata-conversion), the families of signal ids
  *     they cover, and the `?signal=<family>` URL parameter that
  *     pre-applies the filter.
+ *   - The dashboard exposes those filters via a single "Recovery type"
+ *     dropdown rather than the older 6-pill row — the data-testids
+ *     covered here are the dropdown's option ids.
  *   - The mock data exposes the right number of candidates per family so
  *     the filter counts on the dashboard are non-zero. This is a key
  *     regression-prevention check — if the upstream fixtures stop firing
@@ -40,7 +43,7 @@ beforeAll(async () => {
 // 1) Page source contract — the dashboard declares the new filters.
 // ----------------------------------------------------------------------------
 
-describe("recovery dashboard — new filter pills declared", () => {
+describe("recovery dashboard — new filters declared", () => {
   const src = readFileSync(
     join(__dirname, "..", "app", "recovery", "page.tsx"),
     "utf8",
@@ -68,19 +71,26 @@ describe("recovery dashboard — new filter pills declared", () => {
     expect(src).toContain("mismatch.strata_parent_still_rated");
   });
 
-  it("renders a Title-mismatch pill with data-testid filter-title-mismatch", () => {
-    expect(src).toContain('data-testid="filter-title-mismatch"');
-    expect(src).toContain("Title mismatch");
+  it("exposes a single Recovery-type dropdown trigger (replaces the 6 pills)", () => {
+    expect(src).toContain('data-testid="recovery-type-dropdown"');
+    expect(src).toContain('data-testid="recovery-type-trigger"');
+    expect(src).toContain('data-testid="recovery-type-options"');
   });
 
-  it("renders a Concession-review pill with data-testid filter-concession-review", () => {
-    expect(src).toContain('data-testid="filter-concession-review"');
-    expect(src).toContain("Concession review");
+  it("renders a Title-mismatch option in the Recovery-type dropdown", () => {
+    expect(src).toContain('data-testid={`recovery-type-option-${opt.value}`}');
+    expect(src).toContain('value: "title_mismatch"');
+    expect(src).toContain('label: "Title mismatch"');
   });
 
-  it("renders a Strata-conversion pill with data-testid filter-strata-conversion", () => {
-    expect(src).toContain('data-testid="filter-strata-conversion"');
-    expect(src).toContain("Strata conversion");
+  it("renders a Concession-review option in the Recovery-type dropdown", () => {
+    expect(src).toContain('value: "concession_review"');
+    expect(src).toContain('label: "Concession review"');
+  });
+
+  it("renders a Strata-conversion option in the Recovery-type dropdown", () => {
+    expect(src).toContain('value: "strata_conversion"');
+    expect(src).toContain('label: "Strata conversion"');
   });
 
   it("honours ?signal=title_mismatch / concession_review / strata_conversion URL params", () => {
@@ -94,9 +104,32 @@ describe("recovery dashboard — new filter pills declared", () => {
     expect(src).toContain("/strata/${c.assessmentNumber}");
   });
 
-  it("each new pill carries aria-pressed reflecting its on/off state", () => {
-    const ariaPressedMatches = src.match(/aria-pressed=\{[a-zA-Z]+Only\}/g) ?? [];
-    expect(ariaPressedMatches.length).toBeGreaterThanOrEqual(3);
+  it("the dropdown options carry aria-selected reflecting which one is active", () => {
+    const ariaSelectedMatches = src.match(/aria-selected=\{[^}]+\}/g) ?? [];
+    // 1 for the All-recovery-types option + 1 inside the dynamic
+    // RECOVERY_TYPE_OPTIONS.map render = at least 2 matches.
+    expect(ariaSelectedMatches.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("the dropdown lists every previously-pill recovery type as an option", () => {
+    // The dropdown is data-driven from RECOVERY_TYPE_OPTIONS. Each value
+    // must be present at module scope so the menu renders the same six
+    // pills the old UI exposed.
+    expect(src).toContain('value: "recently_granted"');
+    expect(src).toContain('value: "cadastre_lag"');
+    expect(src).toContain('value: "address_mismatch"');
+    expect(src).toContain('value: "title_mismatch"');
+    expect(src).toContain('value: "concession_review"');
+    expect(src).toContain('value: "strata_conversion"');
+  });
+
+  it("the signal-breakdown card is collapsed behind a toggle (not always-rendered)", () => {
+    // The 18-chip signal grid used to dominate the page on every load.
+    // It now renders only when the user clicks "Show signal breakdown",
+    // gated by `showSignalBreakdown && (...)`. Pin that.
+    expect(src).toContain('data-testid="toggle-signal-breakdown"');
+    expect(src).toContain("showSignalBreakdown");
+    expect(src).toMatch(/showSignalBreakdown\s*&&\s*\(/);
   });
 });
 

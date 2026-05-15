@@ -111,7 +111,18 @@ describe("security headers (SEC-003) — CSP hardening by NODE_ENV", () => {
     reloadConfig();
   });
 
-  it("production strips 'unsafe-eval' and 'unsafe-inline' from script-src", async () => {
+  it("production strips 'unsafe-eval' from script-src (keeps 'unsafe-inline' until nonce-based CSP lands)", async () => {
+    // History: an earlier iteration dropped both 'unsafe-eval' AND
+    // 'unsafe-inline' from prod. That broke Next.js 14 App Router because
+    // it bootstraps every page with 5+ inline <script> tags carrying the
+    // hydration / RSC payload. Pages rendered server-side but the client
+    // never hydrated — the screen sat frozen.
+    //
+    // The agreed compromise (documented in next.config.js): keep
+    // 'unsafe-inline' in prod until the codebase migrates to nonce-based
+    // CSP with 'strict-dynamic'. 'unsafe-eval' STAYS stripped — Next.js
+    // prod bundles don't need it (only HMR/dev does), so dropping it
+    // closes the eval-based XSS path without breaking hydration.
     setNodeEnv("production");
     const cfg = reloadConfig();
     const blocks = await cfg.headers!();
@@ -124,7 +135,7 @@ describe("security headers (SEC-003) — CSP hardening by NODE_ENV", () => {
       .find((d) => d.startsWith("script-src "));
     expect(scriptSrc).toBeDefined();
     expect(scriptSrc).not.toContain("'unsafe-eval'");
-    expect(scriptSrc).not.toContain("'unsafe-inline'");
+    expect(scriptSrc).toContain("'unsafe-inline'");
     expect(scriptSrc).toContain("'self'");
   });
 

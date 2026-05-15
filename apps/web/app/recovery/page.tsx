@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, Suspense } from "react";
+import { useState, useEffect, useMemo, useRef, Suspense } from "react";
 // Round 4B: dashboard now reads from /api/recovery/candidates (slim
 // envelope — candidates + stats only) instead of /api/data which also
 // shipped properties/owners/tenements arrays.
@@ -27,6 +27,10 @@ import {
   ClipboardList,
   Home,
   Scale,
+  Filter,
+  ChevronDown,
+  ChevronUp,
+  Check,
 } from "lucide-react";
 
 const RECENTLY_GRANTED_SIGNAL_ID = "reg.tenement.recently_granted";
@@ -63,6 +67,108 @@ const CONCESSION_REVIEW_SIGNAL_IDS: ReadonlySet<string> = new Set([
  * button linking to `/strata/<assessment>`.
  */
 const STRATA_CONVERSION_SIGNAL_ID = "mismatch.strata_parent_still_rated";
+
+/**
+ * Discriminated set of recovery-type filter values. Kept at module scope so
+ * the dropdown options and the filtered-cascade switch share one source of
+ * truth.
+ */
+type RecoveryTypeValue =
+  | "recently_granted"
+  | "cadastre_lag"
+  | "address_mismatch"
+  | "title_mismatch"
+  | "concession_review"
+  | "strata_conversion";
+
+/**
+ * Dropdown option metadata for the Recovery-type filter. Ordering here is
+ * the order users see in the menu — register-level signals first (high
+ * recovery confidence), then identity/concession (more nuanced), then the
+ * strata workflow (separate page).
+ */
+const RECOVERY_TYPE_OPTIONS: ReadonlyArray<{
+  readonly value: RecoveryTypeValue;
+  readonly label: string;
+  readonly icon: typeof Activity;
+  readonly description: string;
+}> = [
+  {
+    value: "recently_granted",
+    label: "Newly granted",
+    icon: BellRing,
+    description:
+      "Candidates with a tenement granted within the last 90 days (DMIRS MINEDEX).",
+  },
+  {
+    value: "cadastre_lag",
+    label: "Cadastre lag",
+    icon: Sparkles,
+    description:
+      "DMIRS has granted a tenement but Landgate landuse hasn't caught up — the highest-confidence recovery window.",
+  },
+  {
+    value: "address_mismatch",
+    label: "Address mismatch",
+    icon: FileText,
+    description:
+      "Landgate's address, lot/plan or landuse code differs from the council's rating record.",
+  },
+  {
+    value: "title_mismatch",
+    label: "Title mismatch",
+    icon: ClipboardList,
+    description:
+      "Proprietor, CT number, encumbrance or per-PIN mismatch against Landgate's canonical title record.",
+  },
+  {
+    value: "concession_review",
+    label: "Concession review",
+    icon: Home,
+    description:
+      "Pensioner concession diverges from Water Corp eligibility (deceased / cancelled / expired card / postal-vs-property mismatch).",
+  },
+  {
+    value: "strata_conversion",
+    label: "Strata conversion",
+    icon: Scale,
+    description:
+      "Parent assessments where Landgate records strata children but council is still rating the parent. Each row exposes a Convert workflow.",
+  },
+];
+
+/**
+ * Read the matching per-type count out of the in-page memoised counters.
+ * Splitting the lookup out of the JSX keeps the dropdown markup tight and
+ * lets the dropdown option count, the trigger badge, and the strata
+ * detection share one path.
+ */
+function recoveryTypeCount(
+  value: RecoveryTypeValue,
+  counts: {
+    readonly recentlyGrantedCount: number;
+    readonly cadastreLagCount: number;
+    readonly addressMismatchCount: number;
+    readonly titleMismatchCount: number;
+    readonly concessionReviewCount: number;
+    readonly strataConversionCount: number;
+  },
+): number {
+  switch (value) {
+    case "recently_granted":
+      return counts.recentlyGrantedCount;
+    case "cadastre_lag":
+      return counts.cadastreLagCount;
+    case "address_mismatch":
+      return counts.addressMismatchCount;
+    case "title_mismatch":
+      return counts.titleMismatchCount;
+    case "concession_review":
+      return counts.concessionReviewCount;
+    case "strata_conversion":
+      return counts.strataConversionCount;
+  }
+}
 
 type DataResponse = {
   mismatches: MismatchCandidate[];
@@ -136,26 +242,52 @@ function RecoveryPageInner() {
         : { status: "loading", data: null, error: null };
   const [filter, setFilter] = useState<"all" | "high" | "medium" | "low">("all");
   const [signalFilter, setSignalFilter] = useState<string | "all">("all");
-  const [recentlyGrantedOnly, setRecentlyGrantedOnly] = useState<boolean>(false);
-  const [cadastreLagOnly, setCadastreLagOnly] = useState<boolean>(false);
-  const [addressMismatchOnly, setAddressMismatchOnly] = useState<boolean>(false);
-  const [titleMismatchOnly, setTitleMismatchOnly] = useState<boolean>(false);
-  const [concessionReviewOnly, setConcessionReviewOnly] = useState<boolean>(false);
-  const [strataConversionOnly, setStrataConversionOnly] = useState<boolean>(false);
+  /**
+   * Single recovery-type filter replaces the 6 boolean toggle pills the page
+   * used to show (Newly granted, Cadastre lag, Address mismatch, Title
+   * mismatch, Concession review, Strata conversion). One dropdown carries
+   * the same intent without crowding the filter row. URL deep-link param
+   * stays as `?signal=<family>` for backwards compatibility with /alerts
+   * and the older links the clerks may have bookmarked.
+   */
+  const [recoveryType, setRecoveryType] = useState<"all" | RecoveryTypeValue>("all");
+  const [showSignalBreakdown, setShowSignalBreakdown] = useState<boolean>(false);
+  const [recoveryDropdownOpen, setRecoveryDropdownOpen] = useState<boolean>(false);
+  const recoveryDropdownRef = useRef<HTMLDivElement | null>(null);
   const searchParams = useSearchParams();
 
-  // Pre-apply filters when arriving via /recovery?signal=<family> (the legacy
-  // /alerts redirect uses `recently_granted`; the new VEN/CT/Concession pills
-  // mirror the same param convention so deep-links stay stable).
+  // Pre-apply the dropdown filter when arriving via /recovery?signal=<family>.
+  // The legacy /alerts redirect uses `recently_granted`; deep-links from the
+  // older pill-row implementation use the same param shape, so they keep
+  // working unchanged.
   useEffect(() => {
     const sig = searchParams?.get("signal");
-    if (sig === "recently_granted") setRecentlyGrantedOnly(true);
-    if (sig === "cadastre_lag") setCadastreLagOnly(true);
-    if (sig === "address_mismatch") setAddressMismatchOnly(true);
-    if (sig === "title_mismatch") setTitleMismatchOnly(true);
-    if (sig === "concession_review") setConcessionReviewOnly(true);
-    if (sig === "strata_conversion") setStrataConversionOnly(true);
+    if (
+      sig === "recently_granted" ||
+      sig === "cadastre_lag" ||
+      sig === "address_mismatch" ||
+      sig === "title_mismatch" ||
+      sig === "concession_review" ||
+      sig === "strata_conversion"
+    ) {
+      setRecoveryType(sig);
+    }
   }, [searchParams]);
+
+  // Close the recovery-type dropdown on outside click.
+  useEffect(() => {
+    if (!recoveryDropdownOpen) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (
+        recoveryDropdownRef.current &&
+        !recoveryDropdownRef.current.contains(e.target as Node)
+      ) {
+        setRecoveryDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [recoveryDropdownOpen]);
 
   // PERF-009: per-signal sample lookup, computed once per data change.
   // Previously every render iterated `data.stats.signalCounts` and called
@@ -236,30 +368,45 @@ function RecoveryPageInner() {
   if (filter !== "all") filtered = filtered.filter((m) => m.severity === filter);
   if (signalFilter !== "all")
     filtered = filtered.filter((m) => m.signals.some((s) => s.id === signalFilter));
-  if (recentlyGrantedOnly)
-    filtered = filtered.filter((m) =>
-      m.signals.some((s) => s.id === RECENTLY_GRANTED_SIGNAL_ID),
-    );
-  if (cadastreLagOnly)
-    filtered = filtered.filter((m) =>
-      m.signals.some((s) => s.id === CADASTRE_LAG_SIGNAL_ID),
-    );
-  if (addressMismatchOnly)
-    filtered = filtered.filter((m) =>
-      m.signals.some((s) => s.id === ADDRESS_MISMATCH_SIGNAL_ID),
-    );
-  if (titleMismatchOnly)
-    filtered = filtered.filter((m) =>
-      m.signals.some((s) => TITLE_MISMATCH_SIGNAL_IDS.has(s.id)),
-    );
-  if (concessionReviewOnly)
-    filtered = filtered.filter((m) =>
-      m.signals.some((s) => CONCESSION_REVIEW_SIGNAL_IDS.has(s.id)),
-    );
-  if (strataConversionOnly)
-    filtered = filtered.filter((m) =>
-      m.signals.some((s) => s.id === STRATA_CONVERSION_SIGNAL_ID),
-    );
+  // Single switch on the new recovery-type enum replaces the previous
+  // 6-boolean fan-out. The behaviour is identical (each branch maps to one
+  // of the old `*Only` filters); only the call-site shape collapsed.
+  switch (recoveryType) {
+    case "recently_granted":
+      filtered = filtered.filter((m) =>
+        m.signals.some((s) => s.id === RECENTLY_GRANTED_SIGNAL_ID),
+      );
+      break;
+    case "cadastre_lag":
+      filtered = filtered.filter((m) =>
+        m.signals.some((s) => s.id === CADASTRE_LAG_SIGNAL_ID),
+      );
+      break;
+    case "address_mismatch":
+      filtered = filtered.filter((m) =>
+        m.signals.some((s) => s.id === ADDRESS_MISMATCH_SIGNAL_ID),
+      );
+      break;
+    case "title_mismatch":
+      filtered = filtered.filter((m) =>
+        m.signals.some((s) => TITLE_MISMATCH_SIGNAL_IDS.has(s.id)),
+      );
+      break;
+    case "concession_review":
+      filtered = filtered.filter((m) =>
+        m.signals.some((s) => CONCESSION_REVIEW_SIGNAL_IDS.has(s.id)),
+      );
+      break;
+    case "strata_conversion":
+      filtered = filtered.filter((m) =>
+        m.signals.some((s) => s.id === STRATA_CONVERSION_SIGNAL_ID),
+      );
+      break;
+    case "all":
+    default:
+      // No additional filtering.
+      break;
+  }
 
   return (
     <div className="flex h-screen">
@@ -316,66 +463,129 @@ function RecoveryPageInner() {
               real even when downstream candidates run over demo fixtures. */}
           <LiveGrantsWidget />
 
-          {/* Signal contribution rollup */}
+          {/*
+            Signal contribution rollup.
+
+            The card itself is always rendered (it owns the "Signal catalogue"
+            link, the active-filter indicator and the toggle), but the chip
+            grid is collapsed by default. Earlier iterations of this page
+            unconditionally rendered ~18 chips across 3 wrap-rows — every
+            time a council clerk landed on /recovery they saw a wall of
+            chips that competed for the same eye space as the severity row
+            and quick-filter pills. Collapsing it returns the dashboard to
+            a "skim, then drill" hierarchy without losing the granularity
+            for power users.
+          */}
           <div className="card p-5">
-            <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center justify-between">
               <div>
                 <div className="font-medium text-ink-900 flex items-center gap-2">
                   <Sparkles className="w-4 h-4 text-accent-500" />
                   Detection-signal contribution
+                  {signalFilter !== "all" && (
+                    <span className="badge bg-accent-100 text-accent-700 text-[10px]">
+                      filtered
+                    </span>
+                  )}
                 </div>
                 <div className="text-xs text-ink-500">
-                  How many candidates each signal fired against — click to filter the list.
+                  Per-signal breakdown — expand to filter the candidate list by a single signal.
                 </div>
               </div>
-              <Link
-                href="/signals"
-                className="text-xs text-accent-700 hover:underline"
-              >
-                Signal catalogue →
-              </Link>
+              <div className="flex items-center gap-3">
+                <Link
+                  href="/signals"
+                  className="text-xs text-accent-700 hover:underline"
+                >
+                  Signal catalogue →
+                </Link>
+                <button
+                  type="button"
+                  onClick={() => setShowSignalBreakdown((v) => !v)}
+                  aria-expanded={showSignalBreakdown}
+                  aria-controls="signal-breakdown-grid"
+                  data-testid="toggle-signal-breakdown"
+                  className="btn bg-white border border-ink-200 text-ink-700 hover:bg-ink-100 text-xs"
+                >
+                  {showSignalBreakdown ? (
+                    <>
+                      <ChevronUp className="w-3 h-3" />
+                      Hide signal breakdown
+                    </>
+                  ) : (
+                    <>
+                      <ChevronDown className="w-3 h-3" />
+                      Show signal breakdown
+                      <span className="text-[10px] opacity-70 ml-1">
+                        {Object.keys(data.stats.signalCounts).length} signals
+                      </span>
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
-            <div className="flex flex-wrap gap-2">
-              <button
-                onClick={() => setSignalFilter("all")}
-                className={`btn ${
-                  signalFilter === "all"
-                    ? "bg-ink-900 text-white"
-                    : "bg-white border border-ink-200 text-ink-700 hover:bg-ink-100"
-                }`}
+            {showSignalBreakdown && (
+              <div
+                id="signal-breakdown-grid"
+                className="flex flex-wrap gap-2 mt-4 pt-4 border-t border-ink-100"
               >
-                All signals
-                <span className="text-[10px] opacity-70 ml-1">
-                  {Object.values(data.stats.signalCounts).reduce((s, n) => s + n, 0)}
-                </span>
-              </button>
-              {Object.entries(data.stats.signalCounts)
-                .sort((a, b) => b[1] - a[1])
-                .map(([id, count]) => {
-                  const sig = signalSamples.get(id);
-                  if (!sig) return null;
-                  const meta = CATEGORY_META[sig.category];
-                  const Icon = meta.icon;
-                  return (
-                    <button
-                      key={id}
-                      onClick={() => setSignalFilter(id)}
-                      className={`btn ${
-                        signalFilter === id
-                          ? "bg-ink-900 text-white"
-                          : "bg-white border border-ink-200 text-ink-700 hover:bg-ink-100"
-                      }`}
-                    >
-                      <Icon className="w-3 h-3" />
-                      {sig.short}
-                      <span className="text-[10px] opacity-70 ml-1">{count}</span>
-                    </button>
-                  );
-                })}
-            </div>
+                <button
+                  onClick={() => setSignalFilter("all")}
+                  className={`btn ${
+                    signalFilter === "all"
+                      ? "bg-ink-900 text-white"
+                      : "bg-white border border-ink-200 text-ink-700 hover:bg-ink-100"
+                  }`}
+                >
+                  All signals
+                  <span className="text-[10px] opacity-70 ml-1">
+                    {Object.values(data.stats.signalCounts).reduce((s, n) => s + n, 0)}
+                  </span>
+                </button>
+                {Object.entries(data.stats.signalCounts)
+                  .sort((a, b) => b[1] - a[1])
+                  .map(([id, count]) => {
+                    const sig = signalSamples.get(id);
+                    if (!sig) return null;
+                    const meta = CATEGORY_META[sig.category];
+                    const Icon = meta.icon;
+                    return (
+                      <button
+                        key={id}
+                        onClick={() => setSignalFilter(id)}
+                        className={`btn ${
+                          signalFilter === id
+                            ? "bg-ink-900 text-white"
+                            : "bg-white border border-ink-200 text-ink-700 hover:bg-ink-100"
+                        }`}
+                      >
+                        <Icon className="w-3 h-3" />
+                        {sig.short}
+                        <span className="text-[10px] opacity-70 ml-1">{count}</span>
+                      </button>
+                    );
+                  })}
+              </div>
+            )}
           </div>
 
-          {/* Severity filter */}
+          {/*
+            Severity row + Recovery-type dropdown.
+
+            Before: the page rendered TWO wrap-rows totalling 6 boolean
+            pills (Newly granted, Cadastre lag, Address mismatch, Title
+            mismatch, Concession review, Strata conversion) on top of the
+            severity row. Clerks reported the page felt "overwhelming" on
+            first load.
+
+            After: severity stays as inline pills (4 buttons, low risk
+            of crowding), and the 6 recovery-type filters fold into one
+            dropdown. Only one recovery-type can be active at a time —
+            this matches how clerks actually triaged ("show me the
+            strata-conversion queue" is mutually exclusive with "show me
+            the cadastre-lag queue"). The dropdown also exposes the same
+            counts as the old pills via badges on each option.
+          */}
           <div className="flex items-center gap-2">
             <span className="text-sm text-ink-500">Severity:</span>
             {(["all", "high", "medium", "low"] as const).map((f) => (
@@ -399,116 +609,116 @@ function RecoveryPageInner() {
             <span className="text-xs text-ink-400 ml-3">
               Showing {filtered.length} of {data.mismatches.length}
             </span>
-            <button
-              onClick={() => setRecentlyGrantedOnly((v) => !v)}
-              className={`btn ml-auto ${
-                recentlyGrantedOnly
-                  ? "bg-warn-500 text-white"
-                  : "bg-white border border-warn-300 text-warn-700 hover:bg-warn-50"
-              }`}
-              title="Filter to candidates with a tenement granted within the last 90 days (DMIRS MINEDEX)"
+            <div
+              className="ml-auto relative"
+              ref={recoveryDropdownRef}
+              data-testid="recovery-type-dropdown"
             >
-              <BellRing className="w-3 h-3" />
-              Newly granted only
-              <span className="text-[10px] opacity-70 ml-1">
-                {recentlyGrantedCount}
-              </span>
-            </button>
-            <button
-              onClick={() => setCadastreLagOnly((v) => !v)}
-              className={`btn ${
-                cadastreLagOnly
-                  ? "bg-accent-600 text-white"
-                  : "bg-white border border-accent-300 text-accent-700 hover:bg-accent-50"
-              }`}
-              title="Filter to candidates where DMIRS has granted a tenement but Landgate landuse hasn't caught up — the highest-confidence recovery window."
-            >
-              <Sparkles className="w-3 h-3" />
-              Cadastre lag (high-confidence)
-              <span className="text-[10px] opacity-70 ml-1">
-                {cadastreLagCount}
-              </span>
-            </button>
-            <button
-              onClick={() => setAddressMismatchOnly((v) => !v)}
-              className={`btn ${
-                addressMismatchOnly
-                  ? "bg-accent-700 text-white"
-                  : "bg-white border border-accent-300 text-accent-700 hover:bg-accent-50"
-              }`}
-              title="Filter to candidates where Landgate's address, lot/plan or landuse code differs from the council's rating record."
-            >
-              <FileText className="w-3 h-3" />
-              Address mismatch
-              <span className="text-[10px] opacity-70 ml-1">
-                {addressMismatchCount}
-              </span>
-            </button>
-          </div>
-
-          {/* VEN + CT + Concession filter pills.
-              Each pill toggles a signal-family filter (title-mismatch covers
-              5 register/identity signals; concession-review covers 4
-              pensioner signals; strata-conversion is the single
-              `mismatch.strata_parent_still_rated` driver of the
-              /strata/[assessment] workflow). Pill UX matches the row above
-              — rounded button + count badge — and stacks with the severity
-              filter and the older pills. */}
-          <div className="flex flex-wrap items-center gap-2" aria-label="Title and concession filter pills">
-            <button
-              type="button"
-              onClick={() => setTitleMismatchOnly((v) => !v)}
-              aria-pressed={titleMismatchOnly}
-              data-testid="filter-title-mismatch"
-              className={`btn ${
-                titleMismatchOnly
-                  ? "bg-accent-700 text-white"
-                  : "bg-white border border-accent-300 text-accent-700 hover:bg-accent-50"
-              }`}
-              title="Filter to candidates with a proprietor, CT number, encumbrance or per-PIN mismatch against Landgate's canonical title record."
-            >
-              <ClipboardList className="w-3 h-3" />
-              Title mismatch
-              <span className="text-[10px] opacity-70 ml-1">
-                {titleMismatchCount}
-              </span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setConcessionReviewOnly((v) => !v)}
-              aria-pressed={concessionReviewOnly}
-              data-testid="filter-concession-review"
-              className={`btn ${
-                concessionReviewOnly
-                  ? "bg-success-700 text-white"
-                  : "bg-white border border-success-300 text-success-700 hover:bg-success-50"
-              }`}
-              title="Filter to candidates with a pensioner concession that diverges from Water Corp eligibility (deceased / cancelled / expired card / postal-vs-property mismatch)."
-            >
-              <Home className="w-3 h-3" />
-              Concession review
-              <span className="text-[10px] opacity-70 ml-1">
-                {concessionReviewCount}
-              </span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setStrataConversionOnly((v) => !v)}
-              aria-pressed={strataConversionOnly}
-              data-testid="filter-strata-conversion"
-              className={`btn ${
-                strataConversionOnly
-                  ? "bg-warn-600 text-white"
-                  : "bg-white border border-warn-300 text-warn-700 hover:bg-warn-50"
-              }`}
-              title="Filter to parent assessments where Landgate records strata children but council is still rating the parent. Each row exposes a Convert workflow."
-            >
-              <Scale className="w-3 h-3" />
-              Strata conversion
-              <span className="text-[10px] opacity-70 ml-1">
-                {strataConversionCount}
-              </span>
-            </button>
+              <button
+                type="button"
+                onClick={() => setRecoveryDropdownOpen((v) => !v)}
+                aria-haspopup="listbox"
+                aria-expanded={recoveryDropdownOpen}
+                data-testid="recovery-type-trigger"
+                className={`btn ${
+                  recoveryType === "all"
+                    ? "bg-white border border-ink-200 text-ink-700 hover:bg-ink-100"
+                    : "bg-accent-600 text-white hover:bg-accent-700"
+                }`}
+                title="Narrow the candidate list to a single recovery workflow (Cadastre lag, Strata conversion, etc.)"
+              >
+                <Filter className="w-3 h-3" />
+                {recoveryType === "all"
+                  ? "Recovery type"
+                  : RECOVERY_TYPE_OPTIONS.find((o) => o.value === recoveryType)
+                      ?.label ?? "Recovery type"}
+                {recoveryType !== "all" && (
+                  <span className="text-[10px] opacity-80 ml-1">
+                    {recoveryTypeCount(recoveryType, {
+                      recentlyGrantedCount,
+                      cadastreLagCount,
+                      addressMismatchCount,
+                      titleMismatchCount,
+                      concessionReviewCount,
+                      strataConversionCount,
+                    })}
+                  </span>
+                )}
+                <ChevronDown className="w-3 h-3" />
+              </button>
+              {recoveryDropdownOpen && (
+                <div
+                  role="listbox"
+                  aria-label="Recovery type filter"
+                  data-testid="recovery-type-options"
+                  className="absolute right-0 top-full mt-1 z-30 w-72 bg-white border border-ink-200 rounded-md shadow-lg overflow-hidden"
+                >
+                  <button
+                    role="option"
+                    type="button"
+                    onClick={() => {
+                      setRecoveryType("all");
+                      setRecoveryDropdownOpen(false);
+                    }}
+                    aria-selected={recoveryType === "all"}
+                    data-testid="recovery-type-option-all"
+                    className={`w-full flex items-center justify-between gap-2 px-3 py-2 text-sm text-left hover:bg-ink-50 ${
+                      recoveryType === "all" ? "bg-accent-50 text-accent-700" : "text-ink-700"
+                    }`}
+                  >
+                    <span className="flex items-center gap-2">
+                      {recoveryType === "all" ? (
+                        <Check className="w-3 h-3" />
+                      ) : (
+                        <span className="w-3 h-3 inline-block" />
+                      )}
+                      All recovery types
+                    </span>
+                    <span className="text-[10px] text-ink-500">{data.stats.total}</span>
+                  </button>
+                  <div className="border-t border-ink-100" />
+                  {RECOVERY_TYPE_OPTIONS.map((opt) => {
+                    const Icon = opt.icon;
+                    const count = recoveryTypeCount(opt.value, {
+                      recentlyGrantedCount,
+                      cadastreLagCount,
+                      addressMismatchCount,
+                      titleMismatchCount,
+                      concessionReviewCount,
+                      strataConversionCount,
+                    });
+                    const active = recoveryType === opt.value;
+                    return (
+                      <button
+                        key={opt.value}
+                        role="option"
+                        type="button"
+                        onClick={() => {
+                          setRecoveryType(opt.value);
+                          setRecoveryDropdownOpen(false);
+                        }}
+                        aria-selected={active}
+                        data-testid={`recovery-type-option-${opt.value}`}
+                        title={opt.description}
+                        className={`w-full flex items-center justify-between gap-2 px-3 py-2 text-sm text-left hover:bg-ink-50 ${
+                          active ? "bg-accent-50 text-accent-700" : "text-ink-700"
+                        }`}
+                      >
+                        <span className="flex items-center gap-2">
+                          {active ? (
+                            <Check className="w-3 h-3" />
+                          ) : (
+                            <Icon className="w-3 h-3 text-ink-400" />
+                          )}
+                          {opt.label}
+                        </span>
+                        <span className="text-[10px] text-ink-500">{count}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Candidates */}
@@ -518,7 +728,7 @@ function RecoveryPageInner() {
                 key={c.assessmentNumber}
                 candidate={c}
                 rank={i + 1}
-                showStrataConvert={strataConversionOnly}
+                showStrataConvert={recoveryType === "strata_conversion"}
               />
             ))}
             {filtered.length === 0 && (
