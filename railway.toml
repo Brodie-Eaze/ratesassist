@@ -1,0 +1,20 @@
+## Railway deployment config for RatesAssist
+##
+## Railway is the production target for the pilot (rather than Vercel) because
+## it supports long-lived child processes — the MCP stdio transport runs
+## end-to-end, not the inproc fallback. AU region available via `railway region`.
+
+[build]
+builder = "NIXPACKS"
+buildCommand = """
+npm ci --include=dev && \
+npm run build --workspace=@ratesassist/adapter-demo && \
+npm run build --workspace=apps/web
+"""
+
+[deploy]
+startCommand = "cd apps/web && npx next start -p $PORT"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
+healthcheckPath = "/api/health"
+healthcheckTimeout = 30
