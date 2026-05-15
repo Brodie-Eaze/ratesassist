@@ -6,11 +6,9 @@
 
 [build]
 builder = "NIXPACKS"
-buildCommand = """
-npm ci --include=dev && \
-npm run build --workspace=@ratesassist/adapter-demo && \
-npm run build --workspace=apps/web
-"""
+# Nixpacks already runs `npm ci` in its install phase; we only need to
+# build adapter-demo (for the MCP stdio bundle) + apps/web (Next.js).
+buildCommand = "npm run build --workspace=@ratesassist/adapter-demo && npm run build --workspace=apps/web"
 
 [deploy]
 startCommand = "cd apps/web && npx next start -p $PORT"
