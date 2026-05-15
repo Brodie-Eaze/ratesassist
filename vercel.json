@@ -2,9 +2,14 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
   "regions": ["syd1"],
-  "buildCommand": "npm run build --workspace=@ratesassist/contract --if-present && npm run build --workspace=@ratesassist/identity --if-present && npm run build --workspace=@ratesassist/recovery-engine --if-present && npm run build --workspace=@ratesassist/spatial --if-present && npm run build --workspace=@ratesassist/adapter-demo && npm run build --workspace=apps/web",
   "installCommand": "npm install",
+  "buildCommand": "npm run build --workspace=@ratesassist/contract --if-present && npm run build --workspace=@ratesassist/identity --if-present && npm run build --workspace=@ratesassist/recovery-engine --if-present && npm run build --workspace=@ratesassist/spatial --if-present && npm run build --workspace=@ratesassist/adapter-demo && npm run build --workspace=apps/web",
   "outputDirectory": "apps/web/.next",
+  "functions": {
+    "apps/web/app/**/*.{ts,tsx}": {
+      "runtime": "nodejs20.x"
+    }
+  },
   "build": {
     "env": {
       "RA_TOOL_TRANSPORT": "inproc"

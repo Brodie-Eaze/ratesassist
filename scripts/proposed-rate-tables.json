@@ -1,0 +1,545 @@
+{
+  "runAt": "2026-05-15T08:32:40.437Z",
+  "councils": [
+    {
+      "code": "KAL",
+      "sourceUrl": "https://www.ckb.wa.gov.au/Profiles/ckb/Assets/ClientData/2025-26-Statutory-Budget.pdf",
+      "status": "fetched",
+      "httpStatus": 200,
+      "before": {
+        "councilCode": "KAL",
+        "financialYear": "2025-26",
+        "effectiveFrom": "2025-07-01",
+        "effectiveTo": "2026-06-30",
+        "lines": [
+          {
+            "landUse": "Residential",
+            "rateInDollar": 0.053716,
+            "minimumPayment": 1169,
+            "basis": "GRV"
+          },
+          {
+            "landUse": "Commercial",
+            "rateInDollar": 0.080987,
+            "minimumPayment": 1169,
+            "basis": "GRV"
+          },
+          {
+            "landUse": "Industrial",
+            "rateInDollar": 0.080987,
+            "minimumPayment": 1169,
+            "basis": "GRV"
+          },
+          {
+            "landUse": "Vacant",
+            "rateInDollar": 0.080987,
+            "minimumPayment": 1169,
+            "basis": "GRV"
+          },
+          {
+            "landUse": "Rural",
+            "rateInDollar": 0.096895,
+            "minimumPayment": 364,
+            "basis": "UV"
+          },
+          {
+            "landUse": "Pastoral",
+            "rateInDollar": 0.096895,
+            "minimumPayment": 364,
+            "basis": "UV"
+          },
+          {
+            "landUse": "Mining",
+            "rateInDollar": 0.193584,
+            "minimumPayment": 455,
+            "basis": "UV"
+          },
+          {
+            "landUse": "MiningOther",
+            "rateInDollar": 0.193584,
+            "minimumPayment": 455,
+            "basis": "UV"
+          }
+        ],
+        "sourceUrl": "https://www.ckb.wa.gov.au/Profiles/ckb/Assets/ClientData/2025-26-Statutory-Budget.pdf",
+        "retrievedAt": "2026-05-14",
+        "verified": true,
+        "carriedForward": false,
+        "note": "Verified from CKB 2025/26 Statutory Budget Note 2(a). KAL publishes six categories; Industrial/Vacant are rated under Commercial/Industrial and MiningOther under UV Mining Operations per CKB's differential rating prose."
+      },
+      "afterSummary": {
+        "linesByCategory": {
+          "GRV Residential": {
+            "category": "GRV Residential",
+            "rateInDollar": 0.053716,
+            "minimumPayment": null,
+            "basis": "GRV"
+          },
+          "GRV Mining": {
+            "category": "GRV Mining",
+            "rateInDollar": 0.107432,
+            "minimumPayment": null,
+            "basis": "GRV"
+          },
+          "GRV Commercial / Industrial": {
+            "category": "GRV Commercial / Industrial",
+            "rateInDollar": 0.080987,
+            "minimumPayment": null,
+            "basis": "GRV"
+          },
+          "GRV Accommodation": {
+            "category": "GRV Accommodation",
+            "rateInDollar": 0.096069,
+            "minimumPayment": null,
+            "basis": "GRV"
+          },
+          "UV Mining Operations": {
+            "category": "UV Mining Operations",
+            "rateInDollar": 0.193584,
+            "minimumPayment": null,
+            "basis": "UV"
+          },
+          "UV Pastoral / Other": {
+            "category": "UV Pastoral / Other",
+            "rateInDollar": 0.096895,
+            "minimumPayment": null,
+            "basis": "UV"
+          }
+        }
+      },
+      "diffs": [
+        {
+          "category": "Mining",
+          "field": "rateInDollar",
+          "before": 0.193584,
+          "after": 0.107432
+        }
+      ]
+    },
+    {
+      "code": "ESH",
+      "sourceUrl": "https://www.eastpilbara.wa.gov.au/documents/1439/202526-statutory-budget",
+      "status": "parse_failed",
+      "httpStatus": 200,
+      "before": {
+        "councilCode": "ESH",
+        "financialYear": "2025-26",
+        "effectiveFrom": "2025-07-01",
+        "effectiveTo": "2026-06-30",
+        "lines": [
+          {
+            "landUse": "Residential",
+            "rateInDollar": 0.0675,
+            "minimumPayment": 1185,
+            "basis": "GRV"
+          },
+          {
+            "landUse": "Commercial",
+            "rateInDollar": 0.0675,
+            "minimumPayment": 1400,
+            "basis": "GRV"
+          },
+          {
+            "landUse": "Industrial",
+            "rateInDollar": 0.0675,
+            "minimumPayment": 1400,
+            "basis": "GRV"
+          },
+          {
+            "landUse": "Vacant",
+            "rateInDollar": 0.0675,
+            "minimumPayment": 1400,
+            "basis": "GRV"
+          },
+          {
+            "landUse": "Rural",
+            "rateInDollar": 0.209,
+            "minimumPayment": 1400,
+            "basis": "UV"
+          },
+          {
+            "landUse": "Pastoral",
+            "rateInDollar": 0.209,
+            "minimumPayment": 1400,
+            "basis": "UV"
+          },
+          {
+            "landUse": "Mining",
+            "rateInDollar": 0.379,
+            "minimumPayment": 1400,
+            "basis": "UV"
+          },
+          {
+            "landUse": "MiningOther",
+            "rateInDollar": 0.3036,
+            "minimumPayment": 915,
+            "basis": "UV"
+          }
+        ],
+        "sourceUrl": "https://www.eastpilbara.wa.gov.au/documents/1439/202526-statutory-budget",
+        "retrievedAt": "2026-05-14",
+        "verified": true,
+        "carriedForward": false,
+        "note": "Verified from ESH 2025/26 Statutory Budget Note 2(a). GRV Non-Residential covers commercial, industrial and vacant non-residential in ESH; UV Pastoral covers rural land use."
+      },
+      "afterSummary": {
+        "linesByCategory": {}
+      },
+      "diffs": []
+    },
+    {
+      "code": "ASH",
+      "sourceUrl": "https://www.ashburton.wa.gov.au/documents/410/2025-2026-annual-budget",
+      "status": "fetched",
+      "httpStatus": 200,
+      "before": {
+        "councilCode": "ASH",
+        "financialYear": "2025-26",
+        "effectiveFrom": "2025-07-01",
+        "effectiveTo": "2026-06-30",
+        "lines": [
+          {
+            "landUse": "Residential",
+            "rateInDollar": 0.06771,
+            "minimumPayment": 1390,
+            "basis": "GRV"
+          },
+          {
+            "landUse": "Commercial",
+            "rateInDollar": 0.08661,
+            "minimumPayment": 1390,
+            "basis": "GRV"
+          },
+          {
+            "landUse": "Industrial",
+            "rateInDollar": 0.08661,
+            "minimumPayment": 1390,
+            "basis": "GRV"
+          },
+          {
+            "landUse": "Vacant",
+            "rateInDollar": 0.08661,
+            "minimumPayment": 1390,
+            "basis": "GRV"
+          },
+          {
+            "landUse": "Rural",
+            "rateInDollar": 0.1925,
+            "minimumPayment": 1390,
+            "basis": "UV"
+          },
+          {
+            "landUse": "Pastoral",
+            "rateInDollar": 0.1925,
+            "minimumPayment": 1390,
+            "basis": "UV"
+          },
+          {
+            "landUse": "Mining",
+            "rateInDollar": 0.3795,
+            "minimumPayment": 1390,
+            "basis": "UV"
+          },
+          {
+            "landUse": "MiningOther",
+            "rateInDollar": 0.3795,
+            "minimumPayment": 1390,
+            "basis": "UV"
+          }
+        ],
+        "sourceUrl": "https://www.ashburton.wa.gov.au/documents/410/2025-2026-annual-budget",
+        "retrievedAt": "2026-05-14",
+        "verified": true,
+        "carriedForward": false,
+        "note": "Verified from Shire of Ashburton 2025-2026 Annual Budget Note 2(a). UV Non-Pastoral is the single mining/refining UV category; vacant non-residential parcels are rated under GRV Commercial/Industrial."
+      },
+      "afterSummary": {
+        "linesByCategory": {
+          "Residential": {
+            "category": "Residential",
+            "rateInDollar": 0.06771,
+            "minimumPayment": null,
+            "basis": "GRV"
+          },
+          "Commercial / Industrial": {
+            "category": "Commercial / Industrial",
+            "rateInDollar": 0.08661,
+            "minimumPayment": null,
+            "basis": "GRV"
+          },
+          "Pastoral": {
+            "category": "Pastoral",
+            "rateInDollar": 0.1925,
+            "minimumPayment": null,
+            "basis": "UV"
+          }
+        }
+      },
+      "diffs": []
+    },
+    {
+      "code": "TPS",
+      "sourceUrl": "https://www.ashburton.wa.gov.au/documents/410/2025-2026-annual-budget",
+      "status": "fetched",
+      "httpStatus": 200,
+      "before": {
+        "councilCode": "TPS",
+        "financialYear": "2025-26",
+        "effectiveFrom": "2025-07-01",
+        "effectiveTo": "2026-06-30",
+        "lines": [
+          {
+            "landUse": "Residential",
+            "rateInDollar": 0.06771,
+            "minimumPayment": 1390,
+            "basis": "GRV"
+          },
+          {
+            "landUse": "Commercial",
+            "rateInDollar": 0.08661,
+            "minimumPayment": 1390,
+            "basis": "GRV"
+          },
+          {
+            "landUse": "Industrial",
+            "rateInDollar": 0.08661,
+            "minimumPayment": 1390,
+            "basis": "GRV"
+          },
+          {
+            "landUse": "Vacant",
+            "rateInDollar": 0.08661,
+            "minimumPayment": 1390,
+            "basis": "GRV"
+          },
+          {
+            "landUse": "Rural",
+            "rateInDollar": 0.1925,
+            "minimumPayment": 1390,
+            "basis": "UV"
+          },
+          {
+            "landUse": "Pastoral",
+            "rateInDollar": 0.1925,
+            "minimumPayment": 1390,
+            "basis": "UV"
+          },
+          {
+            "landUse": "Mining",
+            "rateInDollar": 0.3795,
+            "minimumPayment": 1390,
+            "basis": "UV"
+          },
+          {
+            "landUse": "MiningOther",
+            "rateInDollar": 0.3795,
+            "minimumPayment": 1390,
+            "basis": "UV"
+          }
+        ],
+        "sourceUrl": "https://www.ashburton.wa.gov.au/documents/410/2025-2026-annual-budget",
+        "retrievedAt": "2026-05-14",
+        "verified": true,
+        "carriedForward": false,
+        "note": "TPS is a deprecated alias — Tom Price is a town within the Shire of Ashburton. Rates mirror ASH 2025-26 schedule. New adapter wiring should use ASH directly."
+      },
+      "afterSummary": {
+        "linesByCategory": {
+          "Residential": {
+            "category": "Residential",
+            "rateInDollar": 0.06771,
+            "minimumPayment": null,
+            "basis": "GRV"
+          },
+          "Commercial / Industrial": {
+            "category": "Commercial / Industrial",
+            "rateInDollar": 0.08661,
+            "minimumPayment": null,
+            "basis": "GRV"
+          },
+          "Pastoral": {
+            "category": "Pastoral",
+            "rateInDollar": 0.1925,
+            "minimumPayment": null,
+            "basis": "UV"
+          }
+        }
+      },
+      "diffs": []
+    },
+    {
+      "code": "MEK",
+      "sourceUrl": "https://www.meekashire.wa.gov.au/documents/594/2025-26-statutory-budget",
+      "status": "fetched",
+      "httpStatus": 200,
+      "before": {
+        "councilCode": "MEK",
+        "financialYear": "2025-26",
+        "effectiveFrom": "2025-07-01",
+        "effectiveTo": "2026-06-30",
+        "lines": [
+          {
+            "landUse": "Residential",
+            "rateInDollar": 0.098325,
+            "minimumPayment": 414,
+            "basis": "GRV"
+          },
+          {
+            "landUse": "Commercial",
+            "rateInDollar": 0.098325,
+            "minimumPayment": 414,
+            "basis": "GRV"
+          },
+          {
+            "landUse": "Industrial",
+            "rateInDollar": 0.098325,
+            "minimumPayment": 414,
+            "basis": "GRV"
+          },
+          {
+            "landUse": "Vacant",
+            "rateInDollar": 0.098325,
+            "minimumPayment": 414,
+            "basis": "GRV"
+          },
+          {
+            "landUse": "Rural",
+            "rateInDollar": 0.087975,
+            "minimumPayment": 518,
+            "basis": "UV"
+          },
+          {
+            "landUse": "Pastoral",
+            "rateInDollar": 0.087975,
+            "minimumPayment": 518,
+            "basis": "UV"
+          },
+          {
+            "landUse": "Mining",
+            "rateInDollar": 0.25,
+            "minimumPayment": 650,
+            "basis": "UV"
+          },
+          {
+            "landUse": "MiningOther",
+            "rateInDollar": 0.25,
+            "minimumPayment": 650,
+            "basis": "UV"
+          }
+        ],
+        "sourceUrl": "https://www.meekashire.wa.gov.au/documents/594/2025-26-statutory-budget",
+        "retrievedAt": "2026-05-14",
+        "verified": true,
+        "carriedForward": false,
+        "note": "Verified from Shire of Meekatharra 2025-26 Statutory Budget Notes (Objects and Reasons for Differential Rating). MEK applies a single GRV rate to all townsite uses (residential/commercial/industrial/vacant) and a single UV Non-Pastoral rate to all mining-related land."
+      },
+      "afterSummary": {
+        "linesByCategory": {
+          "GRV": {
+            "category": "GRV",
+            "rateInDollar": 0.098325,
+            "minimumPayment": null,
+            "basis": "GRV"
+          }
+        }
+      },
+      "diffs": []
+    },
+    {
+      "code": "SST",
+      "sourceUrl": "https://www.sandstone.wa.gov.au/repository/libraries/id:2pgaygvvh17q9smi2m5z/hierarchy/Documents/Council%20Documents/Rating%20Strategy%20Objectives%20%20Reasons%202025-2026.pdf",
+      "status": "fetched",
+      "httpStatus": 200,
+      "before": {
+        "councilCode": "SST",
+        "financialYear": "2025-26",
+        "effectiveFrom": "2025-07-01",
+        "effectiveTo": "2026-06-30",
+        "lines": [
+          {
+            "landUse": "Residential",
+            "rateInDollar": 0.072852,
+            "minimumPayment": 200,
+            "basis": "GRV"
+          },
+          {
+            "landUse": "Commercial",
+            "rateInDollar": 0.072852,
+            "minimumPayment": 200,
+            "basis": "GRV"
+          },
+          {
+            "landUse": "Industrial",
+            "rateInDollar": 0.072852,
+            "minimumPayment": 200,
+            "basis": "GRV"
+          },
+          {
+            "landUse": "Vacant",
+            "rateInDollar": 0.072852,
+            "minimumPayment": 200,
+            "basis": "GRV"
+          },
+          {
+            "landUse": "Rural",
+            "rateInDollar": 0.06724,
+            "minimumPayment": 400,
+            "basis": "UV"
+          },
+          {
+            "landUse": "Pastoral",
+            "rateInDollar": 0.06724,
+            "minimumPayment": 400,
+            "basis": "UV"
+          },
+          {
+            "landUse": "Mining",
+            "rateInDollar": 0.29682,
+            "minimumPayment": 400,
+            "basis": "UV"
+          },
+          {
+            "landUse": "MiningOther",
+            "rateInDollar": 0.29682,
+            "minimumPayment": 400,
+            "basis": "UV"
+          }
+        ],
+        "sourceUrl": "https://www.sandstone.wa.gov.au/repository/libraries/id:2pgaygvvh17q9smi2m5z/hierarchy/Documents/Council%20Documents/Rating%20Strategy%20Objectives%20%20Reasons%202025-2026.pdf",
+        "retrievedAt": "2026-05-14",
+        "verified": true,
+        "carriedForward": false,
+        "note": "Verified from Shire of Sandstone Rating Strategy Objectives & Reasons 2025-2026 (4 published categories). Schema-required Commercial/Industrial/Vacant fall under GRV Townsite; MiningOther under UV Mining per the Rating Strategy prose."
+      },
+      "afterSummary": {
+        "linesByCategory": {
+          "GRV be increased to": {
+            "category": "GRV be increased to",
+            "rateInDollar": 0.072852,
+            "minimumPayment": null,
+            "basis": "GRV"
+          },
+          "GRV properties be": {
+            "category": "GRV properties be",
+            "rateInDollar": 0.41062,
+            "minimumPayment": null,
+            "basis": "GRV"
+          },
+          "UV be": {
+            "category": "UV be",
+            "rateInDollar": 0.06724000000000001,
+            "minimumPayment": null,
+            "basis": "UV"
+          },
+          "UV for": {
+            "category": "UV for",
+            "rateInDollar": 0.29682,
+            "minimumPayment": null,
+            "basis": "UV"
+          }
+        }
+      },
+      "diffs": []
+    }
+  ]
+}

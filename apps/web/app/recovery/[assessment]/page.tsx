@@ -5,7 +5,7 @@ import { PropertyMapClientShell } from "./_PropertyMapShell";
 import { buildEvidencePack } from "@ratesassist/recovery-engine";
 import { getProperty } from "@/lib/data";
 import { getEvaluationContext } from "@/lib/clients";
-import { ArrowLeft, Download } from "lucide-react";
+import { ArrowLeft, AlertTriangle, CheckCircle2, Download } from "lucide-react";
 import { formatAud } from "@/lib/utils";
 
 /**
@@ -195,15 +195,16 @@ export default async function EvidencePackPage({
                       </div>
                       {pack.candidate.rateSourceUrl && (() => {
                         const safe = safeRateSourceUrl(pack.candidate.rateSourceUrl);
+                        const verified = pack.candidate.rateTableVerified === true;
                         return (
-                          <div className="text-ink-500">
-                            Source:{" "}
+                          <div className="text-ink-500 flex flex-wrap items-center gap-2">
+                            <span>Source:</span>
                             {safe ? (
                               <a
                                 href={safe}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="text-accent-700 hover:underline"
+                                className="text-accent-700 hover:underline break-all"
                               >
                                 {safe}
                               </a>
@@ -211,11 +212,23 @@ export default async function EvidencePackPage({
                               <span className="text-ink-500">
                                 [URL withheld — invalid]
                               </span>
-                            )}{" "}
-                            {pack.candidate.rateTableVerified === true ? (
-                              <span className="text-success-700">[verified]</span>
+                            )}
+                            {verified ? (
+                              <span
+                                className="inline-flex items-center gap-1 rounded-full bg-success-50 border border-success-500 text-success-700 px-2 py-0.5 text-[11px] font-medium"
+                                title="Rate table verified against the council's published 2025-26 budget."
+                              >
+                                <CheckCircle2 className="w-3 h-3" />
+                                Verified 2025-26
+                              </span>
                             ) : (
-                              <span className="text-warn-700">[unverified — see caveats]</span>
+                              <span
+                                className="inline-flex items-center gap-1 rounded-full bg-warn-50 border border-warn-500 text-warn-700 px-2 py-0.5 text-[11px] font-medium"
+                                title="Rate table carried forward from a previous FY or sourced from a regional benchmark — see caveats."
+                              >
+                                <AlertTriangle className="w-3 h-3" />
+                                Carried-forward
+                              </span>
                             )}
                           </div>
                         );

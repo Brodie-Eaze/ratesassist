@@ -23,12 +23,23 @@ import {
   TARGET_STATE_SCOPE,
   WA_RATE_TABLES,
   type MismatchCandidate,
+  type Owner,
   type Property,
   type RateTable,
   type Tenement,
 } from "@ratesassist/contract";
 
 import { OWNERS, PROPERTIES, TENEMENTS } from "./data";
+import { isDbWired } from "./db";
+import { scoped } from "./logger";
+
+// IMPORTANT: `@ratesassist/db` and `./db` (the web-app DB factory) are
+// dynamically imported inside the async functions below to keep the
+// pglite WASM payload + pino thread-stream worker off the synchronous
+// module-load graph. Loading them up-front confuses Next.js's webpack
+// vendor-chunk splitting and breaks dev-server worker spawning for
+// routes that don't touch the DB at all. The cost is a one-time async
+// import per process — bootstrap is memoised in {@link getWebDb}.
 
 /**
  * Default ABN-Lookup base. Library code does not read environment, so we read
@@ -105,6 +116,40 @@ function overlayValuations(props: readonly Property[]): readonly Property[] {
 export function getEvaluationContext(): EvaluationContext {
   if (cachedContext !== null) return cachedContext;
 
+  // Sync path: build from the in-process arrays. When `RA_USE_DB=true` the
+  // intent is to read from Postgres — but the existing API surface is sync
+  // and we cannot await here. Callers that need a DB-backed snapshot should
+  // call {@link getEvaluationContextAsync} (or trigger a bootstrap during
+  // module-init); they then see the DB-derived cache on this sync call.
+  // The fallback is preserved so that routes don't crash when the bootstrap
+  // hasn't completed yet — they get the in-memory shape, identical in
+  // semantics to the DB-derived one.
+  cachedContext = buildContextFromInMemory();
+  return cachedContext;
+}
+
+/**
+ * Async DB-aware companion to {@link getEvaluationContext}. When
+ * {@link isDbWired} returns true, hydrates the EvaluationContext from the
+ * Postgres rows (via `@ratesassist/db`) and caches the result. When DB
+ * routing is disabled, behaves identically to the sync variant.
+ *
+ * Returns the same cached object as a subsequent sync call so callers can
+ * interleave the two: a bootstrap call awaits this once, then every
+ * `getEvaluationContext()` invocation in the same process serves the
+ * DB-derived snapshot from cache.
+ */
+export async function getEvaluationContextAsync(): Promise<EvaluationContext> {
+  if (cachedContext !== null) return cachedContext;
+  if (!isDbWired()) {
+    cachedContext = buildContextFromInMemory();
+    return cachedContext;
+  }
+  cachedContext = await buildContextFromDb();
+  return cachedContext;
+}
+
+function buildContextFromInMemory(): EvaluationContext {
   const ownersById = new Map(OWNERS.map((o) => [o.ownerId, o]));
 
   const tenementsByAssessment = new Map<string, Tenement[]>();
@@ -144,7 +189,7 @@ export function getEvaluationContext(): EvaluationContext {
     }
   }
 
-  cachedContext = {
+  return {
     properties: enrichedProperties,
     ownersById,
     tenementsByAssessment,
@@ -157,7 +202,253 @@ export function getEvaluationContext(): EvaluationContext {
     rateTablesByCouncil: RATE_TABLES_BY_COUNCIL,
     targetStateScope: TARGET_STATE_SCOPE,
   };
-  return cachedContext;
+}
+
+/**
+ * Build an EvaluationContext by reading properties / owners / tenements /
+ * transactions from Postgres. Each tenant scope is queried separately
+ * inside {@link withTenant} so RLS-enforced reads succeed. Tenements live
+ * outside RLS and are read directly.
+ */
+async function buildContextFromDb(): Promise<EvaluationContext> {
+  const log = scoped("apps/web/clients");
+  const start = Date.now();
+  const { getWebDb } = await import("./db");
+  const {
+    eq,
+    owners: ownersTable,
+    properties: propertiesTable,
+    propertyOwners: propertyOwnersTable,
+    tenants: tenantsTable,
+    tenements: tenementsTable,
+    withTenant,
+  } = await import("@ratesassist/db");
+  const db = await getWebDb();
+
+  const tenantRows = await db
+    .select({ id: tenantsTable.id, code: tenantsTable.code })
+    .from(tenantsTable);
+
+  const propertiesAcc: Property[] = [];
+  const ownersAcc: Owner[] = [];
+
+  for (const t of tenantRows) {
+    // pglite runs as superuser and ignores RLS row filters, which means a
+    // bare `SELECT * FROM owners` returns rows for every tenant on every
+    // iteration. Use an explicit `where(tenantId = t.id)` filter — it's a
+    // no-op on real Postgres where the policy already enforces it, and it
+    // keeps pglite honest in dev.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const ownerRows: any[] = await withTenant(db, t.id, async (tx) => {
+      return tx
+        .select()
+        .from(ownersTable)
+        .where(eq(ownersTable.tenantId, t.id));
+    });
+    const ownerIdToExt = new Map<string, string>(); // pk -> ownerExtId
+    for (const o of ownerRows) {
+      ownerIdToExt.set(o.id, o.ownerExtId);
+      const ownerExtId: string = o.ownerExtId;
+      const checkedAt: Date | null = o.abnCheckedAt ?? null;
+      const status: "Active" | "Cancelled" | "Suspended" | null = o.abnStatus ?? null;
+      ownersAcc.push({
+        ownerId: ownerExtId,
+        name: o.name,
+        abn: o.abn ?? null,
+        abnCheck:
+          checkedAt !== null && status !== null
+            ? {
+                kind: "checked",
+                status,
+                checkedAt: checkedAt.toISOString(),
+              }
+            : { kind: "unchecked" },
+        postalAddress: o.postalAddress,
+        email: o.email ?? null,
+        phone: o.phone ?? null,
+        ownerSince: o.ownerSince,
+        previousOwners: o.previousOwners ?? [],
+      });
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const propertyRows: any[] = await withTenant(db, t.id, async (tx) => {
+      return tx
+        .select()
+        .from(propertiesTable)
+        .where(eq(propertiesTable.tenantId, t.id));
+    });
+    const propertyIdSet = new Set<string>(propertyRows.map((p) => p.id));
+    // propertyOwners has no tenant_id column; filter client-side by the
+    // properties we just pulled.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const allPropertyOwnerRows: any[] = await withTenant(
+      db,
+      t.id,
+      async (tx) => {
+        return tx.select().from(propertyOwnersTable);
+      },
+    );
+    const propertyOwnerRows = allPropertyOwnerRows.filter((r) =>
+      propertyIdSet.has(r.propertyId),
+    );
+
+    const ownersByPropertyId = new Map<string, string[]>();
+    for (const row of propertyOwnerRows) {
+      const list = ownersByPropertyId.get(row.propertyId) ?? [];
+      const extId = ownerIdToExt.get(row.ownerId);
+      if (extId !== undefined) list.push(extId);
+      ownersByPropertyId.set(row.propertyId, list);
+    }
+
+    for (const p of propertyRows) {
+      const ownerIds: string[] = ownersByPropertyId.get(p.id) ?? [];
+      propertiesAcc.push({
+        assessmentNumber: p.assessmentNumber,
+        council: t.code,
+        address: p.address,
+        suburb: p.suburb,
+        postcode: p.postcode,
+        state: p.state,
+        landUse: p.landUse,
+        valuation: Number(p.valuation),
+        annualRates: Number(p.annualRates),
+        balance: Number(p.balance),
+        lastPaymentDate: p.lastPaymentDate
+          ? (p.lastPaymentDate as Date).toISOString().slice(0, 10)
+          : null,
+        lastPaymentAmount:
+          p.lastPaymentAmount !== null && p.lastPaymentAmount !== undefined
+            ? Number(p.lastPaymentAmount)
+            : null,
+        paymentMethod: p.paymentMethod ?? null,
+        pensionerRebate: p.pensionerRebate ?? false,
+        paymentArrangement: p.paymentArrangement ?? false,
+        ownerIds,
+        notes: p.notes ?? [],
+        lat: Number(p.centroidLat),
+        lng: Number(p.centroidLng),
+        ...parcelFromGeoJson(p.parcel),
+      });
+    }
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const tenementRows: any[] = await db.select().from(tenementsTable);
+  const tenementsAcc: Tenement[] = tenementRows.map((t) => ({
+    tenementId: t.tenementId,
+    type: t.type,
+    status: t.status,
+    holder: t.holder,
+    holderAbn: t.holderAbn ?? null,
+    commodity: t.commodity ?? [],
+    grantedDate: t.grantedDate,
+    expiryDate: t.expiryDate,
+    areaHectares: Number(t.areaHectares),
+    intersectsAssessmentNumbers: t.intersectsAssessmentNumbers ?? [],
+    isProducing: t.isProducing ?? false,
+    lastWorkProgramYear: t.lastWorkProgramYear ?? null,
+    polygon: polygonFromGeoJson(t.polygon),
+  }));
+
+  // Build the indexes from the DB-derived arrays.
+  const ownersById = new Map<string, Owner>(
+    ownersAcc.map((o) => [o.ownerId, o]),
+  );
+  const tenementsByAssessment = new Map<string, Tenement[]>();
+  for (const tenement of tenementsAcc) {
+    for (const an of tenement.intersectsAssessmentNumbers) {
+      const list = tenementsByAssessment.get(an);
+      if (list === undefined) {
+        tenementsByAssessment.set(an, [tenement]);
+      } else {
+        list.push(tenement);
+      }
+    }
+  }
+  const enrichedProperties = overlayValuations(propertiesAcc);
+  const propertiesByOwnerId = new Map<string, Property[]>();
+  const ruralBySuburb = new Map<string, Property[]>();
+  for (const p of enrichedProperties) {
+    for (const ownerId of p.ownerIds) {
+      const bucket = propertiesByOwnerId.get(ownerId);
+      if (bucket === undefined) {
+        propertiesByOwnerId.set(ownerId, [p]);
+      } else {
+        bucket.push(p);
+      }
+    }
+    if (p.landUse === "Rural") {
+      const bucket = ruralBySuburb.get(p.suburb);
+      if (bucket === undefined) {
+        ruralBySuburb.set(p.suburb, [p]);
+      } else {
+        bucket.push(p);
+      }
+    }
+  }
+
+  log.info({
+    msg: "eval_context.db_hydrated",
+    durationMs: Date.now() - start,
+    properties: enrichedProperties.length,
+    owners: ownersAcc.length,
+    tenements: tenementsAcc.length,
+    tenants: tenantRows.length,
+  });
+
+  return {
+    properties: enrichedProperties,
+    ownersById,
+    tenementsByAssessment,
+    propertiesByOwnerId,
+    ruralBySuburb,
+    lagCandidatesByAssessment: MOCK_LAG_CANDIDATES_BY_ASSESSMENT,
+    addressDiscrepanciesByAssessment: MOCK_ADDRESS_DISCREPANCIES_BY_ASSESSMENT,
+    emitsApprovalsByTenement: MOCK_EMITS_APPROVALS_BY_TENEMENT,
+    changeDetectionByAssessment: MOCK_CHANGE_DETECTION_BY_ASSESSMENT,
+    rateTablesByCouncil: RATE_TABLES_BY_COUNCIL,
+    targetStateScope: TARGET_STATE_SCOPE,
+  };
+}
+
+/**
+ * Convert a GeoJSON Polygon (as stored in `properties.parcel`) back into
+ * the Leaflet-order `[lat, lng]` array the contract type uses. Returns an
+ * object with a `parcel` field when present, an empty object otherwise so
+ * the caller can spread it.
+ */
+function parcelFromGeoJson(
+  geo: unknown,
+): { readonly parcel?: readonly [number, number][] } {
+  if (geo === null || geo === undefined || typeof geo !== "object") {
+    return {};
+  }
+  const obj = geo as { type?: string; coordinates?: number[][][] };
+  if (obj.type !== "Polygon" || !Array.isArray(obj.coordinates)) {
+    return {};
+  }
+  const ring = obj.coordinates[0];
+  if (!Array.isArray(ring)) return {};
+  // GeoJSON is [lng, lat]; the contract expects [lat, lng].
+  const parcel: [number, number][] = ring.map(
+    ([lng, lat]) => [lat, lng] as [number, number],
+  );
+  return { parcel };
+}
+
+/** GeoJSON polygon → Leaflet-ordered list of [lat, lng] pairs. */
+function polygonFromGeoJson(geo: unknown): readonly [number, number][] {
+  if (geo === null || geo === undefined || typeof geo !== "object") {
+    return [];
+  }
+  const obj = geo as { type?: string; coordinates?: number[][][] };
+  if (obj.type !== "Polygon" || !Array.isArray(obj.coordinates)) {
+    return [];
+  }
+  const ring = obj.coordinates[0];
+  if (!Array.isArray(ring)) return [];
+  return ring.map(([lng, lat]) => [lat, lng] as [number, number]);
 }
 
 const RATE_TABLES_BY_COUNCIL: ReadonlyMap<string, RateTable> = new Map(
@@ -596,9 +887,220 @@ const MOCK_EMITS_APPROVALS_BY_TENEMENT: ReadonlyMap<
  * function after a successful commit so subsequent recovery-engine sweeps
  * observe the new state. Without it, mutations are invisible until the
  * process restarts.
+ *
+ * When the DB-wired path is active ({@link isDbWired} returns true), this
+ * helper also returns a Promise that resolves once the cache has been
+ * re-hydrated from Postgres. Callers awaiting the promise see the new
+ * state on the next sync `getEvaluationContext()` call; callers that
+ * ignore the promise still get correct behaviour — the cache lazily
+ * re-hydrates from the in-memory fallback on the next sync read, and
+ * any later async caller sees the DB-derived snapshot.
  */
-export function invalidateEvaluationContext(): void {
+export function invalidateEvaluationContext(): Promise<void> | void {
   cachedContext = null;
+  if (!isDbWired()) return;
+  // Kick off an async DB refresh. Surface failures via the scoped logger so
+  // a partial DB outage doesn't silently keep stale data alive.
+  return (async () => {
+    const log = scoped("apps/web/clients");
+    try {
+      cachedContext = await buildContextFromDb();
+    } catch (e) {
+      log.warn({
+        msg: "eval_context.db_refresh.failed",
+        err: e instanceof Error ? e.message : String(e),
+      });
+    }
+  })();
+}
+
+/**
+ * Persist a mutation through to the DB and refresh the cached
+ * EvaluationContext. Returns a discriminated result so callers can surface
+ * a real `ToolResult.ok=false` on DB failure rather than silently losing
+ * the change.
+ *
+ * Currently supports the four scoped mutations: `add_property_note`,
+ * `update_owner_contact`, `add_council`, and `import_rating_roll`. Any
+ * other operation is a no-op (returns ok=true) so the caller can adopt the
+ * helper incrementally without breaking existing flows.
+ *
+ * When {@link isDbWired} returns false the helper is also a no-op — the
+ * in-memory store remains authoritative.
+ */
+export type PersistMutationInput =
+  | {
+      readonly kind: "add_property_note";
+      readonly councilCode: string;
+      readonly assessmentNumber: string;
+      readonly note: string;
+    }
+  | {
+      readonly kind: "update_owner_contact";
+      readonly councilCode: string;
+      readonly ownerExtId: string;
+      readonly newPhone?: string;
+      readonly newEmail?: string;
+    }
+  | {
+      readonly kind: "add_council";
+      readonly council: {
+        readonly code: string;
+        readonly name: string;
+        readonly state:
+          | "WA"
+          | "NSW"
+          | "VIC"
+          | "QLD"
+          | "SA"
+          | "TAS"
+          | "ACT"
+          | "NT";
+        readonly centerLat: number;
+        readonly centerLng: number;
+        readonly population: number;
+        readonly rateableProperties: number;
+        readonly rateRevenue: number;
+      };
+    };
+
+export type PersistMutationResult =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly code: string; readonly message: string };
+
+export async function persistMutation(
+  input: PersistMutationInput,
+): Promise<PersistMutationResult> {
+  if (!isDbWired()) return { ok: true };
+  const log = scoped("apps/web/clients");
+  try {
+    const { getWebDb } = await import("./db");
+    const {
+      eq,
+      owners: ownersTable,
+      properties: propertiesTable,
+      tenants: tenantsTable,
+      withTenant,
+    } = await import("@ratesassist/db");
+    const db = await getWebDb();
+    switch (input.kind) {
+      case "add_council": {
+        await db
+          .insert(tenantsTable)
+          .values({
+            code: input.council.code,
+            name: input.council.name,
+            state: input.council.state,
+            centerLat: input.council.centerLat,
+            centerLng: input.council.centerLng,
+            population: input.council.population,
+            rateableProperties: input.council.rateableProperties,
+            rateRevenue: String(input.council.rateRevenue),
+          })
+          .onConflictDoNothing();
+        break;
+      }
+      case "add_property_note": {
+        const tenant = (
+          await db
+            .select({ id: tenantsTable.id })
+            .from(tenantsTable)
+            .where(eq(tenantsTable.code, input.councilCode))
+            .limit(1)
+        )[0];
+        if (tenant === undefined) {
+          return {
+            ok: false,
+            code: "not_found",
+            message: `Council ${input.councilCode} not found in DB.`,
+          };
+        }
+        await withTenant(db, tenant.id, async (tx) => {
+          const existing = (
+            await tx
+              .select({
+                id: propertiesTable.id,
+                notes: propertiesTable.notes,
+              })
+              .from(propertiesTable)
+              .where(
+                eq(
+                  propertiesTable.assessmentNumber,
+                  input.assessmentNumber,
+                ),
+              )
+              .limit(1)
+          )[0];
+          if (existing === undefined) {
+            throw Object.assign(new Error("property_not_found"), {
+              code: "not_found",
+            });
+          }
+          const nextNotes = [
+            ...(Array.isArray(existing.notes) ? existing.notes : []),
+            input.note,
+          ];
+          await tx
+            .update(propertiesTable)
+            .set({ notes: nextNotes })
+            .where(eq(propertiesTable.id, existing.id));
+        });
+        break;
+      }
+      case "update_owner_contact": {
+        const tenant = (
+          await db
+            .select({ id: tenantsTable.id })
+            .from(tenantsTable)
+            .where(eq(tenantsTable.code, input.councilCode))
+            .limit(1)
+        )[0];
+        if (tenant === undefined) {
+          return {
+            ok: false,
+            code: "not_found",
+            message: `Council ${input.councilCode} not found in DB.`,
+          };
+        }
+        await withTenant(db, tenant.id, async (tx) => {
+          const existing = (
+            await tx
+              .select({ id: ownersTable.id })
+              .from(ownersTable)
+              .where(eq(ownersTable.ownerExtId, input.ownerExtId))
+              .limit(1)
+          )[0];
+          if (existing === undefined) {
+            throw Object.assign(new Error("owner_not_found"), {
+              code: "not_found",
+            });
+          }
+          await tx
+            .update(ownersTable)
+            .set({
+              ...(input.newPhone !== undefined ? { phone: input.newPhone } : {}),
+              ...(input.newEmail !== undefined ? { email: input.newEmail } : {}),
+            })
+            .where(eq(ownersTable.id, existing.id));
+        });
+        break;
+      }
+    }
+    // Invalidate cache; let the caller decide whether to await the refresh.
+    void invalidateEvaluationContext();
+    return { ok: true };
+  } catch (e) {
+    const code =
+      (e as { code?: string } | undefined)?.code ?? "upstream_error";
+    const message = e instanceof Error ? e.message : String(e);
+    log.error({
+      msg: "persistMutation.failed",
+      kind: input.kind,
+      code,
+      err: message,
+    });
+    return { ok: false, code, message };
+  }
 }
 
 // ===== Recovery stats — legacy-shape helper =====

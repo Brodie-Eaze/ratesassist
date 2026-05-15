@@ -24,6 +24,8 @@ import { TENEMENTS } from "./tenements.js";
 import { TRANSACTIONS } from "./transactions.js";
 
 export { COUNCILS } from "./councils.js";
+export { OWNERS } from "./owners.js";
+export { PROPERTIES } from "./properties.js";
 export { TENEMENTS } from "./tenements.js";
 export { TRANSACTIONS } from "./transactions.js";
 

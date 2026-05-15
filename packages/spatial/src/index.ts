@@ -82,3 +82,10 @@ export {
   type LagFetchResult,
   type FindLagWindowOptions,
 } from "./lagWindow.js";
+export {
+  fetchDpirdLanduseForParcel,
+  DPIRD_SEED_ENTRIES,
+  type DpirdLanduseResult,
+  type DpirdLanduseFailure,
+  type FetchDpirdLanduseOpts,
+} from "./dpird.js";

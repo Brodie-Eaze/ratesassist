@@ -15,10 +15,13 @@
     "dev:adapter-demo": "npm run dev --workspace=packages/adapter-demo",
     "ship-check": "bash scripts/ship-check.sh",
     "smoke": "tsx scripts/smoke.ts",
+    "perf": "tsx scripts/perf-bench.ts",
+    "rotate-secret": "tsx scripts/rotate-secret.ts",
     "dmirs-pull": "tsx scripts/dmirs-lga-pull.ts",
     "grants-poll": "tsx scripts/grants-poll.ts",
     "lag-window": "tsx scripts/lag-window-pull.ts",
     "import-roll": "tsx scripts/import-rating-roll.ts",
+    "refresh-rate-tables": "tsx scripts/refresh-rate-tables.ts",
     "prepare": "husky"
   },
   "devDependencies": {

@@ -5,11 +5,16 @@
  *
  * Dev mode: a tenant + role picker that POSTs to /api/auth/login. Australian
  * English copy throughout. Production mode: a single "Continue with
- * Microsoft Entra" button that hits /api/auth/sso/start (placeholder, 501
- * until Phase 4).
+ * Microsoft Entra" button that navigates to /api/auth/sso/start, which
+ * begins the WorkOS OAuth dance.
  *
  * The page itself is in the PUBLIC_HTML_PATHS allowlist in middleware.ts,
  * so it renders even without a session.
+ *
+ * Error display: /api/auth/callback redirects here with ?error=callback_failed
+ * (token exchange or state-mismatch) or ?error=sso_not_configured (the env
+ * vars haven't been wired). We surface both to the user with a sensible
+ * fallback message.
  */
 
 import { useState, useEffect, Suspense } from "react";
@@ -18,9 +23,10 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { ALL_ROLES, type Role } from "@ratesassist/contract";
 
 const TENANTS: ReadonlyArray<{ id: string; label: string }> = [
-  { id: "TPS", label: "Town of Port Stephens (TPS) — demo" },
-  { id: "AC", label: "Ashburton Shire (AC)" },
-  { id: "RIC", label: "Town of Tom Price (RIC)" },
+  { id: "TPS", label: "Shire of Tom Price (TPS) — demo" },
+  { id: "ASH", label: "Shire of Ashburton (ASH)" },
+  { id: "ESH", label: "Shire of East Pilbara (ESH)" },
+  { id: "KAL", label: "City of Kalgoorlie-Boulder (KAL)" },
 ];
 
 function isProdBuild(): boolean {
@@ -29,19 +35,31 @@ function isProdBuild(): boolean {
   return process.env.NODE_ENV === "production";
 }
 
+const ERROR_MESSAGES: Readonly<Record<string, string>> = {
+  callback_failed:
+    "We couldn't complete sign-in. Please try again. If the issue continues, contact your council's IT helpdesk.",
+  sso_not_configured:
+    "Single sign-on isn't configured for this environment yet. Contact the RatesAssist operator.",
+};
+
 function LoginForm(): JSX.Element {
   const router = useRouter();
   const params = useSearchParams();
   const next = params?.get("next") ?? "/";
+  const errorCode = params?.get("error") ?? null;
 
   const [tenantId, setTenantId] = useState<string>("TPS");
   const [role, setRole] = useState<Role>("rates_officer");
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(
+    errorCode ? (ERROR_MESSAGES[errorCode] ?? `Sign-in error: ${errorCode}`) : null,
+  );
 
   useEffect(() => {
-    setError(null);
-  }, [tenantId, role]);
+    // Clear inline form-error state when the user changes their picker
+    // selection in dev. The query-string error banner persists.
+    if (!errorCode) setError(null);
+  }, [tenantId, role, errorCode]);
 
   async function onSubmit(e: React.FormEvent): Promise<void> {
     e.preventDefault();
@@ -68,14 +86,28 @@ function LoginForm(): JSX.Element {
   }
 
   if (isProdBuild()) {
+    // The href is a real navigation (not router.push) so the browser
+    // sends the cookie when WorkOS bounces back to /api/auth/callback.
+    const ssoHref =
+      next && next !== "/"
+        ? `/api/auth/sso/start?next=${encodeURIComponent(next)}`
+        : "/api/auth/sso/start";
     return (
       <div className="space-y-4">
         <p className="text-sm text-gray-700">
           RatesAssist uses your council&apos;s single sign-on. Continue with
           your work account to sign in.
         </p>
+        {error && (
+          <div
+            role="alert"
+            className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800"
+          >
+            {error}
+          </div>
+        )}
         <a
-          href="/api/auth/sso/start"
+          href={ssoHref}
           className="inline-flex items-center justify-center w-full rounded-md bg-blue-700 px-4 py-2 text-white font-medium hover:bg-blue-800"
         >
           Continue with Microsoft Entra
@@ -91,7 +123,8 @@ function LoginForm(): JSX.Element {
     <form onSubmit={onSubmit} className="space-y-4">
       <p className="text-sm text-gray-700">
         Development sign-in. Pick a tenant and a role to issue a stub
-        session. SSO is wired up in Phase&nbsp;4.
+        session. In production this screen is replaced by the council&apos;s
+        SSO (WorkOS &rarr; Microsoft Entra).
       </p>
 
       <label className="block text-sm">

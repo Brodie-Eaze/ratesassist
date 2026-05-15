@@ -1,10 +1,44 @@
-// Content-Security-Policy. `'unsafe-eval'` is needed for Next 14 dev/HMR;
-// in prod we should tighten by stripping it from this list. The CSP below
-// is intentionally realistic for the live app surfaces (ArcGIS basemaps,
-// OSM tiles, ABR JSON, SLIP WFS, Anthropic AU).
+/**
+ * Next.js config — security headers, Tailwind/SWC transpilation, and the
+ * NodeNext "*.js → *.ts" webpack alias for workspace packages.
+ *
+ * Content-Security-Policy is computed dynamically based on NODE_ENV:
+ *
+ *   - Production builds DROP `'unsafe-eval'` and `'unsafe-inline'` from
+ *     `script-src`. Next.js 14's prod bundles don't need them; this closes
+ *     the largest XSS-mitigation gap.
+ *   - Development keeps `'unsafe-inline' 'unsafe-eval'` in `script-src` so
+ *     Next's HMR runtime, dev overlay, and inline boot script still work.
+ *   - `style-src` keeps `'unsafe-inline'` in both modes — Tailwind compiles
+ *     to a single stylesheet but a handful of components (PropertyMap,
+ *     StatsCard, MapChrome) inject critical inline <style> blocks for
+ *     animated SVG strokes and Leaflet tooltip styling. Tightening that
+ *     requires either a SHA allow-list per inline block (high churn) or
+ *     migration to CSS modules — tracked in internal/SECURITY-FOLLOWUPS.md.
+ *
+ * The CSP tightening is a no-op for `next dev` (the dev server reads
+ * NODE_ENV=development from Next.js's own envs). It activates as soon as
+ * the prod build serves traffic, both locally via `next start` and on
+ * Vercel.
+ */
+const isProd = process.env.NODE_ENV === "production";
+
+const scriptSrcDirectives = [
+  "'self'",
+  // Esri and Carto don't serve script — they're only listed here for
+  // strict-dynamic compatibility with a future tightening step.
+  "https://server.arcgisonline.com",
+  "https://*.basemaps.cartocdn.com",
+];
+if (!isProd) {
+  scriptSrcDirectives.push("'unsafe-inline'", "'unsafe-eval'");
+}
+
 const CSP_DIRECTIVES = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://server.arcgisonline.com https://*.basemaps.cartocdn.com",
+  `script-src ${scriptSrcDirectives.join(" ")}`,
+  // See header comment: inline styles are still required for animated map
+  // strokes and Leaflet tooltip overrides. Plan to remove → SECURITY-FOLLOWUPS.
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: https://server.arcgisonline.com https://*.basemaps.cartocdn.com https://*.tile.openstreetmap.org https://tiles.maps.eox.at",
   "connect-src 'self' https://services.slip.wa.gov.au https://abr.business.gov.au https://api.anthropic.com https://api.anthropic.com.au",
@@ -32,11 +66,6 @@ const SECURITY_HEADERS = [
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  experimental: {
-    serverActions: {
-      bodySizeLimit: "5mb",
-    },
-  },
   async headers() {
     return [
       {
@@ -56,6 +85,23 @@ const nextConfig = {
     "@ratesassist/recovery-engine",
     "@ratesassist/spatial",
   ],
+  // `@ratesassist/db` is loaded lazily from server-route code (lib/db.ts +
+  // lib/clients.ts use dynamic `import()`), so Next.js never tries to
+  // bundle pglite/pg into the server output. Keeping the package in
+  // serverComponentsExternalPackages preserves that boundary even when
+  // a future caller adds a static import — pglite ships its own worker
+  // entry points and a WASM payload that webpack can't safely transform.
+  experimental: {
+    serverComponentsExternalPackages: [
+      "@electric-sql/pglite",
+      "pg",
+      "@ratesassist/db",
+      "@ratesassist/adapter-demo",
+    ],
+    serverActions: {
+      bodySizeLimit: "5mb",
+    },
+  },
   webpack: (config) => {
     config.resolve = config.resolve ?? {};
     config.resolve.extensionAlias = {

@@ -3,11 +3,15 @@
  *
  * Loads demo fixtures from `@ratesassist/adapter-demo` (via dynamic import to
  * avoid making this package a hard dependency on the demo adapter) and writes
- * them into Postgres using deterministic UUID v5 ids so re-running the script
- * never produces duplicates.
+ * them into the configured database using deterministic UUID v5 ids so
+ * re-running the script never produces duplicates.
  *
  * Run with:
  *   DATABASE_URL=postgres://… npm run -w @ratesassist/db seed
+ *
+ * Programmatic use:
+ *   import { runSeed } from "../scripts/seed.js";
+ *   await runSeed(getDb());
  */
 
 import { createHash } from "node:crypto";
@@ -17,6 +21,7 @@ import { sql } from "drizzle-orm";
 import {
   getDb,
   withTenant,
+  type Db,
 } from "../src/client.js";
 import {
   owners,
@@ -24,13 +29,12 @@ import {
   propertyOwners,
   tenants,
   tenements,
-  tenementProperties,
   transactions,
 } from "../src/schema.js";
 
 /** Deterministic UUIDv5 over a fixed namespace + name. */
 const NAMESPACE = "5b9b9b9b-1111-4222-9333-ratesassist00";
-function uuidv5(name: string): string {
+export function uuidv5(name: string): string {
   // SHA-1 over (namespace bytes || name). Set version=5, variant=10xx.
   const ns = Buffer.from(NAMESPACE.replace(/-/g, ""), "hex");
   const hash = createHash("sha1")
@@ -101,18 +105,22 @@ interface DemoProperty {
   parcel?: [number, number][];
 }
 
-async function loadFixtures(): Promise<{
+export interface DemoFixtures {
   councils: DemoCouncil[];
   owners: DemoOwner[];
   properties: DemoProperty[];
   tenements: unknown[];
   transactions: Record<string, unknown[]>;
-}> {
+}
+
+export async function loadFixtures(): Promise<DemoFixtures> {
   // Dynamic import keeps the demo adapter as an optional dev-time fixture
-  // source rather than a runtime dep of @ratesassist/db.
+  // source rather than a runtime dep of @ratesassist/db. webpackIgnore
+  // because Next.js will otherwise try to statically resolve this and
+  // tangle up vendor-chunk splitting (see bootstrap.ts for the same fix).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const data: any = await import(
-    /* @vite-ignore */ "@ratesassist/adapter-demo/data"
+    /* webpackIgnore: true */ /* @vite-ignore */ "@ratesassist/adapter-demo/data"
   ).catch(() => null);
   if (!data) {
     throw new Error(
@@ -128,12 +136,21 @@ async function loadFixtures(): Promise<{
   };
 }
 
-async function main(): Promise<void> {
-  const db = getDb();
-  const fx = await loadFixtures();
+/**
+ * Programmatic seed entrypoint. Inserts all demo fixtures idempotently
+ * (deterministic UUIDs + onConflictDoNothing). Safe to call multiple times.
+ *
+ * Pass a pre-loaded fixture bundle to override the default
+ * `@ratesassist/adapter-demo/data` import.
+ */
+export async function runSeed(
+  db: Db,
+  fx?: DemoFixtures,
+): Promise<void> {
+  const fixtures = fx ?? (await loadFixtures());
 
   // Tenants are NOT under RLS; insert directly outside withTenant.
-  for (const c of fx.councils) {
+  for (const c of fixtures.councils) {
     const id = uuidv5(`tenant:${c.code}`);
     await db
       .insert(tenants)
@@ -153,7 +170,7 @@ async function main(): Promise<void> {
 
   // Group properties by council code.
   const byCouncil = new Map<string, DemoProperty[]>();
-  for (const p of fx.properties) {
+  for (const p of fixtures.properties) {
     const arr = byCouncil.get(p.council) ?? [];
     arr.push(p);
     byCouncil.set(p.council, arr);
@@ -166,7 +183,7 @@ async function main(): Promise<void> {
       const referencedOwnerIds = new Set<string>(
         props.flatMap((p) => p.ownerIds),
       );
-      const ownerLookup = new Map(fx.owners.map((o) => [o.ownerId, o]));
+      const ownerLookup = new Map(fixtures.owners.map((o) => [o.ownerId, o]));
       for (const ownerExtId of referencedOwnerIds) {
         const o = ownerLookup.get(ownerExtId);
         if (!o) continue;
@@ -234,7 +251,7 @@ async function main(): Promise<void> {
 
         for (let i = 0; i < p.ownerIds.length; i++) {
           const ownerExtId = p.ownerIds[i]!;
-          if (!fx.owners.some((o) => o.ownerId === ownerExtId)) continue;
+          if (!fixtures.owners.some((o) => o.ownerId === ownerExtId)) continue;
           const ownerId = uuidv5(`owner:${code}:${ownerExtId}`);
           await tx
             .insert(propertyOwners)
@@ -243,7 +260,7 @@ async function main(): Promise<void> {
         }
 
         // Transactions for this property.
-        const txList = fx.transactions[p.assessmentNumber] ?? [];
+        const txList = fixtures.transactions[p.assessmentNumber] ?? [];
         for (const t of txList as Array<{
           date: string;
           type:
@@ -270,7 +287,7 @@ async function main(): Promise<void> {
   }
 
   // Tenements: not tenant-scoped in the contract — seed without GUC.
-  for (const tn of fx.tenements as Array<{
+  for (const tn of fixtures.tenements as Array<{
     tenementId: string;
     type: "M" | "E" | "P" | "G" | "L";
     status: "Live" | "Pending" | "Surrendered" | "Cancelled";
@@ -311,10 +328,40 @@ async function main(): Promise<void> {
   }
 
   await db.execute(sql`select 1`);
+}
+
+async function main(): Promise<void> {
+  const db = getDb();
+  await runSeed(db);
   console.log("[seed] complete.");
 }
 
-main().catch((err) => {
-  console.error("[seed] failed:", err);
-  process.exit(1);
-});
+// Only run main() when invoked as the entrypoint (tsx scripts/seed.ts).
+// Tests / programmatic use call runSeed() directly. We detect "module loaded
+// as entrypoint" by matching the resolved module URL against the script
+// passed on argv. Under vitest / dynamic import, the URL does not match the
+// argv path so main() stays dormant.
+const invokedAsScript = (() => {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const meta = import.meta as any;
+    const scriptArg = process.argv[1];
+    if (
+      typeof meta?.url !== "string" ||
+      scriptArg === undefined ||
+      scriptArg === ""
+    ) {
+      return false;
+    }
+    return meta.url === `file://${scriptArg}`;
+  } catch {
+    return false;
+  }
+})();
+
+if (invokedAsScript) {
+  main().catch((err) => {
+    console.error("[seed] failed:", err);
+    process.exit(1);
+  });
+}
