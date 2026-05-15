@@ -35,7 +35,11 @@ export type CommitOperation =
   | "update_owner_contact"
   | "add_property_note"
   | "add_council"
-  | "import_rating_roll";
+  | "import_rating_roll"
+  | "import_rate_schedule"
+  | "import_landgate_title_data"
+  | "import_wc_eligibility"
+  | "request_strata_conversion";
 
 /**
  * A pending mutation captured at preview time. The dispatcher uses this to
@@ -81,6 +85,54 @@ export type PendingMutation =
       readonly rowCount: number;
       // Rows are captured at preview time and re-applied verbatim at confirm time.
       readonly rows: ReadonlyArray<Record<string, unknown>>;
+    }
+  | {
+      readonly operation: "import_rate_schedule";
+      readonly councilCode: string;
+      readonly financialYear: string;
+      readonly mergeStrategy: "replace" | "upsert";
+      readonly rowCount: number;
+      readonly rows: ReadonlyArray<Record<string, unknown>>;
+    }
+  | {
+      readonly operation: "import_landgate_title_data";
+      readonly councilCode: string;
+      readonly sourceTier:
+        | "wc_feed"
+        | "landgate_restricted"
+        | "slip"
+        | "council_uploaded_pdf";
+      readonly retrievedAt: string;
+      readonly recordCount: number;
+      readonly pinCount: number;
+      readonly encumbranceCount: number;
+      readonly strataParentCount: number;
+      // Aggregated VEN -> record snapshot captured at preview time.
+      readonly records: ReadonlyArray<Record<string, unknown>>;
+    }
+  | {
+      readonly operation: "import_wc_eligibility";
+      readonly councilCode: string;
+      readonly retrievedAt: string;
+      readonly rowCount: number;
+      readonly rows: ReadonlyArray<Record<string, unknown>>;
+    }
+  | {
+      readonly operation: "request_strata_conversion";
+      readonly parentAssessmentNumber: string;
+      readonly toState:
+        | "strata_plan_uploaded"
+        | "children_previewed"
+        | "children_imported"
+        | "parent_superseded"
+        | "withdrawn";
+      readonly childCts: ReadonlyArray<{
+        readonly volume: string;
+        readonly folio: string;
+        readonly ven?: string;
+        readonly address?: string;
+      }>;
+      readonly reason?: string;
     };
 
 /**

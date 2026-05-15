@@ -32,6 +32,120 @@ const councilCode = z
 
 const abn = z.string().regex(/^\d[\d\s]{9,}\d$/, "ABN must be 11 digits with optional spaces");
 
+// ===== Cadastre / title primitives (VEN + CT + Concession feature) =====
+//
+// Each domain type in ./types.ts has a corresponding Zod schema below. All
+// schemas use `.strict()` to reject unknown fields at adapter boundaries.
+
+/**
+ * GeoJSON geometry subset accepted in cadastral payloads. Mirrors the
+ * `GeoJsonGeometry` type in `./types.ts`.
+ */
+export const geoJsonGeometry = z.discriminatedUnion("type", [
+  z
+    .object({
+      type: z.literal("Polygon"),
+      coordinates: z.array(z.array(z.array(z.number()))),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("MultiPolygon"),
+      coordinates: z.array(z.array(z.array(z.array(z.number())))),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("Point"),
+      coordinates: z.array(z.number()),
+    })
+    .strict(),
+]);
+
+export const pinSchema = z
+  .object({
+    pin: z.string().min(1).max(40),
+    lotPlan: z.string().min(1).max(120),
+    landuseCode: z.string().min(1).max(40),
+    areaSquareMetres: z.number().nonnegative().finite(),
+    geometry: geoJsonGeometry.optional(),
+    councilCode: z
+      .string()
+      .regex(/^[A-Z]{2,5}$/, "2-5 uppercase letters")
+      .optional(),
+  })
+  .strict();
+
+export const encumbranceType = z.enum([
+  "mortgage",
+  "easement",
+  "caveat",
+  "tenement_notation",
+  "covenant",
+  "other",
+]);
+
+export const encumbranceSchema = z
+  .object({
+    type: encumbranceType,
+    reference: z.string().min(1).max(120),
+    date: z.string().min(1).max(40),
+    source: z.string().min(1).max(80),
+  })
+  .strict();
+
+export const waterCorpEligibilityStatus = z.enum([
+  "active",
+  "cancelled",
+  "expired",
+  "deceased",
+  "unknown",
+]);
+
+export const pensionerConcessionType = z.enum([
+  "pensioner",
+  "first_home",
+  "senior",
+  "veteran",
+]);
+
+export const pensionerConcessionSchema = z
+  .object({
+    applied: z.boolean(),
+    type: pensionerConcessionType,
+    appliedAt: z.string().min(1).max(40),
+    cardNumber: z.string().min(1).max(80).optional(),
+    cardExpiry: z.string().min(1).max(40).optional(),
+    wcEligibilityVerifiedAt: z.string().datetime().optional(),
+    wcEligibilityStatus: waterCorpEligibilityStatus.optional(),
+    wcCancellationReason: z.string().min(1).max(200).optional(),
+    wcCancellationDate: z.string().min(1).max(40).optional(),
+  })
+  .strict();
+
+export const titleSourceTier = z.enum([
+  "wc_feed",
+  "landgate_restricted",
+  "slip",
+  "council_uploaded_pdf",
+  "map_viewer_plus",
+]);
+
+export const titleSourceFreshnessSchema = z
+  .object({
+    source: titleSourceTier,
+    retrievedAt: z.string().datetime(),
+    lagWarning: z.string().min(1).max(200).optional(),
+  })
+  .strict();
+
+export const strataChildSchema = z
+  .object({
+    volume: z.string().min(1).max(40),
+    folio: z.string().min(1).max(40),
+  })
+  .strict();
+
 // ===== Tool input schemas (every adapter's tool MUST accept these) =====
 
 export const inputs = {
@@ -267,6 +381,90 @@ export const inputs = {
         .regex(/^[A-Z0-9][A-Z0-9-]*$/i, "assessment numbers are alphanumeric with dashes"),
       /** Surfaced in the email body and used for routing/styling. */
       severity: severity.default("medium"),
+    })
+    .strict(),
+
+  // ===== VEN + CT + Concession feature: CSV imports + strata lifecycle =====
+
+  import_rate_schedule: z
+    .object({
+      councilCode: z.string().regex(/^[A-Z]{2,5}$/, "2-5 uppercase letters"),
+      /** Financial year in `YYYY-YY` form, e.g. "2025-26". */
+      financialYear: z.string().regex(/^\d{4}-\d{2}$/, "format YYYY-YY"),
+      /** Raw CSV text. Hard cap 10MB to match the route-layer body cap. */
+      csvText: z.string().min(50).max(10_000_000),
+      mergeStrategy: z.enum(["replace", "upsert"]).default("upsert"),
+      confirm: z.boolean().default(false),
+      commitToken: z.string().uuid().optional(),
+    })
+    .strict(),
+
+  import_landgate_title_data: z
+    .object({
+      councilCode: z.string().regex(/^[A-Z]{2,5}$/, "2-5 uppercase letters"),
+      /** Raw CSV text. Hard cap 10MB to match the route-layer body cap. */
+      csvText: z.string().min(50).max(10_000_000),
+      /**
+       * Which Landgate tier the data came from. Drives the freshness label
+       * stamped onto every imported title row. `map_viewer_plus` is NOT
+       * acceptable as an import source (UI-only fallback) and so is omitted.
+       */
+      sourceTier: z
+        .enum([
+          "wc_feed",
+          "landgate_restricted",
+          "slip",
+          "council_uploaded_pdf",
+        ])
+        .default("council_uploaded_pdf"),
+      /** ISO-8601 timestamp the data was retrieved from Landgate. */
+      retrievedAt: z.string().datetime().optional(),
+      confirm: z.boolean().default(false),
+      commitToken: z.string().uuid().optional(),
+    })
+    .strict(),
+
+  import_wc_eligibility: z
+    .object({
+      councilCode: z.string().regex(/^[A-Z]{2,5}$/, "2-5 uppercase letters"),
+      /** Raw CSV text. Hard cap 10MB to match the route-layer body cap. */
+      csvText: z.string().min(50).max(10_000_000),
+      /** ISO-8601 timestamp the eligibility extract was retrieved from Water Corp. */
+      retrievedAt: z.string().datetime().optional(),
+      confirm: z.boolean().default(false),
+      commitToken: z.string().uuid().optional(),
+    })
+    .strict(),
+
+  request_strata_conversion: z
+    .object({
+      parentAssessmentNumber: z.string().min(1).max(40),
+      /**
+       * Target state in the strata-conversion state machine. The handler
+       * (Round 2) enforces ordering: cannot skip states.
+       */
+      toState: z.enum([
+        "strata_plan_uploaded",
+        "children_previewed",
+        "children_imported",
+        "parent_superseded",
+        "withdrawn",
+      ]),
+      childCts: z
+        .array(
+          z
+            .object({
+              volume: z.string().min(1).max(40),
+              folio: z.string().min(1).max(40),
+              ven: z.string().min(1).max(40).optional(),
+              address: z.string().min(1).max(200).optional(),
+            })
+            .strict(),
+        )
+        .optional(),
+      reason: z.string().min(1).max(500).optional(),
+      confirm: z.boolean().default(false),
+      commitToken: z.string().uuid().optional(),
     })
     .strict(),
 } as const;

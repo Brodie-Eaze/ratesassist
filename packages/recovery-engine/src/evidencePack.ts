@@ -19,11 +19,17 @@
  */
 
 import type {
+  Encumbrance,
   MismatchCandidate,
   Owner,
+  PensionerConcession,
+  Pin,
   Property,
   SignalHit,
+  StrataChild,
   Tenement,
+  TitleSourceFreshness,
+  WaterCorpEligibilityStatus,
 } from "@ratesassist/contract";
 
 import {
@@ -43,6 +49,19 @@ export type EvidencePack = {
   readonly generatedAt: string;
   readonly candidate: MismatchCandidate;
   readonly markdown: string;
+  /**
+   * Top-3 firing signals sorted by weight DESC (tiebreaker: id alphabetic).
+   * Surfaces the "headline" panel at the top of the pack — clerks scan the
+   * top 3 first, then drill into the priority-sorted breakdown below.
+   * Empty array when fewer than 3 signals fired (or none).
+   */
+  readonly headlineSignals: readonly SignalHit[];
+  /**
+   * All firing signals sorted by weight DESC (tiebreaker: id alphabetic).
+   * The render order for the Section 5 breakdown; surfaced on `pack` so the
+   * UI can render accordions without re-sorting.
+   */
+  readonly prioritisedSignals: readonly SignalHit[];
 };
 
 /**
@@ -125,6 +144,8 @@ export function buildEvidencePack(
     ctx.tenementsByAssessment.get(property.assessmentNumber) ?? [];
 
   const headline = describeHeadline(signals);
+  const prioritisedSignals = sortSignalsByPriority(signals);
+  const headlineSignals = prioritisedSignals.slice(0, 3);
 
   const candidate: MismatchCandidate = {
     assessmentNumber,
@@ -151,12 +172,37 @@ export function buildEvidencePack(
     candidate,
     owner,
     tenements,
+    prioritisedSignals,
+    headlineSignals,
   });
 
   return {
     kind: "ok",
-    pack: { packId, generatedAt, candidate, markdown },
+    pack: {
+      packId,
+      generatedAt,
+      candidate,
+      markdown,
+      headlineSignals,
+      prioritisedSignals,
+    },
   };
+}
+
+/**
+ * Stable priority-by-weight sort. Signals with higher weight come first;
+ * ties broken by id alphabetic order so the output is deterministic across
+ * runs (and clerks scanning two packs side-by-side see the same order).
+ *
+ * Returns a new array — the input is not mutated.
+ */
+export function sortSignalsByPriority(
+  signals: readonly SignalHit[],
+): readonly SignalHit[] {
+  return [...signals].sort((a, b) => {
+    if (b.weight !== a.weight) return b.weight - a.weight;
+    return a.id.localeCompare(b.id);
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -217,6 +263,315 @@ function pct(score: number): string {
  */
 function renderSignalLine(s: SignalHit): string {
   return `- **${s.short}** *(weight ${s.weight.toFixed(2)} · ${s.category})* — ${s.evidence}\n  - Source: ${s.source}`;
+}
+
+/**
+ * Render the "Headline" panel — top 3 signals by weight as a compact list
+ * at the top of the pack. When the candidate has zero firing signals this
+ * panel is omitted entirely by the caller (the pack would not have been
+ * built in that case — guard kept defensively in case of future refactor).
+ */
+function renderHeadlinePanel(headline: readonly SignalHit[]): string {
+  if (headline.length === 0) return "";
+  const lines = headline.map((s, ix) => {
+    const tier = ix === 0 ? "gold" : ix === 1 ? "red" : "amber";
+    return `${ix + 1}. **${s.short}** *(weight ${s.weight.toFixed(2)} · tier ${tier})* — ${s.evidence}`;
+  });
+  return [
+    `> **Headline — top ${headline.length} signal${headline.length === 1 ? "" : "s"} by weight**`,
+    `>`,
+    ...lines.map((l) => `> ${l}`),
+  ].join("\n");
+}
+
+/**
+ * Render the per-PIN table when the property carries a `pins[]` array.
+ * Returns an empty string when no PINs are present so the section can
+ * silently omit the block. Status column flags any PIN whose Landgate
+ * landuse code diverges from the council's rate code (proxied by the
+ * property's `landUse` text, which is the only owner-facing label
+ * available in the contract types).
+ */
+function renderPinTable(
+  pins: ReadonlyArray<Pin>,
+  councilLandUse: string,
+): string {
+  if (pins.length === 0) return "";
+  const header = [
+    "| PIN | Lot/Plan | Council landuse | Landgate landuse | Area m² | Status |",
+    "|---|---|---|---|---:|---|",
+  ];
+  const rows = pins.map((pin) => {
+    const status =
+      pin.landuseCode.toLowerCase() === councilLandUse.toLowerCase()
+        ? "OK"
+        : "MISMATCH";
+    return `| ${pin.pin} | ${pin.lotPlan} | ${councilLandUse} | ${pin.landuseCode} | ${pin.areaSquareMetres.toLocaleString("en-AU")} | ${status} |`;
+  });
+  return [...header, ...rows].join("\n");
+}
+
+/**
+ * Render an encumbrance list as a markdown bullet list. Empty list returns
+ * a polite "no encumbrances" line rather than nothing so the section reads
+ * end-to-end.
+ */
+function renderEncumbranceList(encs: ReadonlyArray<Encumbrance>): string {
+  if (encs.length === 0) {
+    return "- (no registered encumbrances on this title)";
+  }
+  return encs
+    .map(
+      (e) =>
+        `- **${e.type}** — reference ${e.reference} (registered ${e.date}, source: ${e.source})`,
+    )
+    .join("\n");
+}
+
+/**
+ * Render the strata-children block. When the property is not a strata
+ * parent, returns "". When it IS a parent (`strataParentCt` set on a
+ * record that is itself the parent — the spec is slightly ambiguous, so
+ * we render children when `strataChildren` is populated regardless of the
+ * `strataParentCt` marker, which is how `findMismatches` exposes the
+ * relationship).
+ */
+function renderStrataChildren(
+  parentCt: Property["strataParentCt"],
+  children: ReadonlyArray<StrataChild>,
+): string {
+  if (!parentCt && children.length === 0) return "";
+  const lines: string[] = [];
+  if (parentCt) {
+    lines.push(
+      `- **Strata parent CT:** Volume ${parentCt.volume} Folio ${parentCt.folio}`,
+    );
+  }
+  if (children.length > 0) {
+    lines.push(`- **Strata children (${children.length}):**`);
+    for (const c of children) {
+      lines.push(`  - Volume ${c.volume} Folio ${c.folio}`);
+    }
+  }
+  return lines.join("\n");
+}
+
+/**
+ * Format a title-source freshness label. Surfaces source + retrievedAt +
+ * any lag warning so the clerk knows how trustworthy the datum is.
+ */
+function renderTitleSourceFreshness(
+  src: TitleSourceFreshness | undefined,
+): string {
+  if (!src) return "_(no source freshness on file — verify against current source before lodging)_";
+  const base = `Source: \`${src.source}\` · retrieved ${src.retrievedAt}`;
+  return src.lagWarning ? `${base} · caveat: ${src.lagWarning}` : base;
+}
+
+/**
+ * Format a Water Corp eligibility status as a human-readable label with a
+ * status emoji-substitute (Australian English; emoji avoided per house
+ * style).
+ */
+function renderWcStatus(status: WaterCorpEligibilityStatus | undefined): string {
+  switch (status) {
+    case "active":
+      return "Active — eligible";
+    case "cancelled":
+      return "Cancelled — no longer eligible";
+    case "expired":
+      return "Expired — card lapsed, not renewed";
+    case "deceased":
+      return "Deceased — death recorded";
+    case "unknown":
+      return "Unknown — eligibility could not be verified";
+    case undefined:
+      return "Not verified — Water Corp feed not run for this property";
+  }
+}
+
+/**
+ * Render the Section 8 "Title state" block. Returns "" when the property
+ * carries none of the extension fields (legacy fixtures, demo data); the
+ * caller then omits the section header too so the pack does not show
+ * empty scaffolding.
+ */
+function renderTitleStateSection(property: Property): string {
+  const hasAny =
+    property.ctVolume ||
+    property.ctFolio ||
+    property.ctIssuedDate ||
+    property.proprietorOnTitle ||
+    property.proprietorPostalAddress ||
+    (property.pins && property.pins.length > 0) ||
+    (property.encumbrances && property.encumbrances.length > 0) ||
+    property.strataParentCt ||
+    (property.strataChildren && property.strataChildren.length > 0);
+  if (!hasAny) return "";
+
+  const lines: string[] = [];
+  lines.push("## 8. Title state");
+  lines.push("");
+  lines.push(renderTitleSourceFreshness(property.titleSource));
+  lines.push("");
+  // CT volume / folio / issued date
+  if (property.ctVolume || property.ctFolio || property.ctIssuedDate) {
+    lines.push("| Field | Value |");
+    lines.push("|---|---|");
+    if (property.ctVolume) lines.push(`| CT volume | ${property.ctVolume} |`);
+    if (property.ctFolio) lines.push(`| CT folio | ${property.ctFolio} |`);
+    if (property.ctIssuedDate)
+      lines.push(`| CT issued | ${property.ctIssuedDate} |`);
+    lines.push("");
+  }
+  // Registered proprietor + postal
+  if (property.proprietorOnTitle || property.proprietorPostalAddress) {
+    lines.push("**Registered proprietor (Landgate):**");
+    if (property.proprietorOnTitle)
+      lines.push(`- Name: ${property.proprietorOnTitle}`);
+    if (property.proprietorPostalAddress)
+      lines.push(`- Postal address: ${property.proprietorPostalAddress}`);
+    lines.push("");
+  }
+  // PIN table
+  const pins = property.pins ?? [];
+  if (pins.length > 0) {
+    lines.push(`**PINs on this VEN (${pins.length}):**`);
+    lines.push("");
+    lines.push(renderPinTable(pins, property.landUse));
+    lines.push("");
+  }
+  // Encumbrances
+  lines.push("**Registered encumbrances:**");
+  lines.push("");
+  lines.push(renderEncumbranceList(property.encumbrances ?? []));
+  lines.push("");
+  // Strata
+  const strataBlock = renderStrataChildren(
+    property.strataParentCt,
+    property.strataChildren ?? [],
+  );
+  if (strataBlock) {
+    lines.push("**Strata structure:**");
+    lines.push("");
+    lines.push(strataBlock);
+    lines.push("");
+  }
+  return lines.join("\n");
+}
+
+/**
+ * Render the Section 9 "Concession audit" block. Returns "" when the
+ * property carries no pensioner concession record so legacy fixtures are
+ * unaffected. The statutory basis is fixed at the WA Rates and Charges
+ * Rebates and Deferments Act 1992; non-WA tenants would need an extended
+ * statutory citation table (mirrored on TEMPLATE_BY_STATE).
+ */
+function renderConcessionAuditSection(property: Property): string {
+  const c = property.pensionerConcession;
+  if (!c) return "";
+
+  const lines: string[] = [];
+  lines.push("## 9. Concession audit");
+  lines.push("");
+
+  // Current concession on file
+  lines.push("**Current concession on file:**");
+  lines.push("");
+  lines.push("| Field | Value |");
+  lines.push("|---|---|");
+  lines.push(`| Type | ${c.type} |`);
+  lines.push(`| Applied | ${c.applied ? "yes" : "no"} |`);
+  lines.push(`| Applied since | ${c.appliedAt} |`);
+  if (c.cardNumber) lines.push(`| Card number | ${maskCard(c.cardNumber)} |`);
+  if (c.cardExpiry) lines.push(`| Card expiry | ${c.cardExpiry} |`);
+  lines.push("");
+
+  // Water Corp eligibility check
+  lines.push("**Water Corp eligibility check:**");
+  lines.push("");
+  lines.push(`- Status: ${renderWcStatus(c.wcEligibilityStatus)}`);
+  if (c.wcEligibilityVerifiedAt)
+    lines.push(`- Last verified: ${c.wcEligibilityVerifiedAt}`);
+  if (c.wcCancellationReason)
+    lines.push(`- Cancellation reason: ${c.wcCancellationReason}`);
+  if (c.wcCancellationDate)
+    lines.push(`- Cancellation date: ${c.wcCancellationDate}`);
+  lines.push(`- ${renderTitleSourceFreshness(property.titleSource)}`);
+  lines.push("");
+
+  // Postal vs property address comparison
+  const propertyFullAddress = `${property.address}, ${property.suburb} ${property.postcode} ${property.state}`;
+  lines.push("**Postal vs property address comparison:**");
+  lines.push("");
+  lines.push("| Field | Value |");
+  lines.push("|---|---|");
+  lines.push(`| Property address | ${propertyFullAddress} |`);
+  lines.push(
+    `| Proprietor postal | ${property.proprietorPostalAddress ?? "(not on file)"} |`,
+  );
+  const addressMatches =
+    property.proprietorPostalAddress &&
+    property.proprietorPostalAddress
+      .toLowerCase()
+      .includes(property.address.toLowerCase());
+  lines.push(`| Match | ${addressMatches ? "yes" : "MISMATCH"} |`);
+  lines.push("");
+
+  // Statutory basis
+  lines.push("**Statutory basis:**");
+  lines.push("");
+  lines.push(
+    "- *Rates and Charges (Rebates and Deferments) Act 1992* (WA) — governs pensioner / senior concession on local government rates.",
+  );
+  lines.push(
+    "- Water Corporation's eligibility feed is the authoritative source for concession status; council-applied state must be reconciled against it.",
+  );
+  lines.push("");
+
+  // Recommended action
+  lines.push("**Recommended action:**");
+  lines.push("");
+  lines.push(recommendedConcessionAction(c, addressMatches === true));
+  return lines.join("\n");
+}
+
+/**
+ * Mask a concession card number to last 4 digits; the rest is replaced
+ * with bullets. Defensive: if the card is short or empty, returns the
+ * original string so we don't accidentally over-redact during debugging.
+ */
+function maskCard(card: string): string {
+  if (card.length < 8) return card;
+  return `${"•".repeat(card.length - 4)}${card.slice(-4)}`;
+}
+
+/**
+ * Recommend a concession action based on the WC eligibility status and
+ * the postal/property address comparison. The output is a single
+ * sentence the clerk pastes into the case note.
+ */
+function recommendedConcessionAction(
+  c: PensionerConcession,
+  addressMatches: boolean,
+): string {
+  const status = c.wcEligibilityStatus;
+  if (status === "deceased") {
+    return "Suspend the rebate immediately and engage the executor / proprietor's estate to confirm new ownership and update the rating roll.";
+  }
+  if (status === "cancelled") {
+    return "Suspend the rebate and write to the proprietor requesting evidence of current eligibility; if none is provided within 28 days, remove the concession and backdate to the cancellation date.";
+  }
+  if (status === "expired") {
+    return "Write to the proprietor requesting a current concession card; suspend the rebate if no current card is provided within 28 days.";
+  }
+  if (!addressMatches) {
+    return "Verify the proprietor's principal place of residence — concession applies only where the property is the proprietor's primary residence; if the postal address indicates the proprietor lives elsewhere, the rebate is likely ineligible.";
+  }
+  if (status === "active") {
+    return "No action required — Water Corp confirms active eligibility and addresses align.";
+  }
+  return "Manual review required — Water Corp eligibility cannot be verified from the current feed.";
 }
 
 /**
@@ -310,6 +665,8 @@ type RenderInput = {
   readonly candidate: MismatchCandidate;
   readonly owner: Owner;
   readonly tenements: readonly Tenement[];
+  readonly prioritisedSignals: readonly SignalHit[];
+  readonly headlineSignals: readonly SignalHit[];
 };
 
 /**
@@ -319,13 +676,21 @@ type RenderInput = {
  * draft notice → audit trail.
  */
 function renderMarkdown(input: RenderInput): string {
-  const { packId, generatedAt, candidate, owner, tenements } = input;
+  const {
+    packId,
+    generatedAt,
+    candidate,
+    owner,
+    tenements,
+    prioritisedSignals,
+    headlineSignals,
+  } = input;
   const { property, signals, severity, compositeScore, kind, reason } = candidate;
 
-  const signalLines = [...signals]
-    .sort((a, b) => b.weight - a.weight)
-    .map(renderSignalLine)
-    .join("\n");
+  // Section 5 breakdown — sort by weight DESC, alphabetic id as tiebreaker.
+  // The pre-sorted `prioritisedSignals` is used directly so the headline
+  // panel and breakdown render in lock-step.
+  const signalLines = prioritisedSignals.map(renderSignalLine).join("\n");
 
   const tenementLines =
     tenements.length > 0
@@ -342,6 +707,9 @@ function renderMarkdown(input: RenderInput): string {
 
   const sources = Array.from(new Set(signals.map((s) => s.source))).join("; ");
   const proposed = proposedCategory(tenements, signals);
+  const headlinePanel = renderHeadlinePanel(headlineSignals);
+  const titleStateBlock = renderTitleStateSection(property);
+  const concessionAuditBlock = renderConcessionAuditSection(property);
 
   return [
     `# Reclassification Evidence Pack`,
@@ -354,6 +722,7 @@ function renderMarkdown(input: RenderInput): string {
     `| **Severity** | ${severity.toUpperCase()} |`,
     `| **Signals fired** | ${signals.length} |`,
     ``,
+    ...(headlinePanel ? [headlinePanel, ``] : []),
     `## 1. Property identification`,
     ``,
     `| Field | Value |`,
@@ -406,7 +775,14 @@ function renderMarkdown(input: RenderInput): string {
     `| Estimated annual uplift | **${aud(candidate.estUplift)}** |`,
     `| Estimated arrears (3-year conservative) | **${aud(candidate.estArrears3y)}** |`,
     ``,
-    `## 8. Draft notice to ratepayer`,
+    // Sections 8 + 9 — Title state and Concession audit (VEN/CT/Concession
+    // feature). Each helper returns "" when the property carries no fields
+    // for that section so legacy fixtures (no pins, no concession) render
+    // unchanged. When populated, both sections come BEFORE the draft notice
+    // because the notice draws on the title-state proprietor data.
+    ...(titleStateBlock ? [titleStateBlock] : []),
+    ...(concessionAuditBlock ? [concessionAuditBlock, ``] : []),
+    `## 10. Draft notice to ratepayer`,
     ``,
     `> [Council letterhead]`,
     `>`,
@@ -421,7 +797,7 @@ function renderMarkdown(input: RenderInput): string {
     `>`,
     `> You have the right to object to this proposed reclassification within the period prescribed by the council's rates resolution. Objections must be lodged in writing to the council's rates department.`,
     ``,
-    `## 9. Audit trail`,
+    `## 11. Audit trail`,
     ``,
     `| Field | Value |`,
     `|---|---|`,

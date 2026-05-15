@@ -975,3 +975,112 @@ describe("findMismatches targetStateScope filter", () => {
     expect(codes).toContain("N1");
   });
 });
+
+// ===== VEN/PIN/CT + concession integration into evaluateSignals =====
+
+describe("evaluateSignals — VEN/PIN/CT + concession signals integrate cleanly", () => {
+  const FIXED_NOW = Date.parse("2026-05-15T00:00:00Z");
+  const now = (): number => FIXED_NOW;
+
+  it("does not interfere with existing tenement signals (clean property, no new signals)", () => {
+    const p = prop({ assessmentNumber: "T1", landUse: "Rural" });
+    const t = ten({ type: "M", isProducing: true });
+    const ctx = ctxFrom({
+      properties: [p],
+      owners: [owner()],
+      tenementsByAssessment: new Map([["T1", [t]]]),
+    });
+    const ids = evaluateSignals(p, ctx).map((h) => h.id);
+    expect(ids).toContain("reg.tenement.producing.on_rural_or_vacant");
+    // No new signals fire — the property carries no ven/concession context.
+    expect(ids).not.toContain("mismatch.proprietor");
+    expect(ids).not.toContain("id.pensioner_not_at_property");
+  });
+
+  it("stacks one tenement signal with one new VEN/PIN/CT signal on the same property", () => {
+    const p = prop({
+      assessmentNumber: "STACK-1",
+      landUse: "Rural",
+      ven: "VEN-STACK",
+      proprietorOnTitle: "JONES, MARY B.",
+      ctVolume: "OLD",
+      ctFolio: "OLD",
+    });
+    const t = ten({ type: "M", isProducing: true });
+    const ctx: EvaluationContext = {
+      ...ctxFrom({
+        properties: [p],
+        owners: [owner()],
+        tenementsByAssessment: new Map([["STACK-1", [t]]]),
+        now,
+      }),
+      landgateRecordsByVen: new Map([
+        [
+          "VEN-STACK",
+          {
+            ven: "VEN-STACK",
+            ctVolume: "NEW",
+            ctFolio: "NEW",
+            proprietorOnTitle: "SMITH, JOHN A.",
+            pins: [],
+            encumbrances: [],
+            source: {
+              source: "landgate_restricted" as const,
+              retrievedAt: "2026-05-14T00:00:00Z",
+            },
+          },
+        ],
+      ]),
+    };
+    const ids = evaluateSignals(p, ctx).map((h) => h.id);
+    expect(ids).toContain("reg.tenement.producing.on_rural_or_vacant");
+    expect(ids).toContain("mismatch.proprietor");
+    expect(ids).toContain("mismatch.ct_number_changed");
+  });
+
+  it("findMismatches surfaces a concession-only candidate when VEN/concession signals fire", () => {
+    const p = prop({
+      assessmentNumber: "CONC-1",
+      landUse: "Residential",
+      proprietorOnTitle: "SMITH, JOHN A.",
+      pensionerConcession: {
+        applied: true,
+        type: "pensioner",
+        appliedAt: "2019-07-01",
+        wcEligibilityStatus: "cancelled",
+        wcCancellationDate: "2025-12-01",
+      },
+    });
+    const ctx: EvaluationContext = {
+      ...ctxFrom({ properties: [p], owners: [owner()], now }),
+    };
+    const out = findMismatches(ctx);
+    expect(out.find((c) => c.assessmentNumber === "CONC-1")).toBeDefined();
+  });
+
+  it("findMismatches keeps the new evidence string in the candidate's signal", () => {
+    const p = prop({
+      assessmentNumber: "CONC-2",
+      landUse: "Residential",
+      proprietorOnTitle: "SMITH, JOHN A.",
+      pensionerConcession: {
+        applied: true,
+        type: "pensioner",
+        appliedAt: "2019-07-01",
+        wcEligibilityStatus: "cancelled",
+        wcCancellationDate: "2025-12-01",
+      },
+    });
+    const ctx: EvaluationContext = {
+      ...ctxFrom({ properties: [p], owners: [owner()], now }),
+    };
+    const out = findMismatches(ctx);
+    const candidate = out.find((c) => c.assessmentNumber === "CONC-2")!;
+    const concSig = candidate.signals.find(
+      (s) => s.id === "id.pensioner_eligibility_cancelled",
+    );
+    expect(concSig).toBeDefined();
+    expect(concSig!.evidence).toContain("CANCELLED");
+    expect(concSig!.evidence).toContain("2025-12-01");
+  });
+});

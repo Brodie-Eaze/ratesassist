@@ -55,5 +55,5 @@ export {
 } from "./upliftCalculator.js";
 
 export { findMismatches } from "./findMismatches.js";
-export { buildEvidencePack } from "./evidencePack.js";
+export { buildEvidencePack, sortSignalsByPriority } from "./evidencePack.js";
 export { recoveryStats } from "./stats.js";

@@ -82,6 +82,14 @@ const descriptions: Record<keyof typeof inputs, string> = {
     "Verify the tamper-evident hash chain for a tenant's audit log. Walks the most recent N rows in chain order, recomputes each rowHash and reports the first break (if any). Supervisor-and-above only (read.audit_log permission).",
   notify_clerk:
     "Send an email to a council clerk about a recovery candidate. Provider depends on environment: console-logged by default; live Resend send when RA_NOTIFY_PROVIDER=resend and RA_NOTIFY_API_KEY are set. Audit-logged in either case.",
+  import_rate_schedule:
+    "Import a council's adopted rate schedule for a financial year. Two-phase: first call returns a preview (row count, error list, commit token); second call (confirm=true with token) applies the merge. mergeStrategy=replace wipes the council's schedule for that FY before insert; upsert matches by rate code. Powers the accurate-uplift calculator. CSV format documented in internal/FEATURE-VEN-CT-CONCESSION-SPEC.md. Requires write.user_management.",
+  import_landgate_title_data:
+    "Import Landgate title data (CT volume/folio, registered proprietor + postal address, PINs with landuse codes and area, encumbrances, strata-parent flags) for a council's properties. Joins to existing rows on assessment_number or VEN. Two-phase commit. Source tier stamps the freshness label on every row. CSV format documented in internal/FEATURE-VEN-CT-CONCESSION-SPEC.md. Requires write.user_management.",
+  import_wc_eligibility:
+    "Import a Water Corporation pensioner-eligibility extract for a council. Reconciles council-applied concessions against Water Corp's authoritative status (active / cancelled / expired / deceased). Drives the concession-mismatch signals. Two-phase commit. CSV format documented in internal/FEATURE-VEN-CT-CONCESSION-SPEC.md. Requires write.user_management.",
+  request_strata_conversion:
+    "Advance a strata-parent record through the conversion lifecycle: strata_plan_uploaded -> children_previewed -> children_imported -> parent_superseded, with withdrawn as a terminal exit. State-machine validated — cannot skip states. Two-phase commit; each transition audit-logged. Requires write.user_management.",
 };
 
 /**

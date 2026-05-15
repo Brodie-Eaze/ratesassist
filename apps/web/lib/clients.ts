@@ -22,11 +22,17 @@ import {
 import {
   TARGET_STATE_SCOPE,
   WA_RATE_TABLES,
+  type Encumbrance,
   type MismatchCandidate,
   type Owner,
+  type PensionerConcession,
+  type Pin,
   type Property,
   type RateTable,
+  type StrataChild,
   type Tenement,
+  type TitleSourceFreshness,
+  type WaterCorpEligibilityStatus,
 } from "@ratesassist/contract";
 
 import { OWNERS, PROPERTIES, TENEMENTS } from "./data";
@@ -113,6 +119,271 @@ function overlayValuations(props: readonly Property[]): readonly Property[] {
   });
 }
 
+/**
+ * VEN + CT + Concession property overlay for the demo dataset.
+ *
+ * The seeded `PROPERTIES` array in `lib/data.ts` does not carry the new
+ * optional VEN/CT/Concession fields (the rating-roll CSV importer doesn't
+ * receive them either — the council-side schema predates the Landgate
+ * cross-reference). The Round-3 demo signals need the council-side fields
+ * populated so the engine can compare them against the synthetic Landgate
+ * + Water Corp records below.
+ *
+ * Each entry mutates the council's view of the title — e.g. a deliberate
+ * proprietor mismatch (council records JONES; Landgate records SMITH) so
+ * `mismatch.proprietor` fires. The entries are deliberately partial —
+ * legacy assessments without overlay entries continue to behave exactly
+ * as before.
+ *
+ * Source-freshness labels (`titleSource`) carry an honest source tier and
+ * timestamp so the evidence pack renders an accurate provenance caveat.
+ */
+type VenCtOverlay = {
+  readonly ven?: string;
+  readonly pins?: readonly Pin[];
+  readonly ctVolume?: string;
+  readonly ctFolio?: string;
+  readonly ctIssuedDate?: string;
+  readonly proprietorOnTitle?: string;
+  readonly proprietorPostalAddress?: string;
+  readonly strataParentCt?: { readonly volume: string; readonly folio: string };
+  readonly strataChildren?: readonly StrataChild[];
+  readonly encumbrances?: readonly Encumbrance[];
+  readonly pensionerConcession?: PensionerConcession;
+  readonly titleSource?: TitleSourceFreshness;
+};
+
+const VEN_CT_OVERLAY: ReadonlyMap<string, VenCtOverlay> = new Map<
+  string,
+  VenCtOverlay
+>([
+  // Proprietor mismatch: council says JONES, Landgate (below) says SMITH.
+  // Existing fixture already fires reg.address_mismatch + renovation
+  // detection, so this stacks two title signals on the same property.
+  [
+    "TPS-3041-12",
+    {
+      ven: "VEN-TPS-3041-12",
+      ctVolume: "1845",
+      ctFolio: "207",
+      ctIssuedDate: "2018-03-12",
+      proprietorOnTitle: "JONES, ROBERT A. & JONES, MARGARET J.",
+      proprietorPostalAddress: "12 Stadium Road, Tom Price WA 6751",
+      titleSource: {
+        source: "council_uploaded_pdf",
+        retrievedAt: "2026-05-01T08:30:00Z",
+        lagWarning:
+          "CT search PDF uploaded 2026-05-01 by council clerk; predates the 2026-03 Landgate refresh.",
+      },
+    },
+  ],
+  // CT volume/folio changed: council still records the pre-amendment CT.
+  // Landgate (overlay below) has issued a new CT after the boundary
+  // amendment.
+  [
+    "ASH-9911-04",
+    {
+      ven: "VEN-ASH-9911-04",
+      ctVolume: "2718",
+      ctFolio: "104",
+      ctIssuedDate: "2015-03-14",
+      proprietorOnTitle: "Pilbara Minerals Processing Ltd",
+      proprietorPostalAddress:
+        "Level 8, 240 St Georges Terrace, Perth WA 6000",
+      titleSource: {
+        source: "council_uploaded_pdf",
+        retrievedAt: "2026-04-10T09:00:00Z",
+        lagWarning:
+          "Council's CT search PDF dates from before the BA-2026-019 boundary amendment.",
+      },
+    },
+  ],
+  // Multi-PIN landuse divergence: 3 PINs under one VEN. Council rates the
+  // parcel Commercial; one of the three PINs has flipped to Industrial on
+  // Landgate per the DA-2025-184 fitout (lifecycle-change record on file).
+  [
+    "ESH-7011-08",
+    {
+      ven: "VEN-ESH-7011-08",
+      pins: [
+        {
+          pin: "9001247-A",
+          lotPlan: "Lot 7011A DP 23145",
+          landuseCode: "Commercial",
+          areaSquareMetres: 4_200,
+        },
+        {
+          pin: "9001247-B",
+          lotPlan: "Lot 7011B DP 23145",
+          landuseCode: "Commercial",
+          areaSquareMetres: 3_100,
+        },
+        {
+          pin: "9001247-C",
+          lotPlan: "Lot 7011C DP 23145",
+          landuseCode: "Commercial",
+          areaSquareMetres: 2_800,
+        },
+      ],
+      ctVolume: "2901",
+      ctFolio: "812",
+      ctIssuedDate: "2010-07-10",
+      proprietorOnTitle: "Newman Trading Co Pty Ltd",
+      proprietorPostalAddress: "PO Box 401, Newman WA 6753",
+      titleSource: {
+        source: "landgate_restricted",
+        retrievedAt: "2026-05-10T03:15:00Z",
+      },
+    },
+  ],
+  // Strata parent — council still rates Hannan Street 211 as one parcel;
+  // Landgate has issued 3 child CTs (SUB-2025-722) following subdivision.
+  // The change-detection record on file already says subdivision_detected.
+  [
+    "KAL-7777-01",
+    {
+      ven: "VEN-KAL-7777-01",
+      ctVolume: "2410",
+      ctFolio: "199",
+      ctIssuedDate: "1999-02-03",
+      proprietorOnTitle: "Hannan Holdings Pty Ltd",
+      proprietorPostalAddress: "Hannan Street 211, Kalgoorlie WA 6430",
+      strataParentCt: { volume: "2410", folio: "199" },
+      strataChildren: [
+        { volume: "3801", folio: "211" },
+        { volume: "3801", folio: "211A" },
+        { volume: "3801", folio: "211B" },
+      ],
+      titleSource: {
+        source: "landgate_restricted",
+        retrievedAt: "2026-05-11T01:30:00Z",
+      },
+    },
+  ],
+  // Pensioner deceased — council still applying rebate; Water Corp records
+  // status DECEASED. Margaret Thompson, 44 Yampire Road, Tom Price.
+  [
+    "TPS-3041-44",
+    {
+      ven: "VEN-TPS-3041-44",
+      ctVolume: "1610",
+      ctFolio: "044",
+      ctIssuedDate: "1998-03-22",
+      proprietorOnTitle: "THOMPSON, MARGARET",
+      proprietorPostalAddress: "44 Yampire Road, Tom Price WA 6751",
+      pensionerConcession: {
+        applied: true,
+        type: "pensioner",
+        appliedAt: "2014-07-01",
+        cardNumber: "****-****-1188",
+        cardExpiry: "2027-04-30",
+        wcEligibilityVerifiedAt: "2026-05-10T22:00:00Z",
+        wcEligibilityStatus: "deceased",
+        wcCancellationReason: "Death notified by next of kin",
+        wcCancellationDate: "2026-02-14",
+      },
+      titleSource: {
+        source: "wc_feed",
+        retrievedAt: "2026-05-10T22:00:00Z",
+      },
+    },
+  ],
+  // Pensioner eligibility cancelled — Lot 1147 Great Northern Highway.
+  // Demo narrative: original holder downsized to a smaller assessment;
+  // WC cancelled the card; council's monthly recon hasn't picked it up.
+  [
+    "TPS-1102-47",
+    {
+      ven: "VEN-TPS-1102-47",
+      ctVolume: "1622",
+      ctFolio: "147",
+      ctIssuedDate: "2017-08-21",
+      proprietorOnTitle: "Pilbara Iron Holdings Pty Ltd",
+      proprietorPostalAddress:
+        "Level 12, 100 St Georges Terrace, Perth WA 6000",
+      pensionerConcession: {
+        applied: true,
+        type: "senior",
+        appliedAt: "2017-09-01",
+        cardNumber: "****-****-7321",
+        cardExpiry: "2027-09-30",
+        wcEligibilityVerifiedAt: "2026-05-09T18:45:00Z",
+        wcEligibilityStatus: "cancelled",
+        wcCancellationReason: "Holder downsized to another assessment",
+        wcCancellationDate: "2026-01-19",
+      },
+      titleSource: {
+        source: "wc_feed",
+        retrievedAt: "2026-05-09T18:45:00Z",
+      },
+    },
+  ],
+  // Pensioner card expired — Lot 1171 Karratha-Tom Price Road. Card
+  // lapsed; council still applying the rebate.
+  [
+    "ESH-1102-71",
+    {
+      ven: "VEN-ESH-1102-71",
+      ctVolume: "2540",
+      ctFolio: "171",
+      ctIssuedDate: "2022-11-14",
+      proprietorOnTitle: "MURPHY, KEVIN J.",
+      proprietorPostalAddress: "Lot 1171 Karratha-Tom Price Road, Karratha WA 6714",
+      pensionerConcession: {
+        applied: true,
+        type: "pensioner",
+        appliedAt: "2020-04-01",
+        cardNumber: "****-****-9920",
+        cardExpiry: "2024-12-31",
+        wcEligibilityVerifiedAt: "2026-05-09T18:45:00Z",
+        wcEligibilityStatus: "expired",
+      },
+      titleSource: {
+        source: "wc_feed",
+        retrievedAt: "2026-05-09T18:45:00Z",
+      },
+    },
+  ],
+]);
+
+function overlayVenCt(props: readonly Property[]): readonly Property[] {
+  return props.map((p) => {
+    const overlay = VEN_CT_OVERLAY.get(p.assessmentNumber);
+    if (overlay === undefined) return p;
+    return {
+      ...p,
+      ...(overlay.ven !== undefined ? { ven: overlay.ven } : {}),
+      ...(overlay.pins !== undefined ? { pins: overlay.pins } : {}),
+      ...(overlay.ctVolume !== undefined ? { ctVolume: overlay.ctVolume } : {}),
+      ...(overlay.ctFolio !== undefined ? { ctFolio: overlay.ctFolio } : {}),
+      ...(overlay.ctIssuedDate !== undefined
+        ? { ctIssuedDate: overlay.ctIssuedDate }
+        : {}),
+      ...(overlay.proprietorOnTitle !== undefined
+        ? { proprietorOnTitle: overlay.proprietorOnTitle }
+        : {}),
+      ...(overlay.proprietorPostalAddress !== undefined
+        ? { proprietorPostalAddress: overlay.proprietorPostalAddress }
+        : {}),
+      ...(overlay.strataParentCt !== undefined
+        ? { strataParentCt: overlay.strataParentCt }
+        : {}),
+      ...(overlay.strataChildren !== undefined
+        ? { strataChildren: overlay.strataChildren }
+        : {}),
+      ...(overlay.encumbrances !== undefined
+        ? { encumbrances: overlay.encumbrances }
+        : {}),
+      ...(overlay.pensionerConcession !== undefined
+        ? { pensionerConcession: overlay.pensionerConcession }
+        : {}),
+      ...(overlay.titleSource !== undefined
+        ? { titleSource: overlay.titleSource }
+        : {}),
+    };
+  });
+}
+
 export function getEvaluationContext(): EvaluationContext {
   if (cachedContext !== null) return cachedContext;
 
@@ -167,7 +438,7 @@ function buildContextFromInMemory(): EvaluationContext {
   // PERF-002 / PERF-003: build per-owner and per-suburb-rural indexes in a
   // single pass over PROPERTIES so the scoring engine can look up O(1)
   // instead of re-scanning the full property list on every signal eval.
-  const enrichedProperties = overlayValuations(PROPERTIES);
+  const enrichedProperties = overlayVenCt(overlayValuations(PROPERTIES));
   const propertiesByOwnerId = new Map<string, Property[]>();
   const ruralBySuburb = new Map<string, Property[]>();
   for (const p of enrichedProperties) {
@@ -199,6 +470,9 @@ function buildContextFromInMemory(): EvaluationContext {
     addressDiscrepanciesByAssessment: MOCK_ADDRESS_DISCREPANCIES_BY_ASSESSMENT,
     emitsApprovalsByTenement: MOCK_EMITS_APPROVALS_BY_TENEMENT,
     changeDetectionByAssessment: MOCK_CHANGE_DETECTION_BY_ASSESSMENT,
+    landgateRecordsByVen: MOCK_LANDGATE_RECORDS_BY_VEN,
+    waterCorpEligibilityByCardOrProprietor: MOCK_WC_ELIGIBILITY,
+    proprietorDeceasedReferences: MOCK_PROPRIETOR_DECEASED_REFERENCES,
     rateTablesByCouncil: RATE_TABLES_BY_COUNCIL,
     targetStateScope: TARGET_STATE_SCOPE,
   };
@@ -366,7 +640,7 @@ async function buildContextFromDb(): Promise<EvaluationContext> {
       }
     }
   }
-  const enrichedProperties = overlayValuations(propertiesAcc);
+  const enrichedProperties = overlayVenCt(overlayValuations(propertiesAcc));
   const propertiesByOwnerId = new Map<string, Property[]>();
   const ruralBySuburb = new Map<string, Property[]>();
   for (const p of enrichedProperties) {
@@ -407,6 +681,9 @@ async function buildContextFromDb(): Promise<EvaluationContext> {
     addressDiscrepanciesByAssessment: MOCK_ADDRESS_DISCREPANCIES_BY_ASSESSMENT,
     emitsApprovalsByTenement: MOCK_EMITS_APPROVALS_BY_TENEMENT,
     changeDetectionByAssessment: MOCK_CHANGE_DETECTION_BY_ASSESSMENT,
+    landgateRecordsByVen: MOCK_LANDGATE_RECORDS_BY_VEN,
+    waterCorpEligibilityByCardOrProprietor: MOCK_WC_ELIGIBILITY,
+    proprietorDeceasedReferences: MOCK_PROPRIETOR_DECEASED_REFERENCES,
     rateTablesByCouncil: RATE_TABLES_BY_COUNCIL,
     targetStateScope: TARGET_STATE_SCOPE,
   };
@@ -494,9 +771,12 @@ const MOCK_CHANGE_DETECTION_BY_ASSESSMENT: ReadonlyMap<
     "TPS-3041-12",
     [
       {
+        // No `correctLandUse` — the parcel remains Residential; the recovery
+        // signal here is a stale-GRV one (consolidated lots, post-renumber
+        // address), not a re-classification. Route through the heuristic so
+        // findMismatches keeps the candidate.
         kind: "renovation_detected",
         detectedAt: "2025-03-20",
-        correctLandUse: "Residential",
         reasoning:
           "Landgate cadastre records post-renumber address; GRV likely stale after consolidation of lots 12 and 14 (March 2025).",
       },
@@ -506,11 +786,15 @@ const MOCK_CHANGE_DETECTION_BY_ASSESSMENT: ReadonlyMap<
     "ESH-7011-08",
     [
       {
-        kind: "construction_completed",
+        // The fitout post-DA-2025-184 should drive a GRV revaluation rather
+        // than a rate-code change (ESH's GRV Non-Residential rate-line
+        // already covers commercial + industrial). Route through the
+        // heuristic so the candidate surfaces; uplift then comes from the
+        // pending revaluation, not the (same) rate-line.
+        kind: "gru_revaluation_pending",
         detectedAt: "2024-07-08",
-        correctLandUse: "Industrial",
         reasoning:
-          "DA-2025-184 occupancy certificate issued July 2024 for heavy-industrial fitout; council still rating Commercial.",
+          "DA-2025-184 occupancy certificate issued July 2024 for heavy-industrial fitout. GRV revaluation pending; ESH treats non-residential as a single line so the rate-code stays Commercial.",
       },
     ],
   ],
@@ -518,11 +802,15 @@ const MOCK_CHANGE_DETECTION_BY_ASSESSMENT: ReadonlyMap<
     "KAL-7777-01",
     [
       {
+        // No `correctLandUse` — the three child lots stay Commercial; the
+        // upliftcomes from each child being independently rated rather than
+        // bundled in the parent record. The heuristic path applies a
+        // multiplier per severity tier; the strata-conversion workflow is the
+        // mechanical fix.
         kind: "subdivision_detected",
         detectedAt: "2025-01-10",
-        correctLandUse: "Commercial",
         reasoning:
-          "Landgate records 211, 211A, 211B Hannan St as three separately-titled child lots since Jan 2025 (SUB-2025-722). Parent still rated as one parcel.",
+          "Landgate records 211, 211A, 211B Hannan St as three separately-titled child lots since Jan 2025 (SUB-2025-722). Parent still rated as one parcel. Each child should carry its own assessment for the next levy run.",
       },
     ],
   ],
@@ -876,6 +1164,227 @@ const MOCK_EMITS_APPROVALS_BY_TENEMENT: ReadonlyMap<
       },
     ],
   ],
+]);
+
+/**
+ * Mock Landgate restricted-tier title records keyed by VEN.
+ *
+ * Each entry is the canonical title-state the engine compares the
+ * council's view against. The narratives line up with the council-side
+ * overlay in {@link VEN_CT_OVERLAY} so a deliberate mismatch fires per
+ * the demo plan:
+ *
+ *   - TPS-3041-12 — proprietor mismatch (council JONES, Landgate SMITH)
+ *   - ASH-9911-04 — CT volume/folio rolled forward after BA-2026-019
+ *   - ESH-7011-08 — multi-PIN landuse divergence (3 PINs, 1 flipped to
+ *     Industrial after DA-2025-184 fitout)
+ *   - KAL-7777-01 — strata parent still rated; 3 child CTs on Landgate
+ *
+ * Every entry carries a `source: TitleSourceFreshness` so the evidence
+ * pack renders an accurate provenance caveat.
+ */
+const MOCK_LANDGATE_RECORDS_BY_VEN: ReadonlyMap<
+  string,
+  {
+    readonly ven: string;
+    readonly ctVolume: string;
+    readonly ctFolio: string;
+    readonly ctIssuedDate?: string;
+    readonly proprietorOnTitle: string;
+    readonly proprietorPostalAddress?: string;
+    readonly pins: ReadonlyArray<Pin>;
+    readonly encumbrances: ReadonlyArray<Encumbrance>;
+    readonly strataChildren?: ReadonlyArray<StrataChild>;
+    readonly source: TitleSourceFreshness;
+  }
+> = new Map([
+  [
+    "VEN-TPS-3041-12",
+    {
+      ven: "VEN-TPS-3041-12",
+      ctVolume: "1845",
+      ctFolio: "207",
+      ctIssuedDate: "2018-03-12",
+      proprietorOnTitle: "SMITH, DANIEL R.",
+      proprietorPostalAddress: "PO Box 821, Tom Price WA 6751",
+      pins: [
+        {
+          pin: "8001127",
+          lotPlan: "Lot 12 DP 18337",
+          landuseCode: "Residential",
+          areaSquareMetres: 720,
+        },
+      ],
+      encumbrances: [],
+      source: {
+        source: "landgate_restricted",
+        retrievedAt: "2026-05-11T01:30:00Z",
+      },
+    },
+  ],
+  [
+    "VEN-ASH-9911-04",
+    {
+      ven: "VEN-ASH-9911-04",
+      ctVolume: "2952",
+      ctFolio: "108",
+      ctIssuedDate: "2026-02-22",
+      proprietorOnTitle: "Pilbara Minerals Processing Ltd",
+      proprietorPostalAddress:
+        "Level 8, 240 St Georges Terrace, Perth WA 6000",
+      pins: [
+        {
+          pin: "9914-A",
+          lotPlan: "Lot 9914A DP 552108",
+          landuseCode: "Industrial",
+          areaSquareMetres: 28_400,
+        },
+      ],
+      encumbrances: [
+        {
+          type: "mortgage",
+          reference: "K994221",
+          date: "2026-02-22",
+          source: "landgate_restricted",
+        },
+      ],
+      source: {
+        source: "landgate_restricted",
+        retrievedAt: "2026-05-11T01:30:00Z",
+      },
+    },
+  ],
+  [
+    "VEN-ESH-7011-08",
+    {
+      ven: "VEN-ESH-7011-08",
+      ctVolume: "2901",
+      ctFolio: "812",
+      ctIssuedDate: "2010-07-10",
+      proprietorOnTitle: "Newman Trading Co Pty Ltd",
+      proprietorPostalAddress: "PO Box 401, Newman WA 6753",
+      pins: [
+        {
+          pin: "9001247-A",
+          lotPlan: "Lot 7011A DP 23145",
+          landuseCode: "Commercial",
+          areaSquareMetres: 4_200,
+        },
+        {
+          pin: "9001247-B",
+          lotPlan: "Lot 7011B DP 23145",
+          landuseCode: "Industrial",
+          areaSquareMetres: 3_100,
+        },
+        {
+          pin: "9001247-C",
+          lotPlan: "Lot 7011C DP 23145",
+          landuseCode: "Commercial",
+          areaSquareMetres: 2_800,
+        },
+      ],
+      encumbrances: [],
+      source: {
+        source: "landgate_restricted",
+        retrievedAt: "2026-05-10T03:15:00Z",
+      },
+    },
+  ],
+  [
+    "VEN-KAL-7777-01",
+    {
+      ven: "VEN-KAL-7777-01",
+      ctVolume: "2410",
+      ctFolio: "199",
+      ctIssuedDate: "1999-02-03",
+      proprietorOnTitle: "Hannan Holdings Pty Ltd",
+      proprietorPostalAddress: "Hannan Street 211, Kalgoorlie WA 6430",
+      pins: [
+        {
+          pin: "7000211",
+          lotPlan: "Lot 211 DP 18810",
+          landuseCode: "Commercial",
+          areaSquareMetres: 1_800,
+        },
+      ],
+      encumbrances: [],
+      strataChildren: [
+        { volume: "3801", folio: "211" },
+        { volume: "3801", folio: "211A" },
+        { volume: "3801", folio: "211B" },
+      ],
+      source: {
+        source: "landgate_restricted",
+        retrievedAt: "2026-05-11T01:30:00Z",
+      },
+    },
+  ],
+]);
+
+/**
+ * Mock Water Corporation eligibility records keyed by masked card number.
+ *
+ * The recovery engine matches against either the masked card number or the
+ * proprietor name (whichever the council uploaded as the WC eligibility
+ * CSV's join key). The card-number lookups below align with the
+ * `pensionerConcession.cardNumber` field in {@link VEN_CT_OVERLAY}.
+ */
+const MOCK_WC_ELIGIBILITY: ReadonlyMap<
+  string,
+  {
+    readonly status: WaterCorpEligibilityStatus;
+    readonly validFrom?: string;
+    readonly validTo?: string;
+    readonly cancellationReason?: string;
+    readonly cancellationDate?: string;
+    readonly retrievedAt: string;
+  }
+> = new Map([
+  [
+    "****-****-1188",
+    {
+      status: "deceased",
+      validFrom: "2014-07-01",
+      validTo: "2026-02-14",
+      cancellationReason: "Death notified by next of kin",
+      cancellationDate: "2026-02-14",
+      retrievedAt: "2026-05-10T22:00:00Z",
+    },
+  ],
+  [
+    "****-****-7321",
+    {
+      status: "cancelled",
+      validFrom: "2017-09-01",
+      validTo: "2026-01-19",
+      cancellationReason: "Holder downsized to another assessment",
+      cancellationDate: "2026-01-19",
+      retrievedAt: "2026-05-09T18:45:00Z",
+    },
+  ],
+  [
+    "****-****-9920",
+    {
+      status: "expired",
+      validFrom: "2020-04-01",
+      validTo: "2024-12-31",
+      retrievedAt: "2026-05-09T18:45:00Z",
+    },
+  ],
+]);
+
+/**
+ * Proprietor names known to be deceased. Sourced from the Water Corp feed
+ * plus council probate intake. Normalised comparison (upper-case,
+ * punctuation-stripped, whitespace-collapsed) is done inside the engine.
+ *
+ * Margaret Thompson is the holder of `TPS-3041-44` whose `pensionerConcession`
+ * Water Corp status is also DECEASED — the engine fires
+ * `id.pensioner_deceased_continued_rebate` once and the standalone
+ * `id.proprietor_deceased` independently.
+ */
+const MOCK_PROPRIETOR_DECEASED_REFERENCES: ReadonlySet<string> = new Set([
+  "THOMPSON, MARGARET",
 ]);
 
 /**

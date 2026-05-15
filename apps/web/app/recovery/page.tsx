@@ -24,11 +24,45 @@ import {
   Eye,
   GanttChart,
   BellRing,
+  ClipboardList,
+  Home,
+  Scale,
 } from "lucide-react";
 
 const RECENTLY_GRANTED_SIGNAL_ID = "reg.tenement.recently_granted";
 const CADASTRE_LAG_SIGNAL_ID = "reg.dmirs_ahead_of_landgate";
 const ADDRESS_MISMATCH_SIGNAL_ID = "reg.address_mismatch_landgate";
+
+/**
+ * Title-mismatch family — any signal that diverges the council's title-state
+ * from Landgate's canonical record (proprietor, CT number, encumbrance, PINs).
+ * The "Title mismatch" pill filters candidates with ANY of these firing.
+ */
+const TITLE_MISMATCH_SIGNAL_IDS: ReadonlySet<string> = new Set([
+  "mismatch.proprietor",
+  "mismatch.ct_number_changed",
+  "mismatch.encumbrance_added",
+  "mismatch.pin_landuse_diverges",
+  "mismatch.pin_missing_from_record",
+]);
+
+/**
+ * Concession-review family — every `id.pensioner_*` signal. The "Concession
+ * review" pill filters candidates with ANY of these firing.
+ */
+const CONCESSION_REVIEW_SIGNAL_IDS: ReadonlySet<string> = new Set([
+  "id.pensioner_deceased_continued_rebate",
+  "id.pensioner_eligibility_cancelled",
+  "id.pensioner_card_expired",
+  "id.pensioner_not_at_property",
+]);
+
+/**
+ * Strata-conversion family — the single canonical signal that drives the
+ * strata-conversion workflow. Rows under this pill expose a "Convert →"
+ * button linking to `/strata/<assessment>`.
+ */
+const STRATA_CONVERSION_SIGNAL_ID = "mismatch.strata_parent_still_rated";
 
 type DataResponse = {
   mismatches: MismatchCandidate[];
@@ -105,20 +139,22 @@ function RecoveryPageInner() {
   const [recentlyGrantedOnly, setRecentlyGrantedOnly] = useState<boolean>(false);
   const [cadastreLagOnly, setCadastreLagOnly] = useState<boolean>(false);
   const [addressMismatchOnly, setAddressMismatchOnly] = useState<boolean>(false);
+  const [titleMismatchOnly, setTitleMismatchOnly] = useState<boolean>(false);
+  const [concessionReviewOnly, setConcessionReviewOnly] = useState<boolean>(false);
+  const [strataConversionOnly, setStrataConversionOnly] = useState<boolean>(false);
   const searchParams = useSearchParams();
 
-  // Pre-apply the "Newly granted only" filter when arriving via
-  // /recovery?signal=recently_granted (e.g. the legacy /alerts redirect).
+  // Pre-apply filters when arriving via /recovery?signal=<family> (the legacy
+  // /alerts redirect uses `recently_granted`; the new VEN/CT/Concession pills
+  // mirror the same param convention so deep-links stay stable).
   useEffect(() => {
-    if (searchParams?.get("signal") === "recently_granted") {
-      setRecentlyGrantedOnly(true);
-    }
-    if (searchParams?.get("signal") === "cadastre_lag") {
-      setCadastreLagOnly(true);
-    }
-    if (searchParams?.get("signal") === "address_mismatch") {
-      setAddressMismatchOnly(true);
-    }
+    const sig = searchParams?.get("signal");
+    if (sig === "recently_granted") setRecentlyGrantedOnly(true);
+    if (sig === "cadastre_lag") setCadastreLagOnly(true);
+    if (sig === "address_mismatch") setAddressMismatchOnly(true);
+    if (sig === "title_mismatch") setTitleMismatchOnly(true);
+    if (sig === "concession_review") setConcessionReviewOnly(true);
+    if (sig === "strata_conversion") setStrataConversionOnly(true);
   }, [searchParams]);
 
   // PERF-009: per-signal sample lookup, computed once per data change.
@@ -165,6 +201,33 @@ function RecoveryPageInner() {
     return n;
   }, [fetchState]);
 
+  const titleMismatchCount = useMemo(() => {
+    if (fetchState.status !== "ok") return 0;
+    let n = 0;
+    for (const m of fetchState.data.mismatches) {
+      if (m.signals.some((s) => TITLE_MISMATCH_SIGNAL_IDS.has(s.id))) n++;
+    }
+    return n;
+  }, [fetchState]);
+
+  const concessionReviewCount = useMemo(() => {
+    if (fetchState.status !== "ok") return 0;
+    let n = 0;
+    for (const m of fetchState.data.mismatches) {
+      if (m.signals.some((s) => CONCESSION_REVIEW_SIGNAL_IDS.has(s.id))) n++;
+    }
+    return n;
+  }, [fetchState]);
+
+  const strataConversionCount = useMemo(() => {
+    if (fetchState.status !== "ok") return 0;
+    let n = 0;
+    for (const m of fetchState.data.mismatches) {
+      if (m.signals.some((s) => s.id === STRATA_CONVERSION_SIGNAL_ID)) n++;
+    }
+    return n;
+  }, [fetchState]);
+
   if (fetchState.status === "loading") return <LoadingState />;
   if (fetchState.status === "error") return <ErrorState message={fetchState.error} />;
   const data = fetchState.data;
@@ -184,6 +247,18 @@ function RecoveryPageInner() {
   if (addressMismatchOnly)
     filtered = filtered.filter((m) =>
       m.signals.some((s) => s.id === ADDRESS_MISMATCH_SIGNAL_ID),
+    );
+  if (titleMismatchOnly)
+    filtered = filtered.filter((m) =>
+      m.signals.some((s) => TITLE_MISMATCH_SIGNAL_IDS.has(s.id)),
+    );
+  if (concessionReviewOnly)
+    filtered = filtered.filter((m) =>
+      m.signals.some((s) => CONCESSION_REVIEW_SIGNAL_IDS.has(s.id)),
+    );
+  if (strataConversionOnly)
+    filtered = filtered.filter((m) =>
+      m.signals.some((s) => s.id === STRATA_CONVERSION_SIGNAL_ID),
     );
 
   return (
@@ -371,10 +446,80 @@ function RecoveryPageInner() {
             </button>
           </div>
 
+          {/* VEN + CT + Concession filter pills.
+              Each pill toggles a signal-family filter (title-mismatch covers
+              5 register/identity signals; concession-review covers 4
+              pensioner signals; strata-conversion is the single
+              `mismatch.strata_parent_still_rated` driver of the
+              /strata/[assessment] workflow). Pill UX matches the row above
+              — rounded button + count badge — and stacks with the severity
+              filter and the older pills. */}
+          <div className="flex flex-wrap items-center gap-2" aria-label="Title and concession filter pills">
+            <button
+              type="button"
+              onClick={() => setTitleMismatchOnly((v) => !v)}
+              aria-pressed={titleMismatchOnly}
+              data-testid="filter-title-mismatch"
+              className={`btn ${
+                titleMismatchOnly
+                  ? "bg-accent-700 text-white"
+                  : "bg-white border border-accent-300 text-accent-700 hover:bg-accent-50"
+              }`}
+              title="Filter to candidates with a proprietor, CT number, encumbrance or per-PIN mismatch against Landgate's canonical title record."
+            >
+              <ClipboardList className="w-3 h-3" />
+              Title mismatch
+              <span className="text-[10px] opacity-70 ml-1">
+                {titleMismatchCount}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setConcessionReviewOnly((v) => !v)}
+              aria-pressed={concessionReviewOnly}
+              data-testid="filter-concession-review"
+              className={`btn ${
+                concessionReviewOnly
+                  ? "bg-success-700 text-white"
+                  : "bg-white border border-success-300 text-success-700 hover:bg-success-50"
+              }`}
+              title="Filter to candidates with a pensioner concession that diverges from Water Corp eligibility (deceased / cancelled / expired card / postal-vs-property mismatch)."
+            >
+              <Home className="w-3 h-3" />
+              Concession review
+              <span className="text-[10px] opacity-70 ml-1">
+                {concessionReviewCount}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setStrataConversionOnly((v) => !v)}
+              aria-pressed={strataConversionOnly}
+              data-testid="filter-strata-conversion"
+              className={`btn ${
+                strataConversionOnly
+                  ? "bg-warn-600 text-white"
+                  : "bg-white border border-warn-300 text-warn-700 hover:bg-warn-50"
+              }`}
+              title="Filter to parent assessments where Landgate records strata children but council is still rating the parent. Each row exposes a Convert workflow."
+            >
+              <Scale className="w-3 h-3" />
+              Strata conversion
+              <span className="text-[10px] opacity-70 ml-1">
+                {strataConversionCount}
+              </span>
+            </button>
+          </div>
+
           {/* Candidates */}
           <div className="space-y-3">
             {filtered.map((c, i) => (
-              <CandidateCard key={c.assessmentNumber} candidate={c} rank={i + 1} />
+              <CandidateCard
+                key={c.assessmentNumber}
+                candidate={c}
+                rank={i + 1}
+                showStrataConvert={strataConversionOnly}
+              />
             ))}
             {filtered.length === 0 && (
               <div className="text-center text-ink-500 text-sm py-12">
@@ -418,9 +563,11 @@ function Stat({
 function CandidateCard({
   candidate: c,
   rank,
+  showStrataConvert,
 }: {
   candidate: MismatchCandidate;
   rank: number;
+  showStrataConvert: boolean;
 }) {
   const isRecentlyGranted = c.signals.some(
     (s) => s.id === RECENTLY_GRANTED_SIGNAL_ID,
@@ -429,15 +576,26 @@ function CandidateCard({
   const addressMismatchSignal = c.signals.find(
     (s) => s.id === ADDRESS_MISMATCH_SIGNAL_ID,
   );
+  const strataConversionSignal = c.signals.find(
+    (s) => s.id === STRATA_CONVERSION_SIGNAL_ID,
+  );
   // Parse the lag-days figure out of the evidence string for a quick badge.
   const lagDaysMatch = cadastreLagSignal?.evidence.match(/Cadastre lag: (\d+) days?/);
   const lagDays = lagDaysMatch ? Number(lagDaysMatch[1]) : null;
+  const hasStrataParent = strataConversionSignal !== undefined;
+  const exposeConvertButton = showStrataConvert && hasStrataParent;
   return (
-    <Link
-      href={`/recovery/${c.assessmentNumber}`}
-      className="card p-5 hover:border-accent-400 transition-colors block"
+    <div
+      className="card p-5 hover:border-accent-400 transition-colors relative"
+      data-testid="candidate-card"
+      data-assessment={c.assessmentNumber}
     >
-      <div className="flex items-start justify-between gap-4">
+      <Link
+        href={`/recovery/${c.assessmentNumber}`}
+        className="absolute inset-0 z-0 rounded"
+        aria-label={`View evidence pack for assessment ${c.assessmentNumber}`}
+      />
+      <div className="flex items-start justify-between gap-4 relative z-10 pointer-events-none [&_a]:pointer-events-auto [&_button]:pointer-events-auto">
         <div className="flex-1">
           <div className="flex items-center gap-2 mb-1 flex-wrap">
             <span className="text-ink-400 text-sm">#{rank}</span>
@@ -517,7 +675,25 @@ function CandidateCard({
           </div>
         </div>
       </div>
-    </Link>
+      {exposeConvertButton && (
+        <div className="mt-3 pt-3 border-t border-ink-200 flex items-center justify-between gap-3 relative z-20">
+          <div className="text-xs text-ink-600">
+            <span className="font-medium text-ink-900">Strata parent detected.</span>{" "}
+            Convert the parent to its child CTs before the next levy run.
+          </div>
+          <Link
+            href={`/strata/${c.assessmentNumber}`}
+            data-testid="strata-convert-link"
+            aria-label={`Open strata conversion workflow for assessment ${c.assessmentNumber}`}
+            className="btn bg-warn-600 text-white hover:bg-warn-700 text-xs"
+          >
+            <Scale className="w-3 h-3" />
+            Convert
+            <ArrowUpRight className="w-3 h-3" />
+          </Link>
+        </div>
+      )}
+    </div>
   );
 }
 

@@ -71,6 +71,117 @@ export type LandUse =
 
 export type PaymentMethod = "Direct Debit" | "BPAY" | "Counter" | "Mail";
 
+// ===== Cadastre / title primitives (VEN + CT + Concession feature) =====
+
+/**
+ * GeoJSON geometry subset accepted in cadastral payloads.
+ *
+ * Mirrors `GeoJsonGeometry` in `@ratesassist/spatial` but redefined here so
+ * the contract package stays dependency-free of the spatial package. The
+ * spatial package depends on contract, not the reverse.
+ */
+export type GeoJsonGeometry =
+  | { readonly type: "Polygon"; readonly coordinates: readonly (readonly (readonly number[])[])[] }
+  | { readonly type: "MultiPolygon"; readonly coordinates: readonly (readonly (readonly (readonly number[])[])[])[] }
+  | { readonly type: "Point"; readonly coordinates: readonly number[] };
+
+/**
+ * Landgate Parcel Identifier (PIN) — the parcel-level key under a VEN.
+ *
+ * A single VEN may reference N PINs (rural farms, strata complexes,
+ * adjoining commercial titles). The engine evaluates landuse divergence
+ * per PIN; ANY PIN with a landuse code differing from the council's rate
+ * code fires `mismatch.pin_landuse_diverges`.
+ */
+export type Pin = {
+  /** Landgate Parcel Identifier. */
+  readonly pin: string;
+  /** Lot / plan descriptor, e.g. "Lot 42 DP 18337". */
+  readonly lotPlan: string;
+  /** Landgate's classification for this specific PIN (NOT the council's rate code). */
+  readonly landuseCode: string;
+  readonly areaSquareMetres: number;
+  readonly geometry?: GeoJsonGeometry;
+  /** Populated when cross-council detection runs and the PIN straddles a boundary. */
+  readonly councilCode?: string;
+};
+
+export type EncumbranceType =
+  | "mortgage"
+  | "easement"
+  | "caveat"
+  | "tenement_notation"
+  | "covenant"
+  | "other";
+
+/** A registered encumbrance on a Certificate of Title. */
+export type Encumbrance = {
+  readonly type: EncumbranceType;
+  readonly reference: string;
+  /** ISO-8601 date the encumbrance was registered. */
+  readonly date: string;
+  /** Freshness label (e.g. "wc_feed", "landgate_restricted"). */
+  readonly source: string;
+};
+
+/** Water Corporation eligibility status for a pensioner concession holder. */
+export type WaterCorpEligibilityStatus =
+  | "active"
+  | "cancelled"
+  | "expired"
+  | "deceased"
+  | "unknown";
+
+export type PensionerConcessionType =
+  | "pensioner"
+  | "first_home"
+  | "senior"
+  | "veteran";
+
+/**
+ * Pensioner-class concession record. Authority on eligibility is the
+ * Water Corporation feed; council-applied state is reconciled against it.
+ * Statutory basis: Rates and Charges Rebates and Deferments Act 1992 (WA).
+ */
+export type PensionerConcession = {
+  readonly applied: boolean;
+  readonly type: PensionerConcessionType;
+  /** ISO-8601 date the concession was first applied on this assessment. */
+  readonly appliedAt: string;
+  readonly cardNumber?: string;
+  /** ISO-8601 date the card expires (or expired). */
+  readonly cardExpiry?: string;
+  /** ISO-8601 timestamp of last successful Water Corp eligibility check. */
+  readonly wcEligibilityVerifiedAt?: string;
+  readonly wcEligibilityStatus?: WaterCorpEligibilityStatus;
+  readonly wcCancellationReason?: string;
+  /** ISO-8601 date eligibility was cancelled (if applicable). */
+  readonly wcCancellationDate?: string;
+};
+
+/** Source tier for title / cadastral data, used for freshness labelling. */
+export type TitleSourceTier =
+  | "wc_feed"
+  | "landgate_restricted"
+  | "slip"
+  | "council_uploaded_pdf"
+  | "map_viewer_plus";
+
+/** Provenance + freshness metadata attached to a Landgate-sourced datum. */
+export type TitleSourceFreshness = {
+  readonly source: TitleSourceTier;
+  /** ISO-8601 timestamp the source was queried / file uploaded. */
+  readonly retrievedAt: string;
+  /** Human-readable caveat, e.g. "may lag 1-4 weeks". */
+  readonly lagWarning?: string;
+};
+
+/** A child CT under a strata-subdivided parent title. */
+export type StrataChild = {
+  readonly volume: string;
+  readonly folio: string;
+};
+
 /**
  * A rateable property as represented in the council's rating system.
  *
@@ -117,6 +228,34 @@ export type Property = {
    * pastoral, and mining rate lines (basis = UV). Optional.
    */
   readonly uv?: number;
+
+  // ===== VEN + CT + Concession extensions (all optional — existing
+  // fixtures and DB rows must still validate without these). =====
+
+  /** Valuation Entity Number — the Landgate join key. 1 VEN per assessment. */
+  readonly ven?: string;
+  /** Landgate parcels under this VEN. Empty / undefined for legacy rows. */
+  readonly pins?: ReadonlyArray<Pin>;
+  /** Certificate of Title volume. */
+  readonly ctVolume?: string;
+  /** Certificate of Title folio. */
+  readonly ctFolio?: string;
+  /** ISO-8601 date the current CT was issued. */
+  readonly ctIssuedDate?: string;
+  /** Registered proprietor name from Landgate (NOT necessarily the council's owner of record). */
+  readonly proprietorOnTitle?: string;
+  /** Proprietor postal address from Landgate. */
+  readonly proprietorPostalAddress?: string;
+  /** Set when this CT has been strata-subdivided and the parent is still on the rating roll. */
+  readonly strataParentCt?: { readonly volume: string; readonly folio: string };
+  /** Child CTs created from a strata subdivision of this parent. */
+  readonly strataChildren?: ReadonlyArray<StrataChild>;
+  /** Registered encumbrances against the title. */
+  readonly encumbrances?: ReadonlyArray<Encumbrance>;
+  /** Concession record reconciled against Water Corp eligibility feed. */
+  readonly pensionerConcession?: PensionerConcession;
+  /** Source / freshness metadata for the most recent Landgate title pull. */
+  readonly titleSource?: TitleSourceFreshness;
 };
 
 // ===== Owner / ABN =====

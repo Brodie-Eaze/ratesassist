@@ -6,14 +6,19 @@
  */
 
 import type {
+  Encumbrance,
   LandUseCategory,
   MismatchSeverity,
   Owner,
+  Pin,
   Property,
   RateTable,
   SignalDef,
   SignalHit,
+  StrataChild,
   Tenement,
+  TitleSourceFreshness,
+  WaterCorpEligibilityStatus,
 } from "@ratesassist/contract";
 
 import {
@@ -170,6 +175,52 @@ export type EvaluationContext = {
    * deterministic.
    */
   readonly now?: () => number;
+  /**
+   * Landgate restricted-tier title records keyed by VEN. When present and
+   * a property carries a `ven`, the engine cross-references the canonical
+   * Landgate state against the council's rating record and fires the
+   * VEN/PIN/CT class signals. Absent map (or no entry) = the VEN/PIN/CT
+   * signals don't fire. No false positives without an explicit Landgate
+   * pull.
+   */
+  readonly landgateRecordsByVen?: ReadonlyMap<string, {
+    readonly ven: string;
+    readonly ctVolume: string;
+    readonly ctFolio: string;
+    readonly ctIssuedDate?: string;
+    readonly proprietorOnTitle: string;
+    readonly proprietorPostalAddress?: string;
+    readonly pins: ReadonlyArray<Pin>;
+    readonly encumbrances: ReadonlyArray<Encumbrance>;
+    readonly strataChildren?: ReadonlyArray<StrataChild>;
+    readonly source: TitleSourceFreshness;
+  }>;
+  /**
+   * Water Corporation eligibility records keyed by either the masked card
+   * number or by the proprietor name (whichever the council uploaded as
+   * the join key on the WC eligibility CSV). When present and a property's
+   * pensioner concession references one of these keys, the concession
+   * signals fire on the canonical WC state.
+   */
+  readonly waterCorpEligibilityByCardOrProprietor?: ReadonlyMap<string, {
+    readonly status: WaterCorpEligibilityStatus;
+    readonly validFrom?: string;
+    readonly validTo?: string;
+    readonly cancellationReason?: string;
+    readonly cancellationDate?: string;
+    readonly retrievedAt: string;
+  }>;
+  /**
+   * Proprietor names known to be deceased — populated from the Water Corp
+   * feed's `deceased` rows and/or council probate intake. Used to fire
+   * `id.proprietor_deceased` independently of concession state and to
+   * compound `id.pensioner_deceased_continued_rebate`.
+   *
+   * Comparison is done on a normalised form (uppercased, whitespace
+   * collapsed, punctuation stripped) to absorb minor data-entry variance
+   * between Water Corp and council systems.
+   */
+  readonly proprietorDeceasedReferences?: ReadonlySet<string>;
 };
 
 /** Window (in days) for the `reg.tenement.recently_granted` signal. */
@@ -238,6 +289,425 @@ function suburbRuralValuationPercentile(
   if (peers.length < 2) return 0.5;
   const lower = peers.filter((q) => q.valuation < p.valuation).length;
   return lower / peers.length;
+}
+
+// ===== VEN / PIN / CT / Concession helpers =====
+
+/**
+ * Normalise a person / entity / address string for equality comparison. Lower
+ * cases, strips punctuation, collapses whitespace, and trims. Used so that
+ * "Smith, John A." and "SMITH JOHN A" reconcile, and "12 Main St" matches
+ * "12 MAIN STREET" once the street-suffix shim below has run.
+ */
+function normaliseName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[\.,'`’“”"]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+const STREET_SUFFIX_MAP: ReadonlyMap<string, string> = new Map<string, string>([
+  ["st", "street"], ["str", "street"],
+  ["rd", "road"],
+  ["av", "avenue"], ["ave", "avenue"],
+  ["bvd", "boulevard"], ["blv", "boulevard"], ["blvd", "boulevard"],
+  ["cr", "crescent"], ["cres", "crescent"],
+  ["ct", "court"],
+  ["dr", "drive"], ["drv", "drive"],
+  ["hwy", "highway"],
+  ["ln", "lane"],
+  ["pde", "parade"],
+  ["pl", "place"],
+  ["sq", "square"],
+  ["tce", "terrace"], ["ter", "terrace"],
+  ["wy", "way"],
+]);
+
+/**
+ * Normalise an Australian property / postal address for equality comparison.
+ * Lower-cases, strips punctuation, expands common street-suffix abbreviations,
+ * collapses whitespace, and trims. Imperfect (no AS-4590 parse) but enough to
+ * make obvious typographical and abbreviation differences reconcile.
+ */
+function normaliseAddress(address: string): string {
+  const baseTokens = normaliseName(address).split(" ");
+  const expanded = baseTokens.map((tok) => STREET_SUFFIX_MAP.get(tok) ?? tok);
+  return expanded.join(" ");
+}
+
+/**
+ * Normalise a landuse string to compare a council's rate code (which may be
+ * a domain enum like "Industrial") against a Landgate landuse code (which
+ * may be a short code like "IND" or a longer human-readable phrase). Two
+ * landuse strings are considered equivalent if their normalised forms share
+ * a token (e.g. "industrial" matches "ind" or "industrial use").
+ *
+ * Conservative on purpose: false-positive divergence is preferred to false-
+ * negative reconciliation in the spirit of the engine — every hit is human-
+ * reviewed and the audit pack carries the raw strings verbatim.
+ */
+const LANDUSE_CODE_ALIASES: ReadonlyMap<string, string> = new Map<string, string>([
+  ["res", "residential"],
+  ["resi", "residential"],
+  ["com", "commercial"],
+  ["comm", "commercial"],
+  ["ind", "industrial"],
+  ["indust", "industrial"],
+  ["vac", "vacant"],
+  ["rur", "rural"],
+  ["past", "pastoral"],
+  ["min", "mining"],
+]);
+
+function normaliseLanduse(code: string): string {
+  const base = normaliseName(code);
+  return LANDUSE_CODE_ALIASES.get(base) ?? base;
+}
+
+function landuseMatches(councilCode: string, landgateCode: string): boolean {
+  const a = normaliseLanduse(councilCode);
+  const b = normaliseLanduse(landgateCode);
+  if (a === b) return true;
+  // Token-overlap shim: treat as equivalent if either form contains the other
+  // (covers "industrial use" matching "industrial" but not the looser
+  // "residential industrial estate").
+  return a.startsWith(b) || b.startsWith(a);
+}
+
+/**
+ * Build a freshness label for an evidence string from a TitleSourceFreshness
+ * record. Mirrors the source-freshness pattern in the spec — every Landgate /
+ * WC-sourced datum carries a `Source: <tier> retrieved <date> (<lag> ago).`
+ * tail so the audit pack is self-contained.
+ */
+function freshnessLabel(source: TitleSourceFreshness, nowMs: number): string {
+  const tierName: Record<TitleSourceFreshness["source"], string> = {
+    landgate_restricted: "Landgate restricted-tier",
+    wc_feed: "Water Corp Quarterly Eligibility Feed",
+    slip: "Landgate SLIP (public)",
+    council_uploaded_pdf: "council-uploaded CT search PDF",
+    map_viewer_plus: "Landgate Map Viewer Plus",
+  };
+  const tier = tierName[source.source] ?? source.source;
+  const retrievedDate = source.retrievedAt.slice(0, 10);
+  const retrievedMs = Date.parse(source.retrievedAt);
+  if (!Number.isFinite(retrievedMs)) {
+    return `Source: ${tier} retrieved ${retrievedDate}.`;
+  }
+  const ageDays = Math.max(0, Math.floor((nowMs - retrievedMs) / MS_PER_DAY));
+  const ageLabel = ageDays === 0 ? "today" : `${ageDays} day${ageDays === 1 ? "" : "s"} ago`;
+  const caveat = source.lagWarning ? ` ${source.lagWarning}` : "";
+  const staleness =
+    ageDays > PRIMARY_STALENESS_DAYS
+      ? ` Caveat: ${PRIMARY_SOURCE_STALE_CAVEAT}.`
+      : "";
+  return `Source: ${tier} retrieved ${retrievedDate} (${ageLabel}).${caveat}${staleness}`;
+}
+
+/**
+ * True if a primary source is >7 days old AND a mismatch is firing. The
+ * caveat string is documented in the spec's source-freshness pattern.
+ */
+const PRIMARY_STALENESS_DAYS = 7;
+
+/** Primary-source-stale caveat string surfaced on candidates. */
+export const PRIMARY_SOURCE_STALE_CAVEAT =
+  "primary source >7 days old — verify against current source before lodging";
+
+/**
+ * True if a Landgate / WC source's `retrievedAt` is older than the staleness
+ * threshold. Used by `findMismatches` to attach a `caveats` entry to any
+ * candidate whose firing signals rest on stale primary data.
+ */
+export function isPrimarySourceStale(
+  source: TitleSourceFreshness,
+  nowMs: number,
+): boolean {
+  const retrievedMs = Date.parse(source.retrievedAt);
+  if (!Number.isFinite(retrievedMs)) return false;
+  return nowMs - retrievedMs > PRIMARY_STALENESS_DAYS * MS_PER_DAY;
+}
+
+/**
+ * Evaluate the 12 VEN/PIN/CT + concession signals on a single property. Pure
+ * function — no side effects, deterministic given identical input. Wired
+ * into `evaluateSignals` below; exported standalone so adapters / tests can
+ * exercise the class in isolation.
+ *
+ * Dedupe note: `id.pensioner_not_at_property` is the more specific sibling
+ * of the (future) generic `id.owner_occupier_concession_mismatch`. When the
+ * generic signal has already fired on the same property (i.e. it appears
+ * in `existingHits`), we suppress it from the result and emit the pensioner-
+ * specific version instead. When the generic signal has NOT fired, the
+ * pensioner-specific signal stands alone. Either way the more-specific,
+ * higher-relevance signal wins.
+ */
+export function evaluateVenCtConcessionSignals(
+  p: Property,
+  ctx: EvaluationContext,
+  existingHits: readonly SignalHit[] = [],
+): readonly SignalHit[] {
+  const hits: SignalHit[] = [];
+  const nowMs = (ctx.now ?? Date.now)();
+
+  // ---- VEN/PIN/CT signals (require a Landgate record) ----
+  const landgate =
+    p.ven && ctx.landgateRecordsByVen
+      ? ctx.landgateRecordsByVen.get(p.ven)
+      : undefined;
+
+  if (landgate !== undefined) {
+    const source = freshnessLabel(landgate.source, nowMs);
+
+    // 1. mismatch.proprietor — Landgate proprietor differs from council's
+    // owner of record. Council's "owner of record" is the proprietorOnTitle
+    // field if present, else falls back to the property's first owner's
+    // name via ownersById.
+    const councilProprietor =
+      p.proprietorOnTitle ?? ownerOf(p, ctx)?.name ?? null;
+    if (
+      councilProprietor !== null &&
+      normaliseName(councilProprietor) !==
+        normaliseName(landgate.proprietorOnTitle)
+    ) {
+      const sig = getSignal("mismatch.proprietor")!;
+      hits.push(
+        hit(
+          sig,
+          `Landgate CT ${landgate.ctVolume}/${landgate.ctFolio} lists proprietor ${landgate.proprietorOnTitle} but council owner of record is ${councilProprietor}. ${source}`,
+        ),
+      );
+    }
+
+    // 2. mismatch.ct_number_changed — council CT volume/folio differs from
+    // Landgate. Only fires when both council values are present.
+    if (
+      p.ctVolume !== undefined &&
+      p.ctFolio !== undefined &&
+      (p.ctVolume !== landgate.ctVolume || p.ctFolio !== landgate.ctFolio)
+    ) {
+      const sig = getSignal("mismatch.ct_number_changed")!;
+      hits.push(
+        hit(
+          sig,
+          `Council records CT ${p.ctVolume}/${p.ctFolio}; Landgate canonical CT for VEN ${landgate.ven} is ${landgate.ctVolume}/${landgate.ctFolio}. ${source}`,
+        ),
+      );
+    }
+
+    // 3. mismatch.strata_parent_still_rated — Landgate shows children
+    // exist on this CT and council is still rating the parent.
+    if (landgate.strataChildren && landgate.strataChildren.length > 0) {
+      const sig = getSignal("mismatch.strata_parent_still_rated")!;
+      const list = landgate.strataChildren
+        .map((c) => `CT ${c.volume}/${c.folio}`)
+        .join("; ");
+      hits.push(
+        hit(
+          sig,
+          `Landgate records ${landgate.strataChildren.length} strata-child CT(s) under parent CT ${landgate.ctVolume}/${landgate.ctFolio} (VEN ${landgate.ven}): ${list}. Council still rating the parent record. ${source}`,
+        ),
+      );
+    }
+
+    // 4. mismatch.encumbrance_added — encumbrances on Landgate not on
+    // council. Compared by reference. Fires once per property; evidence
+    // enumerates every new encumbrance.
+    const councilRefs = new Set(
+      (p.encumbrances ?? []).map((e) => e.reference),
+    );
+    const newEncumbrances = landgate.encumbrances.filter(
+      (e) => !councilRefs.has(e.reference),
+    );
+    if (newEncumbrances.length > 0) {
+      const sig = getSignal("mismatch.encumbrance_added")!;
+      const list = newEncumbrances
+        .map((e) => `${e.type} ${e.reference} (registered ${e.date})`)
+        .join("; ");
+      hits.push(
+        hit(
+          sig,
+          `Landgate records ${newEncumbrances.length} encumbrance(s) on CT ${landgate.ctVolume}/${landgate.ctFolio} not on council record: ${list}. ${source}`,
+        ),
+      );
+    }
+
+    // 5. mismatch.pin_landuse_diverges — fires once per property if ANY
+    // Landgate PIN's landuse differs from the council's rate code.
+    const divergentPins = landgate.pins.filter(
+      (pin) => !landuseMatches(p.landUse, pin.landuseCode),
+    );
+    if (divergentPins.length > 0) {
+      const sig = getSignal("mismatch.pin_landuse_diverges")!;
+      const list = divergentPins
+        .map(
+          (pin) =>
+            `PIN ${pin.pin} (${pin.lotPlan}, ${pin.landuseCode}, ${pin.areaSquareMetres.toLocaleString()} m²)`,
+        )
+        .join("; ");
+      hits.push(
+        hit(
+          sig,
+          `Council rate code "${p.landUse}" diverges from Landgate landuse on ${divergentPins.length} of ${landgate.pins.length} PIN(s): ${list}. ${source}`,
+        ),
+      );
+    }
+
+    // 6. mismatch.pin_missing_from_record — council records fewer PINs
+    // than Landgate has on the VEN.
+    const councilPinIds = new Set((p.pins ?? []).map((pin) => pin.pin));
+    if ((p.pins?.length ?? 0) < landgate.pins.length) {
+      const missing = landgate.pins.filter(
+        (pin) => !councilPinIds.has(pin.pin),
+      );
+      const sig = getSignal("mismatch.pin_missing_from_record")!;
+      const list = missing
+        .map(
+          (pin) =>
+            `PIN ${pin.pin} (${pin.lotPlan}, ${pin.landuseCode}, ${pin.areaSquareMetres.toLocaleString()} m²)`,
+        )
+        .join("; ");
+      hits.push(
+        hit(
+          sig,
+          `Landgate records ${landgate.pins.length} PIN(s) under VEN ${landgate.ven}; council records ${p.pins?.length ?? 0}. Missing: ${list}. ${source}`,
+        ),
+      );
+    }
+
+    // 7. id.cross_council_pin — VEN's PINs straddle council boundaries.
+    const crossCouncilPins = landgate.pins.filter(
+      (pin) => pin.councilCode !== undefined && pin.councilCode !== p.council,
+    );
+    if (crossCouncilPins.length > 0) {
+      const sig = getSignal("id.cross_council_pin")!;
+      const list = crossCouncilPins
+        .map((pin) => `PIN ${pin.pin} (council ${pin.councilCode})`)
+        .join("; ");
+      hits.push(
+        hit(
+          sig,
+          `${crossCouncilPins.length} of ${landgate.pins.length} PIN(s) under VEN ${landgate.ven} sit in another council's boundary: ${list}. Jurisdictional ambiguity — manual review required. ${source}`,
+        ),
+      );
+    }
+  }
+
+  // ---- Concession class signals ----
+  // Most key off `p.pensionerConcession?.applied === true`; the deceased-
+  // proprietor signal fires independently.
+  const concession = p.pensionerConcession;
+  const conceSource = p.titleSource;
+  const conceSourceLabel = conceSource
+    ? freshnessLabel(conceSource, nowMs)
+    : "Source: council concession register.";
+
+  const deceasedRefs = ctx.proprietorDeceasedReferences;
+  const normalisedProprietor = p.proprietorOnTitle
+    ? normaliseName(p.proprietorOnTitle)
+    : null;
+  const proprietorIsDeceased =
+    normalisedProprietor !== null &&
+    deceasedRefs !== undefined &&
+    [...deceasedRefs].some(
+      (ref) => normaliseName(ref) === normalisedProprietor,
+    );
+
+  if (concession?.applied === true) {
+    // 8. id.pensioner_deceased_continued_rebate
+    const wcDeceased = concession.wcEligibilityStatus === "deceased";
+    if (wcDeceased || proprietorIsDeceased) {
+      const sig = getSignal("id.pensioner_deceased_continued_rebate")!;
+      const reasonParts: string[] = [];
+      if (wcDeceased) {
+        const cancelDate = concession.wcCancellationDate
+          ? ` (effective ${concession.wcCancellationDate})`
+          : "";
+        reasonParts.push(`Water Corp records eligibility status DECEASED${cancelDate}`);
+      }
+      if (proprietorIsDeceased && !wcDeceased) {
+        reasonParts.push(
+          `Proprietor ${p.proprietorOnTitle} is on the deceased-references register`,
+        );
+      }
+      hits.push(
+        hit(
+          sig,
+          `Pensioner rebate applied since ${concession.appliedAt} on assessment ${p.assessmentNumber}. ${reasonParts.join("; ")}. Recoverable from the effective cancellation date forward; engage the executor before suspending. ${conceSourceLabel}`,
+        ),
+      );
+    }
+
+    // 9. id.pensioner_eligibility_cancelled
+    if (concession.wcEligibilityStatus === "cancelled") {
+      const sig = getSignal("id.pensioner_eligibility_cancelled")!;
+      const reason = concession.wcCancellationReason
+        ? ` Reason: ${concession.wcCancellationReason}.`
+        : "";
+      const cancelDate = concession.wcCancellationDate
+        ? ` Effective ${concession.wcCancellationDate}.`
+        : "";
+      hits.push(
+        hit(
+          sig,
+          `Pensioner rebate applied since ${concession.appliedAt} but Water Corp records eligibility CANCELLED.${cancelDate}${reason} ${conceSourceLabel}`,
+        ),
+      );
+    }
+
+    // 10. id.pensioner_card_expired
+    if (concession.cardExpiry !== undefined) {
+      const expiryMs = Date.parse(concession.cardExpiry);
+      if (Number.isFinite(expiryMs) && expiryMs < nowMs) {
+        const sig = getSignal("id.pensioner_card_expired")!;
+        hits.push(
+          hit(
+            sig,
+            `Concession card on file for assessment ${p.assessmentNumber} expired ${concession.cardExpiry}; rebate continuing without a current card. ${conceSourceLabel}`,
+          ),
+        );
+      }
+    }
+
+    // 11. id.pensioner_not_at_property — proprietor postal != property
+    // address. Dedupe: if `id.owner_occupier_concession_mismatch` has
+    // already fired on this property (in existingHits), suppress the
+    // generic and emit only the pensioner-specific signal. The dedupe is
+    // documented above the signal definition.
+    if (
+      p.proprietorPostalAddress !== undefined &&
+      normaliseAddress(p.proprietorPostalAddress) !==
+        normaliseAddress(p.address)
+    ) {
+      const sig = getSignal("id.pensioner_not_at_property")!;
+      hits.push(
+        hit(
+          sig,
+          `Pensioner concession applied to ${p.address} but registered proprietor's postal address is ${p.proprietorPostalAddress}. Eligibility under the Rates and Charges Rebates and Deferments Act 1992 (WA) requires the holder to ordinarily reside at the property. ${conceSourceLabel}`,
+        ),
+      );
+    }
+  }
+
+  // 12. id.proprietor_deceased — fires independently of concession state.
+  // Only requires the proprietor to appear in the deceased-references set.
+  if (proprietorIsDeceased) {
+    const sig = getSignal("id.proprietor_deceased")!;
+    hits.push(
+      hit(
+        sig,
+        `Registered proprietor ${p.proprietorOnTitle} of assessment ${p.assessmentNumber} is on the deceased-references register. Estate-and-executor workflow required; review rates correspondence routing. ${conceSourceLabel}`,
+      ),
+    );
+  }
+
+  // Dedupe pass: the pensioner-specific not-at-property signal supersedes
+  // the generic owner-occupier mismatch when both would otherwise fire.
+  // Implemented defensively against `existingHits` — we filter on the
+  // returned `hits` only (the generic signal in `existingHits` is removed
+  // by the caller in evaluateSignals below).
+  return hits;
 }
 
 /**
@@ -465,6 +935,32 @@ export function evaluateSignals(
           `Valuation $${p.valuation.toLocaleString()} sits in the top ${((1 - pct) * 100).toFixed(0)}% of rural-rated parcels in ${p.suburb} — investigate for undeclared improvements.`,
         ),
       );
+    }
+  }
+
+  // ---- VEN/PIN/CT + concession signals ----
+  // Run last so the dedupe step has access to anything earlier in the
+  // pipeline that might fire `id.owner_occupier_concession_mismatch` (not
+  // yet in catalogue but documented as the dedupe sibling of
+  // `id.pensioner_not_at_property`).
+  const venCtConcessionHits = evaluateVenCtConcessionSignals(p, ctx, hits);
+  for (const h of venCtConcessionHits) {
+    hits.push(h);
+  }
+
+  // Dedupe: the pensioner-specific `id.pensioner_not_at_property` signal
+  // supersedes the generic `id.owner_occupier_concession_mismatch` when
+  // both fire on the same property. Implemented as a post-pass so the
+  // dedupe survives future re-ordering of the upstream signal sources.
+  const hasPensionerNotAtProperty = hits.some(
+    (h) => h.id === "id.pensioner_not_at_property",
+  );
+  if (hasPensionerNotAtProperty) {
+    const idx = hits.findIndex(
+      (h) => h.id === "id.owner_occupier_concession_mismatch",
+    );
+    if (idx >= 0) {
+      hits.splice(idx, 1);
     }
   }
 

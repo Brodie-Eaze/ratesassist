@@ -2,6 +2,9 @@ import Link from "next/link";
 import { Sidebar } from "@/components/Sidebar";
 import { Markdown } from "@/components/Markdown";
 import { PropertyMapClientShell } from "./_PropertyMapShell";
+import { SignalAccordion } from "@/components/recovery/SignalAccordion";
+import { TitleStateSection } from "@/components/recovery/TitleStateSection";
+import { ConcessionAuditSection } from "@/components/recovery/ConcessionAuditSection";
 import { buildEvidencePack } from "@ratesassist/recovery-engine";
 import { getProperty } from "@/lib/data";
 import { getEvaluationContext } from "@/lib/clients";
@@ -299,6 +302,118 @@ export default async function EvidencePackPage({
                     />
                   </div>
                 </div>
+                {/* Headline panel — top-3 signals by weight, coloured strip.
+                    Gold/red/amber tier mirrors the markdown render in the
+                    engine. Omitted when no signals fire (defensive — the
+                    page would not have a pack in that case). */}
+                {pack.headlineSignals.length > 0 && (
+                  <div
+                    className="card p-5 mb-4 border-l-4 border-l-accent-600"
+                    aria-label="Headline signals"
+                    data-testid="headline-panel"
+                  >
+                    <div className="label mb-2">
+                      Headline — top {pack.headlineSignals.length} signal
+                      {pack.headlineSignals.length === 1 ? "" : "s"} by weight
+                    </div>
+                    <ol className="space-y-2">
+                      {pack.headlineSignals.map((sig, ix) => {
+                        const tier =
+                          ix === 0
+                            ? {
+                                label: "gold",
+                                className:
+                                  "bg-warn-50 text-warn-700 border-warn-500",
+                              }
+                            : ix === 1
+                            ? {
+                                label: "red",
+                                className:
+                                  "bg-critical-50 text-critical-700 border-critical-500",
+                              }
+                            : {
+                                label: "amber",
+                                className:
+                                  "bg-ink-100 text-ink-700 border-ink-300",
+                              };
+                        return (
+                          <li
+                            key={sig.id}
+                            className="flex items-start gap-2"
+                            data-headline-rank={ix + 1}
+                          >
+                            <span
+                              className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium border ${tier.className} flex-shrink-0`}
+                            >
+                              #{ix + 1} · {tier.label}
+                            </span>
+                            <div className="flex-1 text-sm">
+                              <div className="font-medium text-ink-900">
+                                {sig.short}{" "}
+                                <span className="text-xs text-ink-500 font-normal">
+                                  (weight {sig.weight.toFixed(2)})
+                                </span>
+                              </div>
+                              <div className="text-ink-700 text-xs mt-0.5">
+                                {sig.evidence}
+                              </div>
+                            </div>
+                          </li>
+                        );
+                      })}
+                    </ol>
+                  </div>
+                )}
+
+                {/* Section 5 breakdown rendered as accordions. Priority-sorted
+                    by weight DESC (engine guarantees stable order); top-3
+                    expanded by default per the locked spec. */}
+                {pack.prioritisedSignals.length > 0 && (
+                  <div className="mb-4" data-testid="signal-breakdown">
+                    <div className="label mb-2 px-1">
+                      Signal breakdown — {pack.prioritisedSignals.length}{" "}
+                      firing, sorted by weight
+                    </div>
+                    {pack.prioritisedSignals.map((sig, ix) => (
+                      <SignalAccordion
+                        key={sig.id}
+                        signal={sig}
+                        defaultOpen={ix < 3}
+                      />
+                    ))}
+                  </div>
+                )}
+
+                {/* Section 8 — Title state (only renders when the property
+                    carries title-state fields). */}
+                <TitleStateSection
+                  ctVolume={pack.candidate.property.ctVolume}
+                  ctFolio={pack.candidate.property.ctFolio}
+                  ctIssuedDate={pack.candidate.property.ctIssuedDate}
+                  proprietor={pack.candidate.property.proprietorOnTitle}
+                  proprietorPostalAddress={
+                    pack.candidate.property.proprietorPostalAddress
+                  }
+                  pins={pack.candidate.property.pins ?? []}
+                  encumbrances={pack.candidate.property.encumbrances ?? []}
+                  strataParentCt={pack.candidate.property.strataParentCt}
+                  strataChildren={pack.candidate.property.strataChildren ?? []}
+                  source={pack.candidate.property.titleSource}
+                  councilLandUse={pack.candidate.property.landUse}
+                />
+
+                {/* Section 9 — Concession audit (only when concession on
+                    file). */}
+                {pack.candidate.property.pensionerConcession && (
+                  <ConcessionAuditSection
+                    concession={pack.candidate.property.pensionerConcession}
+                    propertyAddress={`${pack.candidate.property.address}, ${pack.candidate.property.suburb} ${pack.candidate.property.postcode} ${pack.candidate.property.state}`}
+                    propertyPostalAddress={
+                      pack.candidate.property.proprietorPostalAddress
+                    }
+                  />
+                )}
+
                 <div className="card p-6 bg-white">
                   <Markdown>{pack.markdown}</Markdown>
                 </div>

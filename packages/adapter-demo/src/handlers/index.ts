@@ -58,6 +58,12 @@ import { importRatingRollHandler } from "./importRatingRoll.js";
 import { emitsApprovalsHandler } from "./emitsApprovals.js";
 import { verifyAuditChainHandler } from "./verifyAuditChain.js";
 import { notifyClerkHandler } from "./notify.js";
+import {
+  importRateScheduleHandler,
+  importLandgateTitleDataHandler,
+  importWcEligibilityHandler,
+  requestStrataConversionHandler,
+} from "./venCtConcession.js";
 
 /**
  * Generic handler signature. `Input` is the precise type for the matching
@@ -104,4 +110,8 @@ export const HANDLERS: {
   list_environmental_approvals: emitsApprovalsHandler,
   verify_audit_chain: verifyAuditChainHandler,
   notify_clerk: notifyClerkHandler,
+  import_rate_schedule: importRateScheduleHandler,
+  import_landgate_title_data: importLandgateTitleDataHandler,
+  import_wc_eligibility: importWcEligibilityHandler,
+  request_strata_conversion: requestStrataConversionHandler,
 };

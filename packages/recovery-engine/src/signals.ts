@@ -251,6 +251,140 @@ export const SIGNAL_CATALOGUE: readonly SignalDef[] = [
       "Aerial / change-feed shows sustained commercial activity (signage, vehicle activity, customer parking, fitout) on land still rated Rural. Reclassification to Commercial likely applies.",
     source: "Nearmap AI change feed + council fieldcheck",
   },
+
+  // ---- VEN / PIN / CT class signals (7) ----
+  // All stack additively (no exclusive group). Sourced from the council's
+  // Landgate restricted-tier subscription (primary) reconciled against the
+  // council's own rating record. Every firing carries the
+  // {@link TitleSourceFreshness} retrieved-at timestamp in its evidence
+  // string so audit-defensibility is preserved end-to-end.
+  {
+    id: "mismatch.proprietor",
+    name: "Landgate proprietor differs from council owner of record",
+    short: "Proprietor mismatch",
+    category: "identity",
+    weight: 0.40,
+    description:
+      "Landgate's registered proprietor on the Certificate of Title differs from the council's owner of record. Typical cause is an unregistered title transfer or a council record that was not updated when ownership changed. Rates correspondence may be going to the wrong party and the rating record itself needs reconciliation against the canonical Landgate proprietor.",
+    source: "Landgate restricted-tier × council rating record",
+  },
+  {
+    id: "mismatch.ct_number_changed",
+    name: "Certificate of Title volume/folio changed",
+    short: "CT changed",
+    category: "register",
+    weight: 0.35,
+    description:
+      "Volume / folio recorded against this assessment differs from Landgate's current CT for the parcel. Usually indicates a re-issued title (subdivision parent superseded, replacement after loss, or strata conversion) that the council's rating record has not caught up with.",
+    source: "Landgate restricted-tier × council rating record",
+  },
+  {
+    id: "mismatch.strata_parent_still_rated",
+    name: "Strata parent still rated — children exist on title",
+    short: "Strata parent",
+    category: "register",
+    weight: 0.55,
+    description:
+      "Landgate records show this CT has been strata-subdivided and child titles have issued, yet the council is still rating the parent record. Each child is separately rateable from the date of registration. Highest-impact register signal in this class — surfaces strata-conversion lifecycle workflow.",
+    source: "Landgate restricted-tier (strata register)",
+  },
+  {
+    id: "mismatch.encumbrance_added",
+    name: "New encumbrance on title since last review",
+    short: "Encumbrance added",
+    category: "register",
+    weight: 0.25,
+    description:
+      "A mortgage, easement, caveat, tenement notation, or covenant has been registered against the title that the council's record does not reflect. Often signals a change of control, financing event, or competing interest that may affect ratepayer identity, postal address, or recovery routing.",
+    source: "Landgate restricted-tier (encumbrances register)",
+  },
+  {
+    id: "mismatch.pin_landuse_diverges",
+    name: "Landgate PIN landuse diverges from council rate code",
+    short: "PIN landuse",
+    category: "register",
+    weight: 0.40,
+    description:
+      "One or more PINs under this VEN carry a Landgate landuse classification that differs from the council's rate code on the assessment. Fires once per property when ANY PIN diverges; evidence enumerates every divergent PIN with its lot/plan and area so the clerk can compute the area-share impact.",
+    source: "Landgate restricted-tier (cadastre × landuse)",
+  },
+  {
+    id: "mismatch.pin_missing_from_record",
+    name: "Council records fewer PINs than Landgate has on the VEN",
+    short: "Missing PIN",
+    category: "register",
+    weight: 0.30,
+    description:
+      "Landgate has more PINs registered under this VEN than the council's rating record carries. Typically indicates a recent subdivision that has not yet flowed to the council, an inherited record from prior council mergers, or a data-entry omission. Every missing PIN is a potential rateable parcel the council is not billing.",
+    source: "Landgate restricted-tier (VEN → PIN cardinality)",
+  },
+  {
+    id: "id.cross_council_pin",
+    name: "PIN straddles council boundaries — jurisdictional ambiguity",
+    short: "Cross-council",
+    category: "identity",
+    weight: 0.25,
+    description:
+      "At least one PIN under this VEN sits inside another council's boundary. Two councils may have a claim on rating jurisdiction — surfaces for manual review and confirmation with the neighbouring council. Routes to a separate workflow queue (not standard recovery flow).",
+    source: "Landgate restricted-tier × council boundary register",
+  },
+
+  // ---- Concession class signals (5) ----
+  // All stack additively. Authority on eligibility is the Water Corporation
+  // quarterly feed (Rates and Charges Rebates and Deferments Act 1992 WA).
+  // `id.pensioner_not_at_property` is the more specific sibling of the
+  // generic owner-occupier mismatch and takes precedence when both would
+  // fire on the same property (dedupe handled in scoring.ts).
+  {
+    id: "id.pensioner_deceased_continued_rebate",
+    name: "Pensioner rebate applied to a deceased holder",
+    short: "Pensioner deceased",
+    category: "identity",
+    weight: 0.50,
+    description:
+      "Council is still applying the pensioner rebate on this assessment but a death notification has been recorded against the holder (Water Corp eligibility feed or proprietor-deceased register). Recoverable from the effective cancellation date forward; engage the executor before suspending.",
+    source: "Water Corp Quarterly Eligibility Feed × council concession register",
+  },
+  {
+    id: "id.pensioner_eligibility_cancelled",
+    name: "Water Corp eligibility cancelled — rebate continuing",
+    short: "Pensioner cancelled",
+    category: "identity",
+    weight: 0.40,
+    description:
+      "Water Corporation has cancelled the pensioner's eligibility (income test, card surrender, or property change) yet the council is still applying the rebate. Recoverable from the cancellation effective date forward.",
+    source: "Water Corp Quarterly Eligibility Feed",
+  },
+  {
+    id: "id.pensioner_card_expired",
+    name: "Pensioner concession card expired",
+    short: "Card expired",
+    category: "identity",
+    weight: 0.25,
+    description:
+      "The concession card on file has lapsed and has not been renewed. Eligibility cannot be confirmed without a current card — rebate should be suspended pending renewal or removed if the holder no longer qualifies.",
+    source: "Council concession register (cardExpiry field)",
+  },
+  {
+    id: "id.pensioner_not_at_property",
+    name: "Pensioner proprietor postal differs from property address",
+    short: "Pensioner off-site",
+    category: "identity",
+    weight: 0.40,
+    description:
+      "Pensioner concession applied to a property whose registered proprietor's postal address does not match the property address. Eligibility under the Rates and Charges Rebates and Deferments Act 1992 (WA) requires the holder to ordinarily reside at the property. Takes precedence over the generic `id.owner_occupier_concession_mismatch` when both would fire on the same property.",
+    source: "Landgate restricted-tier × council concession register",
+  },
+  {
+    id: "id.proprietor_deceased",
+    name: "Registered proprietor recorded as deceased",
+    short: "Proprietor deceased",
+    category: "identity",
+    weight: 0.50,
+    description:
+      "A death notification has been recorded against the registered proprietor on this title (Water Corp feed, council probate intake, or proprietor-deceased register), independent of concession state. Triggers an estate-and-executor workflow; rates correspondence routing must be reviewed.",
+    source: "Water Corp / council probate register / proprietor-deceased references",
+  },
 ];
 
 /**
