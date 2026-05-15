@@ -80,7 +80,17 @@ export async function issueStubSession(
  * Never throws — autologin is a convenience, not a security mechanism.
  */
 export function parseDevAutologin(): StubSessionInput | null {
-  if (process.env.NODE_ENV === "production") return null;
+  // Autologin is a convenience for local dev. In production it's refused
+  // unless RA_DEMO_AUTOLOGIN=1 is explicitly set on the deploy — this is
+  // the escape hatch for council-CFO demo deployments where SSO isn't
+  // wired yet. Every UI surface still shows the autologin source via
+  // /api/me, so it's never a silent capability.
+  if (
+    process.env.NODE_ENV === "production" &&
+    process.env["RA_DEMO_AUTOLOGIN"] !== "1"
+  ) {
+    return null;
+  }
   const raw = process.env["RA_DEV_AUTOLOGIN_SESSION"];
   if (!raw) return null;
   if (raw === "default" || raw === "1" || raw === "true") return {};
