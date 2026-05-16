@@ -123,13 +123,19 @@ describe("recovery dashboard — new filters declared", () => {
     expect(src).toContain('value: "strata_conversion"');
   });
 
-  it("the signal-breakdown card is collapsed behind a toggle (not always-rendered)", () => {
-    // The 18-chip signal grid used to dominate the page on every load.
-    // It now renders only when the user clicks "Show signal breakdown",
-    // gated by `showSignalBreakdown && (...)`. Pin that.
-    expect(src).toContain('data-testid="toggle-signal-breakdown"');
-    expect(src).toContain("showSignalBreakdown");
-    expect(src).toMatch(/showSignalBreakdown\s*&&\s*\(/);
+  it("the signal-contribution card exposes a single filter dropdown (not a chip grid)", () => {
+    // The 18+ signal chips used to dominate the page on every load. The
+    // collapsed-toggle was a half-measure — once expanded, the chip wall
+    // returned. Now the card carries one dropdown that lists the same
+    // signals (sorted by fire count), so the page never paints a chip
+    // wall regardless of state.
+    expect(src).toContain('data-testid="signal-filter-dropdown"');
+    expect(src).toContain('data-testid="signal-filter-trigger"');
+    expect(src).toContain('data-testid="signal-filter-options"');
+    expect(src).toContain('data-testid="signal-filter-option-all"');
+    // The catalogue link to the dedicated /signals page still ships
+    // — full-grid reference for power users without crowding /recovery.
+    expect(src).toContain('href="/signals"');
   });
 });
 

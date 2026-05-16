@@ -29,7 +29,6 @@ import {
   Scale,
   Filter,
   ChevronDown,
-  ChevronUp,
   Check,
 } from "lucide-react";
 
@@ -251,9 +250,10 @@ function RecoveryPageInner() {
    * and the older links the clerks may have bookmarked.
    */
   const [recoveryType, setRecoveryType] = useState<"all" | RecoveryTypeValue>("all");
-  const [showSignalBreakdown, setShowSignalBreakdown] = useState<boolean>(false);
   const [recoveryDropdownOpen, setRecoveryDropdownOpen] = useState<boolean>(false);
+  const [signalDropdownOpen, setSignalDropdownOpen] = useState<boolean>(false);
   const recoveryDropdownRef = useRef<HTMLDivElement | null>(null);
+  const signalDropdownRef = useRef<HTMLDivElement | null>(null);
   const searchParams = useSearchParams();
 
   // Pre-apply the dropdown filter when arriving via /recovery?signal=<family>.
@@ -288,6 +288,21 @@ function RecoveryPageInner() {
     document.addEventListener("mousedown", onDocClick);
     return () => document.removeEventListener("mousedown", onDocClick);
   }, [recoveryDropdownOpen]);
+
+  // Close the signal-filter dropdown on outside click.
+  useEffect(() => {
+    if (!signalDropdownOpen) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (
+        signalDropdownRef.current &&
+        !signalDropdownRef.current.contains(e.target as Node)
+      ) {
+        setSignalDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [signalDropdownOpen]);
 
   // PERF-009: per-signal sample lookup, computed once per data change.
   // Previously every render iterated `data.stats.signalCounts` and called
@@ -464,20 +479,26 @@ function RecoveryPageInner() {
           <LiveGrantsWidget />
 
           {/*
-            Signal contribution rollup.
+            Signal contribution rollup — single-line dropdown.
 
-            The card itself is always rendered (it owns the "Signal catalogue"
-            link, the active-filter indicator and the toggle), but the chip
-            grid is collapsed by default. Earlier iterations of this page
-            unconditionally rendered ~18 chips across 3 wrap-rows — every
-            time a council clerk landed on /recovery they saw a wall of
-            chips that competed for the same eye space as the severity row
-            and quick-filter pills. Collapsing it returns the dashboard to
-            a "skim, then drill" hierarchy without losing the granularity
-            for power users.
+            History: the page used to render a wall of ~20 chips (one per
+            signal id) across multiple wrap-rows. Clerks called the result
+            "extremely disorganised". Even hiding the grid behind a toggle
+            still exposed a chip wall once expanded.
+
+            The compact form: card header carries the title, the active
+            filter (if any), a reset, and a single trigger "Filter by
+            signal: All signals ▾". Selecting an option from the dropdown
+            applies a signal-id filter to the candidate list below — same
+            behaviour, one button instead of 20.
+
+            The dropdown itself is scrollable so the full catalogue is
+            still reachable in-page (top 20+ signals, sorted by fire
+            count). "Signal catalogue →" link stays for the full reference
+            grid on /signals.
           */}
-          <div className="card p-5">
-            <div className="flex items-center justify-between">
+          <div className="card p-5" ref={signalDropdownRef}>
+            <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <div className="font-medium text-ink-900 flex items-center gap-2">
                   <Sparkles className="w-4 h-4 text-accent-500" />
@@ -489,7 +510,7 @@ function RecoveryPageInner() {
                   )}
                 </div>
                 <div className="text-xs text-ink-500">
-                  Per-signal breakdown — expand to filter the candidate list by a single signal.
+                  Pick a single signal to drill the candidate list, or browse the catalogue.
                 </div>
               </div>
               <div className="flex items-center gap-3">
@@ -499,74 +520,127 @@ function RecoveryPageInner() {
                 >
                   Signal catalogue →
                 </Link>
-                <button
-                  type="button"
-                  onClick={() => setShowSignalBreakdown((v) => !v)}
-                  aria-expanded={showSignalBreakdown}
-                  aria-controls="signal-breakdown-grid"
-                  data-testid="toggle-signal-breakdown"
-                  className="btn bg-white border border-ink-200 text-ink-700 hover:bg-ink-100 text-xs"
-                >
-                  {showSignalBreakdown ? (
-                    <>
-                      <ChevronUp className="w-3 h-3" />
-                      Hide signal breakdown
-                    </>
-                  ) : (
-                    <>
-                      <ChevronDown className="w-3 h-3" />
-                      Show signal breakdown
-                      <span className="text-[10px] opacity-70 ml-1">
-                        {Object.keys(data.stats.signalCounts).length} signals
-                      </span>
-                    </>
-                  )}
-                </button>
-              </div>
-            </div>
-            {showSignalBreakdown && (
-              <div
-                id="signal-breakdown-grid"
-                className="flex flex-wrap gap-2 mt-4 pt-4 border-t border-ink-100"
-              >
-                <button
-                  onClick={() => setSignalFilter("all")}
-                  className={`btn ${
-                    signalFilter === "all"
-                      ? "bg-ink-900 text-white"
-                      : "bg-white border border-ink-200 text-ink-700 hover:bg-ink-100"
-                  }`}
-                >
-                  All signals
-                  <span className="text-[10px] opacity-70 ml-1">
-                    {Object.values(data.stats.signalCounts).reduce((s, n) => s + n, 0)}
-                  </span>
-                </button>
-                {Object.entries(data.stats.signalCounts)
-                  .sort((a, b) => b[1] - a[1])
-                  .map(([id, count]) => {
-                    const sig = signalSamples.get(id);
-                    if (!sig) return null;
-                    const meta = CATEGORY_META[sig.category];
-                    const Icon = meta.icon;
-                    return (
+                {signalFilter !== "all" && (
+                  <button
+                    type="button"
+                    onClick={() => setSignalFilter("all")}
+                    data-testid="signal-filter-clear"
+                    className="text-xs text-ink-500 hover:text-ink-700 hover:underline"
+                  >
+                    Clear
+                  </button>
+                )}
+                <div className="relative" data-testid="signal-filter-dropdown">
+                  <button
+                    type="button"
+                    onClick={() => setSignalDropdownOpen((v) => !v)}
+                    aria-haspopup="listbox"
+                    aria-expanded={signalDropdownOpen}
+                    data-testid="signal-filter-trigger"
+                    className={`btn ${
+                      signalFilter === "all"
+                        ? "bg-white border border-ink-200 text-ink-700 hover:bg-ink-100"
+                        : "bg-accent-600 text-white hover:bg-accent-700"
+                    }`}
+                    title="Drill the candidate list by a single detection signal."
+                  >
+                    <Filter className="w-3 h-3" />
+                    {signalFilter === "all"
+                      ? "Filter by signal"
+                      : signalSamples.get(signalFilter)?.short ?? "Filter by signal"}
+                    <span className="text-[10px] opacity-70 ml-1">
+                      {signalFilter === "all"
+                        ? Object.values(data.stats.signalCounts).reduce((s, n) => s + n, 0)
+                        : data.stats.signalCounts[signalFilter] ?? 0}
+                    </span>
+                    <ChevronDown className="w-3 h-3" />
+                  </button>
+                  {signalDropdownOpen && (
+                    <div
+                      role="listbox"
+                      aria-label="Filter by detection signal"
+                      data-testid="signal-filter-options"
+                      className="absolute right-0 top-full mt-1 z-30 w-80 max-h-96 overflow-y-auto bg-white border border-ink-200 rounded-md shadow-lg"
+                    >
                       <button
-                        key={id}
-                        onClick={() => setSignalFilter(id)}
-                        className={`btn ${
-                          signalFilter === id
-                            ? "bg-ink-900 text-white"
-                            : "bg-white border border-ink-200 text-ink-700 hover:bg-ink-100"
+                        role="option"
+                        type="button"
+                        onClick={() => {
+                          setSignalFilter("all");
+                          setSignalDropdownOpen(false);
+                        }}
+                        aria-selected={signalFilter === "all"}
+                        data-testid="signal-filter-option-all"
+                        className={`w-full flex items-center justify-between gap-2 px-3 py-2 text-sm text-left hover:bg-ink-50 ${
+                          signalFilter === "all"
+                            ? "bg-accent-50 text-accent-700"
+                            : "text-ink-700"
                         }`}
                       >
-                        <Icon className="w-3 h-3" />
-                        {sig.short}
-                        <span className="text-[10px] opacity-70 ml-1">{count}</span>
+                        <span className="flex items-center gap-2">
+                          {signalFilter === "all" ? (
+                            <Check className="w-3 h-3" />
+                          ) : (
+                            <span className="w-3 h-3 inline-block" />
+                          )}
+                          All signals
+                        </span>
+                        <span className="text-[10px] text-ink-500">
+                          {Object.values(data.stats.signalCounts).reduce(
+                            (s, n) => s + n,
+                            0,
+                          )}
+                        </span>
                       </button>
-                    );
-                  })}
+                      <div className="border-t border-ink-100" />
+                      {Object.entries(data.stats.signalCounts)
+                        .sort((a, b) => b[1] - a[1])
+                        .map(([id, count]) => {
+                          const sig = signalSamples.get(id);
+                          if (!sig) return null;
+                          const meta = CATEGORY_META[sig.category];
+                          const Icon = meta.icon;
+                          const active = signalFilter === id;
+                          return (
+                            <button
+                              key={id}
+                              role="option"
+                              type="button"
+                              onClick={() => {
+                                setSignalFilter(id);
+                                setSignalDropdownOpen(false);
+                              }}
+                              aria-selected={active}
+                              data-testid={`signal-filter-option-${id}`}
+                              title={sig.evidence ?? sig.short}
+                              className={`w-full flex items-center justify-between gap-2 px-3 py-2 text-sm text-left hover:bg-ink-50 ${
+                                active
+                                  ? "bg-accent-50 text-accent-700"
+                                  : "text-ink-700"
+                              }`}
+                            >
+                              <span className="flex items-center gap-2 min-w-0">
+                                {active ? (
+                                  <Check className="w-3 h-3 shrink-0" />
+                                ) : (
+                                  <Icon className="w-3 h-3 shrink-0 text-ink-400" />
+                                )}
+                                <span className="truncate">{sig.short}</span>
+                                <span className="text-[10px] text-ink-400 shrink-0">
+                                  · {meta.label}
+                                </span>
+                              </span>
+                              <span className="text-[10px] text-ink-500 shrink-0">
+                                {count}
+                              </span>
+                            </button>
+                          );
+                        })}
+                    </div>
+                  )}
+                </div>
               </div>
-            )}
+            </div>
           </div>
 
           {/*
