@@ -77,26 +77,34 @@ print_summary() {
   done
 }
 
-# --- 1. Typecheck every workspace -------------------------------------------
-step "1/7  Typecheck (all workspaces)"
+# --- 1. Build adapter-demo MCP server (must precede typecheck) ---------------
+# `@ratesassist/adapter-demo` is the ONLY workspace package that exports from
+# `./dist/` (subpath exports `/inproc`, `/audit`, `/data`). Consumers
+# (apps/web, packages/db's seed script) declare TypeScript imports against
+# those subpaths. In a fresh CI checkout `dist/` is empty, so typecheck
+# can't resolve the subpaths and bombs with `TS2307 Cannot find module
+# '@ratesassist/adapter-demo/inproc'`. Build the package first so the
+# generated `.d.ts` files exist when the type-checker walks the rest of
+# the workspace.
+step "1/7  Build @ratesassist/adapter-demo (MCP server)"
+if ! npm run build --workspace=@ratesassist/adapter-demo; then
+  fail "build adapter-demo" "MCP server bundle failed to build."
+fi
+record_pass "build @ratesassist/adapter-demo"
+
+# --- 2. Typecheck every workspace -------------------------------------------
+step "2/7  Typecheck (all workspaces)"
 if ! npm run typecheck --workspaces --if-present; then
   fail "typecheck" "One or more workspaces failed to typecheck."
 fi
 record_pass "typecheck (all workspaces)"
 
-# --- 2. Run tests ------------------------------------------------------------
-step "2/7  Tests"
+# --- 3. Run tests ------------------------------------------------------------
+step "3/7  Tests"
 if ! npm test; then
   fail "tests" "One or more tests failed."
 fi
 record_pass "tests"
-
-# --- 3. Build adapter-demo MCP server ---------------------------------------
-step "3/7  Build @ratesassist/adapter-demo (MCP server)"
-if ! npm run build --workspace=@ratesassist/adapter-demo; then
-  fail "build adapter-demo" "MCP server bundle failed to build."
-fi
-record_pass "build @ratesassist/adapter-demo"
 
 # --- 4. Next.js production build --------------------------------------------
 step "4/7  Build apps/web (Next.js production)"
