@@ -58,6 +58,13 @@ vi.mock("leaflet", () => {
       getSouth: () => south,
     };
   }
+  // Sentinel2LiveLayer subclasses L.TileLayer to override getTileUrl —
+  // the mock needs to expose `TileLayer` as a constructible class for
+  // `class X extends L.TileLayer` to evaluate at module-load time.
+  class TileLayer {
+    public addTo(): this { return this; }
+    public getTileUrl(): string { return ""; }
+  }
   const stub = {
     latLngBounds,
     tooltip: () => ({
@@ -67,6 +74,7 @@ vi.mock("leaflet", () => {
       remove: () => undefined,
     }),
     divIcon: () => ({}),
+    TileLayer,
   };
   return { default: stub, ...stub };
 });

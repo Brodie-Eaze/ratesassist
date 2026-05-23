@@ -76,11 +76,22 @@ export const SENTINEL_BASE =
 export const SENTINEL_ATTR =
   'Sentinel-2 cloudless 2024 by <a href="https://s2maps.eu">EOX IT</a> (ESA Copernicus)';
 
-// Esri Living Atlas Sentinel-2 L2A — the LATEST cloud-free scene per area,
-// typically <14 days old. Same source data as `SENTINEL_BASE` (ESA Sentinel-2)
-// but served as a rolling latest-acquisition layer instead of a yearly
-// composite. No API key required (Esri serves it as a free public layer).
-// This is the differentiator for council use: every time a clerk opens a
+// Esri Living Atlas Sentinel2 ImageServer — the live multi-temporal layer
+// that refreshes DAILY with new acquisitions and carries the last 14
+// months of cloud-free scenes. Per Esri's own service description: "This
+// image service is sourced from the Sentinel-2 on AWS collections, is
+// updated daily with new imagery, and consists of imagery collected
+// within the past 14 months."
+//
+// The service is an ImageServer rather than a tile-cached MapServer, so
+// it does NOT respond to standard XYZ tile URLs. Instead we feed Leaflet
+// a custom layer ({@link Sentinel2LiveLayer}) that translates each tile's
+// (z, x, y) into a Web Mercator bbox and hits the `exportImage` endpoint
+// per tile. The endpoint returns a freshly-rendered JPEG of the most
+// recent scene that intersects the bbox.
+//
+// No API key required (Esri serves it as a free public layer). This is
+// the differentiator for council use: every time a clerk opens a
 // property, they see imagery captured within the last fortnight — close
 // enough to "real-time" to spot new buildings, vegetation clearance,
 // mining-tenement expansion before the next valuation cycle.
@@ -88,12 +99,13 @@ export const SENTINEL_ATTR =
 // Resolution is the native Sentinel-2 10m/pixel (RGB true colour).
 // For sub-10m detail clerks fall back to "satellite" (Esri World Imagery
 // composite) or "slip-aerial" (Landgate WA, where available).
-export const SENTINEL_LATEST =
-  "https://sentinel.arcgis.com/arcgis/rest/services/Sentinel2L2A/ImageServer/tile/{z}/{y}/{x}";
+export const SENTINEL_LATEST_EXPORT_IMAGE =
+  "https://sentinel.arcgis.com/arcgis/rest/services/Sentinel2/ImageServer/exportImage";
 export const SENTINEL_LATEST_ATTR =
-  'Sentinel-2 L2A (latest) © <a href="https://livingatlas.arcgis.com/">Esri Living Atlas</a> · ESA Copernicus';
-// Esri's Sentinel-2 L2A ImageServer serves tiles up to z=14 natively
-// (~10m/pixel at the equator). At higher zooms Leaflet upsamples.
+  'Sentinel-2 (daily refresh) © <a href="https://livingatlas.arcgis.com/">Esri Living Atlas</a> · ESA Copernicus';
+// Esri's Sentinel2 ImageServer renders on-demand at any zoom, but
+// pixel-for-pixel the source is 10m/pixel, so zoom 14 is the visual
+// resolution ceiling. Leaflet upsamples beyond.
 export const SENTINEL_LATEST_MAX_NATIVE = 14;
 
 export const ESRI_ATTR =

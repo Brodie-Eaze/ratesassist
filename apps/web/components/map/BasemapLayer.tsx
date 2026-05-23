@@ -27,14 +27,12 @@ import {
   CARTO_LIGHT,
   SENTINEL_BASE,
   SENTINEL_ATTR,
-  SENTINEL_LATEST,
-  SENTINEL_LATEST_ATTR,
-  SENTINEL_LATEST_MAX_NATIVE,
   ESRI_ATTR,
   CARTO_ATTR,
   ESRI_IMAGERY_MAX_NATIVE,
   ESRI_IMAGERY_MAX_DISPLAY,
 } from "./types";
+import Sentinel2LiveLayer from "./Sentinel2LiveLayer";
 
 export type BasemapLayerProps = {
   /** The currently selected basemap. */
@@ -94,20 +92,16 @@ export default function BasemapLayer({
     );
   }
   if (basemap === "sentinel-latest") {
-    // Sentinel-2 L2A latest acquisition — rolling-latest cloud-free scene
-    // served by Esri Living Atlas. Same underlying ESA Sentinel-2 sensor
-    // as `sentinel` but typically <14 days old instead of a yearly
-    // composite. This is the "imagery currency" lever: clerks see what's
-    // on the ground RIGHT NOW, not 12-18 months ago.
-    return (
-      <TileLayer
-        key="sentinel-latest"
-        url={SENTINEL_LATEST}
-        attribution={SENTINEL_LATEST_ATTR}
-        maxNativeZoom={SENTINEL_LATEST_MAX_NATIVE}
-        maxZoom={ESRI_IMAGERY_MAX_DISPLAY}
-      />
-    );
+    // Sentinel-2 daily-refresh — Esri Living Atlas Sentinel2 ImageServer.
+    // Not a TileLayer because the upstream is an ImageServer (no tile
+    // cache) — see ./Sentinel2LiveLayer.tsx for the custom XYZ→bbox
+    // translation that turns it into ordinary Leaflet tiles.
+    //
+    // Same underlying ESA Sentinel-2 sensor as `sentinel` but rendered
+    // daily-fresh from the rolling 14-month catalogue instead of a
+    // yearly composite. This is the "imagery currency" lever: clerks
+    // see what's on the ground RIGHT NOW, not 12-18 months ago.
+    return <Sentinel2LiveLayer key="sentinel-latest" />;
   }
   if (basemap === "street") {
     return (
