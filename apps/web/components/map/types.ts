@@ -37,6 +37,7 @@ export type BasemapKey =
   | "hybrid"
   | "satellite"
   | "sentinel"
+  | "sentinel-latest"
   | "street"
   | "topo"
   | "slip-aerial";
@@ -67,11 +68,33 @@ export const CARTO_LIGHT =
 
 // Sentinel-2 cloudless mosaic from EOX (ESA Copernicus data, ~10m resolution,
 // global coverage with no API key). Fixes the "Map data not yet available"
-// blank tiles Esri shows for remote WA at high zoom.
+// blank tiles Esri shows for remote WA at high zoom. This is the YEARLY
+// composite — every pixel is the median of all cloud-free 2024 scenes, so
+// it's deeply stable but ~1 year old by the time you see it.
 export const SENTINEL_BASE =
   "https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2024_3857/default/g/{z}/{y}/{x}.jpg";
 export const SENTINEL_ATTR =
   'Sentinel-2 cloudless 2024 by <a href="https://s2maps.eu">EOX IT</a> (ESA Copernicus)';
+
+// Esri Living Atlas Sentinel-2 L2A — the LATEST cloud-free scene per area,
+// typically <14 days old. Same source data as `SENTINEL_BASE` (ESA Sentinel-2)
+// but served as a rolling latest-acquisition layer instead of a yearly
+// composite. No API key required (Esri serves it as a free public layer).
+// This is the differentiator for council use: every time a clerk opens a
+// property, they see imagery captured within the last fortnight — close
+// enough to "real-time" to spot new buildings, vegetation clearance,
+// mining-tenement expansion before the next valuation cycle.
+//
+// Resolution is the native Sentinel-2 10m/pixel (RGB true colour).
+// For sub-10m detail clerks fall back to "satellite" (Esri World Imagery
+// composite) or "slip-aerial" (Landgate WA, where available).
+export const SENTINEL_LATEST =
+  "https://sentinel.arcgis.com/arcgis/rest/services/Sentinel2L2A/ImageServer/tile/{z}/{y}/{x}";
+export const SENTINEL_LATEST_ATTR =
+  'Sentinel-2 L2A (latest) © <a href="https://livingatlas.arcgis.com/">Esri Living Atlas</a> · ESA Copernicus';
+// Esri's Sentinel-2 L2A ImageServer serves tiles up to z=14 natively
+// (~10m/pixel at the equator). At higher zooms Leaflet upsamples.
+export const SENTINEL_LATEST_MAX_NATIVE = 14;
 
 export const ESRI_ATTR =
   "Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics";

@@ -53,7 +53,11 @@ const CSP_DIRECTIVES = [
   // See header comment: inline styles are still required for animated map
   // strokes and Leaflet tooltip overrides. Plan to remove → SECURITY-FOLLOWUPS.
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: https://server.arcgisonline.com https://*.basemaps.cartocdn.com https://*.tile.openstreetmap.org https://tiles.maps.eox.at",
+  // sentinel.arcgis.com hosts the Esri Living Atlas Sentinel-2 L2A
+  // ImageServer that drives the "Sentinel-2 Live" basemap (rolling
+  // latest cloud-free scene, ~14-day freshness). Allowed alongside the
+  // existing static map sources.
+  "img-src 'self' data: https://server.arcgisonline.com https://sentinel.arcgis.com https://*.basemaps.cartocdn.com https://*.tile.openstreetmap.org https://tiles.maps.eox.at",
   "connect-src 'self' https://services.slip.wa.gov.au https://abr.business.gov.au https://api.anthropic.com https://api.anthropic.com.au",
   "font-src 'self' data:",
   "frame-ancestors 'none'",

@@ -27,6 +27,9 @@ import {
   CARTO_LIGHT,
   SENTINEL_BASE,
   SENTINEL_ATTR,
+  SENTINEL_LATEST,
+  SENTINEL_LATEST_ATTR,
+  SENTINEL_LATEST_MAX_NATIVE,
   ESRI_ATTR,
   CARTO_ATTR,
   ESRI_IMAGERY_MAX_NATIVE,
@@ -86,6 +89,22 @@ export default function BasemapLayer({
         url={SENTINEL_BASE}
         attribution={SENTINEL_ATTR}
         maxNativeZoom={14}
+        maxZoom={ESRI_IMAGERY_MAX_DISPLAY}
+      />
+    );
+  }
+  if (basemap === "sentinel-latest") {
+    // Sentinel-2 L2A latest acquisition — rolling-latest cloud-free scene
+    // served by Esri Living Atlas. Same underlying ESA Sentinel-2 sensor
+    // as `sentinel` but typically <14 days old instead of a yearly
+    // composite. This is the "imagery currency" lever: clerks see what's
+    // on the ground RIGHT NOW, not 12-18 months ago.
+    return (
+      <TileLayer
+        key="sentinel-latest"
+        url={SENTINEL_LATEST}
+        attribution={SENTINEL_LATEST_ATTR}
+        maxNativeZoom={SENTINEL_LATEST_MAX_NATIVE}
         maxZoom={ESRI_IMAGERY_MAX_DISPLAY}
       />
     );

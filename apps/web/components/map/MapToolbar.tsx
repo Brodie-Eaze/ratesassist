@@ -61,9 +61,24 @@ function pillButtonStyle(active: boolean): React.CSSProperties {
   };
 }
 
+/**
+ * Basemap pill registry — ordered for the toolbar.
+ *
+ * "Sentinel‑2 Live" (key: `sentinel-latest`) is the freshest publicly-
+ * available layer: rolling latest cloud-free Sentinel-2 scene served by
+ * Esri Living Atlas, typically <14 days old. It sits next to the older
+ * "Sentinel‑2" yearly composite so clerks can flip between "what's on
+ * the ground RIGHT NOW" and "the stable annual baseline" — the
+ * difference between the two is where the audit signal lives.
+ *
+ * The static composite is kept (rather than dropped) because cloud-cover
+ * gaps still happen during the Pilbara wet season — clerks need the
+ * yearly cloudless mosaic as a fallback.
+ */
 const BASEMAP_PILLS: ReadonlyArray<readonly [BasemapKey, string]> = [
   ["hybrid", "Hybrid"],
   ["satellite", "Satellite"],
+  ["sentinel-latest", "Sentinel‑2 Live"],
   ["sentinel", "Sentinel‑2"],
   ["street", "Street"],
   ["topo", "Topo"],
@@ -117,6 +132,11 @@ export default function MapToolbar({
         )}
       </div>
 
+      {/* Imagery currency badge — surfaces the freshness of the active
+          basemap so council clerks understand whether what they're
+          looking at is days-old or 1+ year old. */}
+      <ImageryCurrencyBadge basemap={activeBasemap} slipProbe={slipProbe} />
+
       {/* Zoom-to-detail buttons */}
       <div style={pillRowStyle}>
         <button
@@ -160,6 +180,93 @@ export default function MapToolbar({
           Print view
         </button>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Static freshness metadata per basemap.
+ *
+ * The labels here are deliberately conservative — they describe the
+ * SOURCE'S typical refresh cadence, not a guarantee that the very tile
+ * a clerk is looking at was acquired on a given date. For the "Sentinel-2
+ * Live" layer, the Esri Living Atlas service rolls in the freshest
+ * cloud-free Sentinel-2 L2A scene per area, which is usually <14 days
+ * old in WA (Sentinel-2 has a 5-day revisit cycle and Esri rejects
+ * scenes >60% cloud cover).
+ *
+ * When the daily Planet PlanetScope pipeline lands (see
+ * internal/IMAGERY-CADENCE-PLAN.md), a new "planet-daily" basemap entry
+ * will be added with `freshness: "daily, 3m"`.
+ */
+const BASEMAP_FRESHNESS: Record<
+  BasemapKey,
+  { readonly label: string; readonly tone: "live" | "recent" | "static" }
+> = {
+  "sentinel-latest": { label: "~14-day cadence · 10m", tone: "live" },
+  "slip-aerial":     { label: "WA Landgate · ~6-12mo cadence · 7.5cm", tone: "recent" },
+  hybrid:            { label: "Esri composite · 1-3yr old", tone: "static" },
+  satellite:         { label: "Esri composite · 1-3yr old", tone: "static" },
+  sentinel:          { label: "2024 yearly composite", tone: "static" },
+  street:            { label: "Carto OSM basemap", tone: "static" },
+  topo:              { label: "Esri topo basemap", tone: "static" },
+};
+
+const FRESHNESS_TONE_STYLE: Record<
+  "live" | "recent" | "static",
+  React.CSSProperties
+> = {
+  live: {
+    background: "rgba(16, 122, 87, 0.95)", // success-700-ish, high-contrast
+    color: "white",
+  },
+  recent: {
+    background: "rgba(180, 83, 9, 0.95)", // warn-700
+    color: "white",
+  },
+  static: {
+    background: "rgba(55, 65, 81, 0.92)", // ink-700
+    color: "white",
+  },
+};
+
+function ImageryCurrencyBadge({
+  basemap,
+  slipProbe,
+}: {
+  basemap: BasemapKey;
+  slipProbe: SlipAerialProbeResult | null;
+}): JSX.Element | null {
+  // Hide the badge for SLIP-aerial when the probe failed — the basemap
+  // isn't actually rendering anything so labelling it would be confusing.
+  if (basemap === "slip-aerial" && !(slipProbe && slipProbe.ok)) {
+    return null;
+  }
+  const meta = BASEMAP_FRESHNESS[basemap];
+  if (!meta) return null;
+  return (
+    <div
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        alignSelf: "flex-start",
+        padding: "3px 8px",
+        borderRadius: 4,
+        fontSize: 11,
+        fontWeight: 500,
+        letterSpacing: 0.2,
+        boxShadow: "0 1px 3px rgba(0,0,0,0.18)",
+        ...FRESHNESS_TONE_STYLE[meta.tone],
+      }}
+      title={
+        meta.tone === "live"
+          ? "Rolling latest cloud-free Sentinel-2 acquisition — typically within the last fortnight."
+          : meta.tone === "recent"
+            ? "Landgate aerial captures refresh on a 6-12 month cycle (metro faster than remote)."
+            : "Static composite — useful as a reference but not for change detection."
+      }
+    >
+      Imagery currency: {meta.label}
     </div>
   );
 }

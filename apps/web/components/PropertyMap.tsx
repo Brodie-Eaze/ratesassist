@@ -98,9 +98,13 @@ export default function PropertyMap({
   evidenceHref,
   height,
 }: PropertyMapProps): JSX.Element {
-  // Default to Sentinel-2 cloudless mosaic — global 10m/pixel imagery that
-  // ALWAYS renders ground. Esri Hybrid is one click away via the toggle.
-  const [basemap, setBasemap] = useState<BasemapKey>("sentinel");
+  // Default to Sentinel-2 Live — rolling latest cloud-free scene (Esri
+  // Living Atlas, ~14-day freshness). This is the council edge: clerks
+  // open a property and see imagery captured WITHIN THE FORTNIGHT, not the
+  // 1-3-year-old composite Esri World Imagery / EOX cloudless mosaic ships.
+  // The older yearly composite is one click away if the latest scene has
+  // cloud cover over the target.
+  const [basemap, setBasemap] = useState<BasemapKey>("sentinel-latest");
   const [statsOpen, setStatsOpen] = useState(true);
   const [measureOn, setMeasureOn] = useState(false);
   const [slipProbe, setSlipProbe] = useState<SlipAerialProbeResult | null>(null);
