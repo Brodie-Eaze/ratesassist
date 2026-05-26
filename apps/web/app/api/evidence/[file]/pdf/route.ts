@@ -214,12 +214,26 @@ async function writeAuditAsync(args: {
  *   1. `RA_PUBLIC_ORIGIN` env var (production / staging — explicit).
  *   2. `req.nextUrl.origin` (Next constructs this from the headers).
  *   3. The fallback `http://localhost:3000`.
+ *
+ * F-014 mitigation (Wave 3 pen-test). Behind a misconfigured reverse
+ * proxy, `req.nextUrl.origin` reflects the inbound `Host` header — an
+ * attacker who controls Host could redirect the QR code to a phishing
+ * site. In production we REFUSE to fall back to `nextUrl.origin` and
+ * throw instead; the route handler renders a 500 and the operator is
+ * forced to configure `RA_PUBLIC_ORIGIN` explicitly. Dev/test still
+ * fall back to `nextUrl.origin || localhost` so local workflows work.
  */
 function buildEvidenceUrl(req: NextRequest, assessmentNumber: string): string {
   const envOrigin = process.env["RA_PUBLIC_ORIGIN"];
-  const origin =
-    envOrigin && envOrigin.length > 0
-      ? envOrigin.replace(/\/$/, "")
-      : req.nextUrl.origin || "http://localhost:3000";
+  if (envOrigin && envOrigin.length > 0) {
+    return `${envOrigin.replace(/\/$/, "")}/api/evidence/${assessmentNumber}.html`;
+  }
+  if (process.env["NODE_ENV"] === "production") {
+    throw new Error(
+      "evidencePdf: RA_PUBLIC_ORIGIN is required in production (F-014 lockdown). " +
+        "Set it to the canonical public URL of this deployment.",
+    );
+  }
+  const origin = req.nextUrl.origin || "http://localhost:3000";
   return `${origin}/api/evidence/${assessmentNumber}.html`;
 }

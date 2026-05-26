@@ -128,6 +128,37 @@ function buildChainBody(args: {
 }
 
 /**
+ * Guard: refuse sentinel-bearing values from any application writer.
+ *
+ * Closes pen-test F-010 (Wave 3 / iter4). The `__PRE_CHAIN__` sentinel
+ * is stamped ONLY by the 0002 backfill UPDATE on legacy rows. Production
+ * application writes through {@link withAudit} or {@link recordAuditEvent}
+ * MUST emit a real 64-hex chainHash. If a future writer ever computes
+ * the sentinel as a hash value (impossible today, but defence-in-depth)
+ * or if a caller tries to forge one, we throw immediately rather than
+ * silently inserting a row the verifier would skip.
+ *
+ * The 0005 migration adds a BEFORE INSERT trigger that catches this at
+ * the DB layer as well; this is the application layer.
+ */
+function assertNotSentinel(prevHash: string, rowHash: string): void {
+  if (prevHash === PRE_CHAIN_SENTINEL) {
+    throw new Error(
+      "audit: refusing to write row with sentinel prev_hash; this value is reserved for the 0002 legacy-row backfill (F-010 lockdown)",
+    );
+  }
+  // The full sentinel shape stamped by 0002 is `__PRE_CHAIN__<uuid>`.
+  // Application writers should never emit anything starting with the
+  // sentinel prefix; we check the prefix and not the full shape so a
+  // typo'd "near-sentinel" can't slip through either.
+  if (rowHash.startsWith(PRE_CHAIN_SENTINEL)) {
+    throw new Error(
+      "audit: refusing to write row with sentinel-prefixed row_hash; this prefix is reserved for the 0002 legacy-row backfill (F-010 lockdown)",
+    );
+  }
+}
+
+/**
  * Acquire the per-tenant advisory lock. Released automatically when the
  * surrounding transaction commits or rolls back. Two calls within the same
  * transaction are idempotent — Postgres tracks advisory locks per-session
@@ -137,6 +168,12 @@ function buildChainBody(args: {
  * input maps to the same key across all callers (TypeScript would have to
  * reproduce Postgres' hashtext algorithm to derive it client-side; doing
  * it in SQL is one fewer thing to keep in sync).
+ *
+ * F-012 note (Wave 3, P2 deferred): `hashtext` is a signed int32 hash,
+ * so the lock-key space is 2^32. Birthday-paradox math says collision
+ * probability hits ~14% at 50k tenants and ~90% at 200k. At pilot scale
+ * (≤200 tenants) the false-serialisation risk is negligible. Replace
+ * with a 64-bit key when tenant count crosses ~5k.
  */
 async function lockTenantChain(tx: Db, tenantId: string): Promise<void> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -208,6 +245,14 @@ export async function withAudit<TBefore, TAfter, TResult>(
     });
     const rowHash = chainHash(prevHash, body);
 
+    // F-010 mitigation (Wave 3 pen-test). Belt-and-braces: the DB-level
+    // migration 0005 already rejects sentinel-bearing inserts via a
+    // trigger, but we also refuse here so the error surfaces with a
+    // useful stack and the bad value never even leaves the writer. The
+    // sentinel is ONLY stamped by the 0002 backfill UPDATE — production
+    // application writes through this function must never emit it.
+    assertNotSentinel(prevHash, rowHash);
+
     await tx.insert(auditLog).values({
       id,
       tenantId: ctx.tenantId,
@@ -261,6 +306,9 @@ export async function recordAuditEvent(
       occurredAt,
     });
     const rowHash = chainHash(prevHash, body);
+
+    // F-010 mitigation — see withAudit above. Same belt-and-braces.
+    assertNotSentinel(prevHash, rowHash);
 
     await tx.insert(auditLog).values({
       id,

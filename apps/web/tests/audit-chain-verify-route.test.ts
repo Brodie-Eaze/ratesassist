@@ -24,6 +24,7 @@ process.env["RA_USE_DB"] = "true";
 
 import type { Role, Session } from "@ratesassist/contract";
 import { SESSION_HEADER, _resetAuthSecretCacheForTests } from "../lib/auth";
+import { __resetRateLimitBucketsForTests } from "../lib/rate-limit";
 
 const { GET: verifyGET } = await import("../app/api/audit/verify-chain/route");
 const { getWebDb, resetWebDbForTesting } = await import("../lib/db");
@@ -35,6 +36,9 @@ beforeAll(() => {
 beforeEach(() => {
   // Force a fresh DB per test so chain state doesn't leak between cases.
   resetWebDbForTesting();
+  // iter4 (F-011): clear rate-limit buckets so the 6/min verify-chain
+  // cap doesn't trip between sequential test cases (all share IP ::1).
+  __resetRateLimitBucketsForTests();
   // Force a fresh pglite instance as well so we don't reuse table state.
   // We have to lazy-import to keep the test side-effect minimal.
 });

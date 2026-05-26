@@ -52,3 +52,17 @@ export function exceedsBodyCap(req: NextRequest): boolean {
 export function retryAfterSeconds(resetAt: number): string {
   return String(Math.ceil((resetAt - Date.now()) / 1000));
 }
+
+/**
+ * Test helper — clears the in-memory rate-limit buckets so tests can
+ * exercise the rate-limit path without coupling across `it()` blocks.
+ *
+ * Added in iter4 alongside the new verify-chain rate limit (F-011);
+ * existing tool-dispatcher tests dodged the issue by spreading calls
+ * across the 60-second window, but the new audit-chain-verify-route
+ * test fires 7 requests in &lt;1s and trips the 6/min cap. Test files
+ * call this in `beforeEach`.
+ */
+export function __resetRateLimitBucketsForTests(): void {
+  buckets.clear();
+}

@@ -70,6 +70,14 @@ const MIGRATIONS_IN_ORDER: ReadonlyArray<string> = [
   "0001_init.sql",
   "0002_audit_chain_columns.sql",
   "0003_audit_chain_validate.sql",
+  // 0004 is the pre-written rollback for 0002+0003 — never apply on
+  // forward boot; ship on disk only.
+  // 0005 (iter4 / F-010 lockdown) — tightens row_hash CHECK to the
+  // exact `__PRE_CHAIN__<uuid>` shape and adds a BEFORE INSERT
+  // trigger that refuses sentinel rows after the tenant's chain has
+  // been opened. Idempotent on a fresh DB or one that already ran
+  // 0002+0003.
+  "0005_audit_chain_sentinel_lockdown.sql",
 ];
 
 function stripPgliteIncompatibilities(sqlText: string): string {

@@ -41,6 +41,7 @@ import { hasPermission } from "@/lib/auth";
 import { correlationIdFromHeaders } from "@/lib/correlation";
 import { getWebDb, isDbWired } from "@/lib/db";
 import { scoped } from "@/lib/logger";
+import { getClientIp, rateLimit, retryAfterSeconds } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -79,9 +80,19 @@ interface AuditLogDbRow {
   readonly row_hash: string | null;
 }
 
+/**
+ * Limit clamp.
+ *
+ * F-011 mitigation (Wave 3 pen-test). The original default was 10 000 —
+ * that's 10 000 SHA-256 passes per request on the Node.js single-thread
+ * event loop. Ten concurrent supervisors could DoS the worker for
+ * seconds at a time. New default is 1 000, hard ceiling 10 000 for
+ * platform_admin explicit opt-in. Combine with the rate limit in the
+ * handler.
+ */
 function clampLimit(raw: string | null): number {
-  const n = Number(raw ?? 10_000);
-  if (!Number.isFinite(n) || n < 1) return 10_000;
+  const n = Number(raw ?? 1_000);
+  if (!Number.isFinite(n) || n < 1) return 1_000;
   return Math.min(10_000, Math.floor(n));
 }
 
@@ -128,8 +139,22 @@ async function captureChainBreakToSentry(payload: {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const Sentry = mod as any;
     if (typeof Sentry.captureMessage !== "function") return;
+    // F-011 mitigation (Wave 3 pen-test, Chain-1). The previous
+    // fingerprint was tenant-only, which clustered EVERY break into
+    // one Sentry issue per tenant — an attacker who could insert one
+    // bad row also masked subsequent genuine tampers. Including the
+    // actualHash + brokenAt row index in the fingerprint separates
+    // distinct breaks while keeping repeated identical breaks
+    // clustered (same row, same recompute → same fingerprint).
     Sentry.captureMessage("audit.chain_break", {
       level: "error",
+      fingerprint: [
+        "audit",
+        "chain_break",
+        payload.tenantId,
+        String(payload.brokenAt),
+        payload.actualHash,
+      ],
       tags: {
         tenant_id: payload.tenantId,
         correlation_id: payload.correlationId,
@@ -145,9 +170,45 @@ async function captureChainBreakToSentry(payload: {
   }
 }
 
+/**
+ * Rate-limit cap for verify-chain. F-011 mitigation (Wave 3 pen-test).
+ *
+ * Each request runs up to 10 000 SHA-256 passes synchronously on the
+ * Node event loop. Without a limit, a handful of concurrent supervisors
+ * could effectively DoS the worker. 6 requests/minute per IP is
+ * generous for a human operator checking integrity and tight enough to
+ * prevent a malicious burst. Behind a single IP at scale, swap for
+ * per-(tenant, actor) keying via Redis when load-bearing.
+ */
+const VERIFY_CHAIN_RATE_LIMIT = 6;
+
 export async function GET(req: NextRequest): Promise<NextResponse> {
   const correlationId = correlationIdFromHeaders(req.headers);
   const log = scoped("api/audit/verify-chain", { correlationId });
+
+  // F-011 rate limit — cap concurrent invocations before any work
+  // happens. The session check below also runs, but we want the cheap
+  // limit to fire first so an unauthenticated burst doesn't trigger
+  // session-resolver work.
+  const ip = getClientIp(req);
+  const rl = rateLimit(ip, VERIFY_CHAIN_RATE_LIMIT);
+  if (!rl.ok) {
+    log.warn({ msg: "audit.verify.rate_limited", ip });
+    return new NextResponse(
+      JSON.stringify({
+        ok: false,
+        code: "rate_limited",
+        message: "verify-chain rate limit exceeded (6/min); back off",
+      }),
+      {
+        status: 429,
+        headers: {
+          "content-type": "application/json",
+          "Retry-After": retryAfterSeconds(rl.resetAt),
+        },
+      },
+    );
+  }
 
   const session = await resolveRouteSession(req);
   if (!session) return fail("unauthorized", "session required", 401);
