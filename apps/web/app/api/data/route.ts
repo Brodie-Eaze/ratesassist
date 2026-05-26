@@ -98,9 +98,39 @@ export async function GET(req: Request) {
       inScopeOwnerIds.add(oid);
     }
   }
+  // For each owner, also compute the set of tenants they touch. If
+  // they touch more than ONE, their contact PII (phone/email/postal)
+  // is mixed-tenant — redact it from a non-platform-admin response
+  // (F-008 council code-review follow-up). Identity fields (ownerId,
+  // name, ABN) remain visible so clerks can confirm record identity.
+  const ownerTenantMap = new Map<string, Set<string>>();
+  for (const p of PROPERTIES) {
+    const t = tenantFromAssessmentNumber(
+      (p as { assessmentNumber: string }).assessmentNumber,
+    );
+    if (t === null) continue;
+    for (const oid of (p as { ownerIds?: ReadonlyArray<string> }).ownerIds ?? []) {
+      const set = ownerTenantMap.get(oid) ?? new Set<string>();
+      set.add(t);
+      ownerTenantMap.set(oid, set);
+    }
+  }
   const scopedOwners = isPlatformAdmin
     ? OWNERS
-    : OWNERS.filter((o) => inScopeOwnerIds.has(o.ownerId));
+    : OWNERS.filter((o) => inScopeOwnerIds.has(o.ownerId)).map((o) => {
+        const touches = ownerTenantMap.get(o.ownerId) ?? new Set();
+        if (touches.size <= 1) return o;
+        // Mixed-tenant owner → strip contact methods, keep identity.
+        return {
+          ...o,
+          email: undefined,
+          phone: undefined,
+          mobilePhone: undefined,
+          postalAddress: undefined,
+          contactRedacted: true,
+          contactRedactedReason: "shared_owner_cross_tenant",
+        };
+      });
   // Tenements aren't tenant-bound (they're a state-level dataset);
   // they remain unscoped — they're not PII.
   const scopedTenements = TENEMENTS;
