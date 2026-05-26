@@ -18,9 +18,11 @@ import { findMismatches } from "@ratesassist/recovery-engine";
 import { runTool } from "@/lib/tools";
 import {
   fail,
-  hasSession,
   maybeNotModified,
   ok,
+  resolveRouteSession,
+  sessionMayAccessTenant,
+  tenantFromAssessmentNumber,
   weakEtag,
 } from "@/lib/api-helpers";
 import { getEvaluationContext } from "@/lib/clients";
@@ -32,12 +34,23 @@ export async function GET(
   req: NextRequest,
   ctx: { params: Promise<{ assessmentNumber: string }> },
 ): Promise<Response> {
-  if (!hasSession(req)) {
+  const session = await resolveRouteSession(req);
+  if (!session) {
     return fail("unauthorized", "Authentication required.");
   }
 
   const { assessmentNumber: encoded } = await ctx.params;
   const assessmentNumber = decodeURIComponent(encoded);
+
+  // F-002 mitigation — refuse cross-tenant evidence-pack reads. See
+  // /lib/api-helpers.ts:tenantFromAssessmentNumber for the prefix model.
+  const assetTenant = tenantFromAssessmentNumber(assessmentNumber);
+  if (!sessionMayAccessTenant(session, assetTenant)) {
+    return fail(
+      "not_found",
+      `Assessment ${assessmentNumber} is not a current recovery candidate.`,
+    );
+  }
 
   const evalCtx = getEvaluationContext();
   const candidates = findMismatches(evalCtx);

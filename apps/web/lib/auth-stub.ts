@@ -73,10 +73,37 @@ export async function issueStubSession(
 }
 
 /**
+ * Roles autologin is allowed to mint.
+ *
+ * F-003 (pen-test, ship-ready iteration 1) surfaced that the original
+ * role-name shortcut + the prod escape hatch (`RA_DEMO_AUTOLOGIN=1`)
+ * let any unauthenticated visitor acquire a signed `platform_admin`
+ * cookie on the council-CFO demo URL. That collapses every downstream
+ * tenant-boundary check because the principal IS the highest authority
+ * on the platform.
+ *
+ * Mitigation is structural: autologin can ONLY mint these two non-
+ * administrative roles. council_admin / platform_admin / auditor are
+ * rejected and fall through to "no session", forcing SSO. Smoke tests
+ * that need elevated roles must run in non-prod and must explicitly
+ * call `issueStubSession({ roles: [...] })` from server-side code that
+ * has its own auth gate.
+ */
+const AUTOLOGIN_ALLOWED_ROLES: ReadonlyArray<Role> = [
+  "rates_officer",
+  "ratepayer",
+];
+
+function isAutologinAllowedRole(r: Role): boolean {
+  return AUTOLOGIN_ALLOWED_ROLES.includes(r);
+}
+
+/**
  * Parse RA_DEV_AUTOLOGIN_SESSION env. Format: JSON object matching
  * StubSessionInput, OR the literal string "default" for the demo principal.
  *
- * Returns null in production OR when the env var is unset OR malformed.
+ * Returns null in production OR when the env var is unset OR malformed
+ * OR when any requested role exceeds {@link AUTOLOGIN_ALLOWED_ROLES}.
  * Never throws — autologin is a convenience, not a security mechanism.
  */
 export function parseDevAutologin(): StubSessionInput | null {
@@ -94,16 +121,23 @@ export function parseDevAutologin(): StubSessionInput | null {
   const raw = process.env["RA_DEV_AUTOLOGIN_SESSION"];
   if (!raw) return null;
   if (raw === "default" || raw === "1" || raw === "true") return {};
-  // Role-name shortcut: `RA_DEV_AUTOLOGIN_SESSION=council_admin` mints a
-  // default principal elevated to that role. Convenient for smoke tests
-  // exercising RBAC-gated endpoints without crafting a JSON blob.
+  // Role-name shortcut: only non-administrative roles are accepted. A
+  // value of `council_admin`/`platform_admin`/`auditor` here is treated
+  // as a misconfiguration and yields null — the request continues
+  // without a session and the user sees the SSO redirect.
   if (ALL_ROLES.includes(raw as Role)) {
-    return { roles: [raw as Role] };
+    const r = raw as Role;
+    if (!isAutologinAllowedRole(r)) return null;
+    return { roles: [r] };
   }
   try {
     const parsed = JSON.parse(raw) as StubSessionInput;
-    if (parsed.roles && !parsed.roles.every((r) => ALL_ROLES.includes(r))) {
-      return null;
+    if (parsed.roles) {
+      // Catching a single privileged role kills the entire autologin —
+      // we refuse partial fulfilment because the operator most likely
+      // intended the elevated session.
+      if (!parsed.roles.every((r) => ALL_ROLES.includes(r))) return null;
+      if (!parsed.roles.every(isAutologinAllowedRole)) return null;
     }
     return parsed;
   } catch {

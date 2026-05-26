@@ -15,6 +15,10 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { getSessionFromRequest, hasPermission } from "@/lib/auth";
+import {
+  sessionMayAccessTenant,
+  tenantFromAssessmentNumber,
+} from "@/lib/api-helpers";
 import { invalidateEvaluationContext } from "@/lib/clients";
 import { scoped } from "@/lib/logger";
 import {
@@ -162,6 +166,30 @@ export async function POST(
             message: "Invalid assessment number in path.",
           },
           { status: 400 },
+        );
+      }
+
+      // F-002 mitigation — refuse cross-tenant strata mutations. The
+      // pen-test showed a TPS council_admin could POST against a KAL
+      // strata parent and trigger a real state transition because the
+      // session's tenantId was never compared to the asset. 404 (not
+      // 403) on mismatch so the endpoint doesn't leak whether a given
+      // assessment is a strata parent on a different tenant.
+      const assetTenant = tenantFromAssessmentNumber(assessment);
+      if (!sessionMayAccessTenant(session, assetTenant)) {
+        log.warn({
+          event: "cross_tenant_refused",
+          userId: session.userId,
+          sessionTenant: session.tenantId,
+          assetTenant,
+        });
+        return NextResponse.json(
+          {
+            ok: false,
+            code: "not_found",
+            message: `Strata parent ${assessment} not found.`,
+          },
+          { status: 404 },
         );
       }
 

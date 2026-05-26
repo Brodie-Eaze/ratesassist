@@ -149,6 +149,32 @@ export async function POST(
         );
       }
 
+      // F-004 mitigation — pen-test showed a council_admin in tenant
+      // TPS could POST `/api/councils/KAL/import` and replace KAL's
+      // entire rating roll while the audit log showed TPS as the
+      // actor. The path `code` MUST match the session's tenant unless
+      // the caller is `platform_admin`. Audit-log breadcrumb on
+      // refusal so cross-tenant attempts are visible to the operator.
+      if (
+        code !== session.tenantId &&
+        !session.roles.includes("platform_admin")
+      ) {
+        log.warn({
+          event: "cross_tenant_refused",
+          userId: session.userId,
+          sessionTenant: session.tenantId,
+          attemptedTenant: code,
+        });
+        return NextResponse.json(
+          {
+            ok: false,
+            code: "forbidden",
+            message: `Cannot import into council ${code} from a session bound to ${session.tenantId}.`,
+          },
+          { status: 403 },
+        );
+      }
+
       const parsed = await readImportInput(req);
       if (!parsed.ok) {
         log.warn({ event: "invalid_input", message: parsed.message });

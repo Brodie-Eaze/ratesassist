@@ -15,7 +15,11 @@ import { NextRequest } from "next/server";
 // route handlers (and therefore api-helpers) load. NODE_ENV remains "test"
 // (vitest sets it) which is enough for the dev-fallback branch in
 // `readSession` to engage.
-process.env["RA_DEV_AUTOLOGIN_SESSION"] = "test-autologin";
+// SEC-F003 ship-ready iter1: `parseDevAutologin` now refuses arbitrary
+// string identifiers — autologin must be "default", "1", "true", a
+// JSON blob, or one of the allowlisted role names. Use "default" so
+// the existing tests resolve a TPS-tenant rates_officer session.
+process.env["RA_DEV_AUTOLOGIN_SESSION"] = "default";
 
 import { closeMcpClient } from "../lib/mcp-client";
 import { PROPERTIES, OWNERS } from "../lib/data";
@@ -238,9 +242,17 @@ describe("POST /api/exports/csv", () => {
 
 afterEach(() => {
   // Restore env between blocks.
-  process.env["RA_DEV_AUTOLOGIN_SESSION"] = "test-autologin";
+  // SEC-F003 ship-ready iter1: `parseDevAutologin` now refuses arbitrary
+// string identifiers — autologin must be "default", "1", "true", a
+// JSON blob, or one of the allowlisted role names. Use "default" so
+// the existing tests resolve a TPS-tenant rates_officer session.
+process.env["RA_DEV_AUTOLOGIN_SESSION"] = "default";
 });
 
 beforeAll(() => {
-  process.env["RA_DEV_AUTOLOGIN_SESSION"] = "test-autologin";
+  // SEC-F003 ship-ready iter1: `parseDevAutologin` now refuses arbitrary
+// string identifiers — autologin must be "default", "1", "true", a
+// JSON blob, or one of the allowlisted role names. Use "default" so
+// the existing tests resolve a TPS-tenant rates_officer session.
+process.env["RA_DEV_AUTOLOGIN_SESSION"] = "default";
 });

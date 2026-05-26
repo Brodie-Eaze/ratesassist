@@ -404,14 +404,34 @@ describe("parseDevAutologin", () => {
     expect(parseDevAutologin()).toEqual({});
   });
 
-  it("parses JSON config", () => {
+  it("parses JSON config with an allowlisted role", () => {
+    // SEC-F003 ship-ready iter1: autologin can only mint
+    // rates_officer or ratepayer. rates_supervisor used to be
+    // accepted; the test now exercises the new policy with the
+    // only role that survives the allowlist.
     process.env["RA_DEV_AUTOLOGIN_SESSION"] = JSON.stringify({
       tenantId: "AC",
-      roles: ["rates_supervisor"],
+      roles: ["rates_officer"],
     });
     const r = parseDevAutologin();
     expect(r?.tenantId).toBe("AC");
-    expect(r?.roles).toEqual(["rates_supervisor"]);
+    expect(r?.roles).toEqual(["rates_officer"]);
+  });
+
+  it("refuses to mint privileged roles even with valid JSON", () => {
+    // F-003 mitigation: setting an admin role via env must fall
+    // through to "no session", not silently promote the request.
+    for (const role of [
+      "platform_admin",
+      "council_admin",
+      "rates_supervisor",
+      "auditor",
+    ]) {
+      process.env["RA_DEV_AUTOLOGIN_SESSION"] = JSON.stringify({
+        roles: [role],
+      });
+      expect(parseDevAutologin()).toBeNull();
+    }
   });
 
   it("rejects unknown roles", () => {

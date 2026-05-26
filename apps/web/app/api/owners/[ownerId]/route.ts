@@ -15,9 +15,11 @@ import type { NextRequest } from "next/server";
 import { runTool } from "@/lib/tools";
 import {
   fail,
-  hasSession,
   maybeNotModified,
   ok,
+  resolveRouteSession,
+  sessionMayAccessTenant,
+  tenantFromAssessmentNumber,
   weakEtag,
 } from "@/lib/api-helpers";
 import { getEvaluationContext } from "@/lib/clients";
@@ -29,7 +31,8 @@ export async function GET(
   req: NextRequest,
   ctx: { params: Promise<{ ownerId: string }> },
 ): Promise<Response> {
-  if (!hasSession(req)) {
+  const session = await resolveRouteSession(req);
+  if (!session) {
     return fail("unauthorized", "Authentication required.");
   }
 
@@ -54,9 +57,38 @@ export async function GET(
   const evalCtx = getEvaluationContext();
   const portfolio = evalCtx.propertiesByOwnerId?.get(ownerId) ?? [];
 
+  // F-002 mitigation for owners: owner IDs are state-scoped (`O-WA-001`),
+  // not tenant-scoped, so the assessment-prefix shortcut used elsewhere
+  // doesn't apply directly. Instead, derive the owner's accessible
+  // tenants from the portfolio — if NONE of their properties are in
+  // the session's tenant, refuse. 404 to avoid being an enumeration
+  // oracle. Platform admins bypass via sessionMayAccessTenant.
+  const accessibleByPortfolio = portfolio.some(
+    (p: { assessmentNumber: string }) =>
+      sessionMayAccessTenant(
+        session,
+        tenantFromAssessmentNumber(p.assessmentNumber),
+      ),
+  );
+  if (!accessibleByPortfolio && !session.roles.includes("platform_admin")) {
+    return fail("not_found", `Owner ${ownerId} not found.`);
+  }
+
+  // Scope the portfolio response to only properties the session can
+  // see, so platform-admin reads still get the whole portfolio but
+  // a regular council_admin only sees their tenant's rows.
+  const scopedPortfolio = session.roles.includes("platform_admin")
+    ? portfolio
+    : portfolio.filter((p: { assessmentNumber: string }) =>
+        sessionMayAccessTenant(
+          session,
+          tenantFromAssessmentNumber(p.assessmentNumber),
+        ),
+      );
+
   const payload = {
     owner,
-    portfolio,
+    portfolio: scopedPortfolio,
     abnCheck: (owner as { abnCheck?: unknown } | undefined)?.abnCheck ?? {
       kind: "unchecked" as const,
     },

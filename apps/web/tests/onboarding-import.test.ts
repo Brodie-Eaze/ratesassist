@@ -132,7 +132,14 @@ describe("POST /api/councils/:code/import", () => {
     expect(commit.mutated).toBe(true);
   });
 
-  it("returns 404 for unknown council code", async () => {
+  it("returns 403 for cross-tenant council code (F-004 mitigation)", async () => {
+    // Pre-ship-ready iter1 this expected 404 (unknown council). The
+    // cross-tenant guard now added to /api/councils/[code]/import
+    // fires before any council-existence lookup: a council_admin in
+    // tenant TPS cannot import into ZZZ regardless of whether ZZZ
+    // exists. The pen-test demonstrated this was the path used to
+    // overwrite an arbitrary council's rate roll while the audit
+    // trail showed the attacker's tenant.
     const res = await importPOST(
       req(
         { csvText: SAMPLE_CSV, mergeStrategy: "upsert", confirm: false },
@@ -140,7 +147,7 @@ describe("POST /api/councils/:code/import", () => {
       ),
       withParams("ZZZ"),
     );
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(403);
   });
 
   it("rejects malformed council code in path", async () => {

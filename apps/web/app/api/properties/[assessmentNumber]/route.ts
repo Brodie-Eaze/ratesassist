@@ -24,9 +24,11 @@ import { findMismatches } from "@ratesassist/recovery-engine";
 import { runTool } from "@/lib/tools";
 import {
   fail,
-  hasSession,
   maybeNotModified,
   ok,
+  resolveRouteSession,
+  sessionMayAccessTenant,
+  tenantFromAssessmentNumber,
   weakEtag,
 } from "@/lib/api-helpers";
 import { getEvaluationContext } from "@/lib/clients";
@@ -60,12 +62,26 @@ export async function GET(
   req: NextRequest,
   ctx: { params: Promise<{ assessmentNumber: string }> },
 ): Promise<Response> {
-  if (!hasSession(req)) {
+  const session = await resolveRouteSession(req);
+  if (!session) {
     return fail("unauthorized", "Authentication required.");
   }
 
   const { assessmentNumber: encoded } = await ctx.params;
   const assessmentNumber = decodeURIComponent(encoded);
+
+  // F-002 mitigation: pen-test surfaced that a signed-in clerk in
+  // tenant TPS could read a KAL property by issuing
+  // `GET /api/properties/KAL-XXX`. Until the data model carries an
+  // explicit `tenantId` per record, we derive the owning tenant from
+  // the assessment-number prefix (which the seed data and demo
+  // workflows already guarantee). 404 — not 403 — on mismatch so the
+  // endpoint does not leak which assessment numbers exist on other
+  // tenants.
+  const assetTenant = tenantFromAssessmentNumber(assessmentNumber);
+  if (!sessionMayAccessTenant(session, assetTenant)) {
+    return fail("not_found", `Property ${assessmentNumber} not found.`);
+  }
 
   const include = parseInclude(req.nextUrl.searchParams.get("include"));
 

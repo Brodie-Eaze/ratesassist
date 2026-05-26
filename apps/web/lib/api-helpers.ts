@@ -356,3 +356,92 @@ export function readSession(req: NextRequest | Request): unknown | null {
 export function hasSession(req: NextRequest | Request): boolean {
   return readSession(req) !== null;
 }
+
+/**
+ * Derive the owning tenant from a RatesAssist assessment number.
+ *
+ * Assessment numbers follow the format `<TENANT_CODE>-<NN>-<NN>` (e.g.
+ * `TPS-1102-91`, `KAL-4401-12`, `ESH-7011-08`, `ASH-9911-22`). The
+ * tenant code prefix is the source of truth for which council the
+ * record belongs to in the current demo data model.
+ *
+ * Returns `null` for strings that don't match the prefix shape — those
+ * are treated as missing-tenant and the caller MUST reject (404), not
+ * fall through to "any tenant".
+ *
+ * Long term this helper becomes obsolete once Property/Owner records
+ * carry an explicit `tenantId` column (see internal/PHASE-1B-DATA-
+ * MODEL.md tracking). It exists today because the pen-test surfaced
+ * cross-tenant IDOR on every `[assessmentNumber]` route and the data
+ * model rewrite is a separate workstream.
+ */
+export function tenantFromAssessmentNumber(
+  assessmentNumber: string,
+): string | null {
+  const m = assessmentNumber.match(/^([A-Z]{2,5})-/);
+  return m ? m[1] : null;
+}
+
+/**
+ * Returns true when the session's `tenantId` matches the tenant derived
+ * from the asset identifier. Platform admins bypass — they legitimately
+ * read across tenants for support and audit.
+ *
+ * Callers handle the 404 themselves so the rejection looks identical
+ * to "asset doesn't exist" — refusing to be an enumeration oracle for
+ * which assessment numbers exist on other tenants.
+ */
+export function sessionMayAccessTenant(
+  session: { tenantId: string; roles: ReadonlyArray<string> },
+  assetTenant: string | null,
+): boolean {
+  if (assetTenant === null) return false;
+  if (session.roles.includes("platform_admin")) return true;
+  return assetTenant === session.tenantId;
+}
+
+/**
+ * Resolve a session for a route handler from any supported path:
+ *
+ *   1. `x-session` header (middleware-injected — fast path in prod).
+ *   2. `Authorization: Bearer <token>` or `Cookie: ra_session=<token>`
+ *      (cookie verification — works for direct requests that don't go
+ *      through middleware).
+ *   3. Dev/test autologin via `parseDevAutologin()` (only fires when
+ *      `RA_DEV_AUTOLOGIN_SESSION` is set AND we're outside production
+ *      OR `RA_DEMO_AUTOLOGIN=1`).
+ *
+ * Route handlers should call this in place of `getSessionFromRequest`
+ * so unit tests that exercise the handler directly still resolve a
+ * principal via the env-var path that middleware would have used.
+ *
+ * Returns null only when ALL three paths fail — that's the authentic
+ * "no session" response.
+ */
+export async function resolveRouteSession(
+  req: NextRequest | Request,
+): Promise<{
+  userId: string;
+  email: string;
+  displayName: string;
+  tenantId: string;
+  roles: ReadonlyArray<string>;
+  issuedAt: string;
+  expiresAt: string;
+} | null> {
+  // Lazy-load auth + auth-stub to avoid a top-of-module circular dep
+  // with logger/middleware imports.
+  const { getSessionFromRequest, getSession } = await import("./auth.js");
+  const fromHeader = getSessionFromRequest(req);
+  if (fromHeader) return fromHeader;
+  const fromCookie = await getSession(req);
+  if (fromCookie) return fromCookie;
+
+  // Test/dev fallback — the autologin path that middleware would have
+  // taken before reaching the route handler.
+  const { parseDevAutologin, issueStubSession } = await import("./auth-stub.js");
+  const stub = parseDevAutologin();
+  if (!stub) return null;
+  const { session } = await issueStubSession(stub);
+  return session;
+}

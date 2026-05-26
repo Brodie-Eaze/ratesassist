@@ -100,10 +100,23 @@ class EsriExportImageTileLayer extends L.TileLayer {
  * Render this conditionally from `<BasemapLayer>` when
  * `basemap === "sentinel-latest"`, the same way the other basemap
  * options are conditionally mounted.
+ *
+ * Tile-error visibility (ship-ready iter 1, silent-failure #4): the
+ * system-integrity audit surfaced that when Esri returns 5xx for a
+ * bbox (or the request is blocked by CSP), Leaflet silently shows a
+ * blank tile and a clerk can't tell live data is degraded vs. genuinely
+ * no imagery. We attach a `tileerror` listener that counts failures
+ * and emits a `ratesassist:imagery_degraded` CustomEvent on `window`
+ * after the first error. A wrapping component (the MapToolbar's
+ * ImageryCurrencyBadge consumer) can listen for that event and flip
+ * the badge tone to "amber — degraded". For now we also log to
+ * console so the failure is visible to ops + the print export so a
+ * dev opening the page sees the breakage instantly.
  */
 export default function Sentinel2LiveLayer(): null {
   const map = useMap();
   useEffect(() => {
+    if (!map) return undefined;
     const layer = new EsriExportImageTileLayer("", {
       attribution: SENTINEL_LATEST_ATTR,
       maxNativeZoom: SENTINEL_LATEST_MAX_NATIVE,
@@ -114,9 +127,36 @@ export default function Sentinel2LiveLayer(): null {
       // takes a print export.
       crossOrigin: true,
     });
+    let errorCount = 0;
+    const onTileError = (e: L.TileErrorEvent): void => {
+      errorCount += 1;
+      // Surface the FIRST failure prominently; subsequent failures from
+      // the same upstream outage would just spam the console.
+      if (errorCount === 1) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          "[Sentinel2LiveLayer] Esri exportImage tile failed — imagery may be degraded.",
+          { url: (e as { tile?: { src?: string } }).tile?.src },
+        );
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(
+            new CustomEvent("ratesassist:imagery_degraded", {
+              detail: { source: "sentinel-latest", at: new Date().toISOString() },
+            }),
+          );
+        }
+      }
+    };
+    layer.on("tileerror", onTileError);
     layer.addTo(map);
     return () => {
-      map.removeLayer(layer);
+      layer.off("tileerror", onTileError);
+      // map.removeLayer is safe on an already-removed layer (Leaflet
+      // tolerates it), but guard for the strict-mode double-unmount
+      // case where `map` may have been disposed first.
+      if (map.hasLayer(layer)) {
+        map.removeLayer(layer);
+      }
     };
   }, [map]);
   return null;
