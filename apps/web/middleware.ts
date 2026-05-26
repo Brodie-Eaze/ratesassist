@@ -44,8 +44,25 @@ const PUBLIC_API_PREFIXES: readonly string[] = [
  * HTML routes that bypass the auth gate. The root "/" is public so unauth
  * visitors can land on the marketing page; page.tsx itself decides whether
  * to render the dashboard (authed) or the landing surface (unauthed).
+ *
+ * Trust-signal pages (/status, /security, /changelog, /privacy, /trust
+ * and /trust/sub-processors) are public by design — they are pre-demo
+ * procurement table stakes. They render first-party content only (no
+ * session-derived data, no tenant context) so the auth gate would only
+ * stand between a council CFO's IT lead and the security posture they
+ * need to read before approving a meeting.
  */
-const PUBLIC_HTML_PATHS: readonly string[] = ["/login", "/landing", "/"];
+const PUBLIC_HTML_PATHS: readonly string[] = [
+  "/login",
+  "/landing",
+  "/",
+  "/status",
+  "/security",
+  "/changelog",
+  "/privacy",
+  "/trust",
+  "/trust/sub-processors",
+];
 
 function isPublicApi(path: string): boolean {
   return PUBLIC_API_PREFIXES.some(
