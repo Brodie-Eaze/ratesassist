@@ -205,13 +205,18 @@ export class CommitTokenStore {
    * the object after issuing.
    *
    * `binding` records the tenant + actor that this token belongs to. The
-   * subsequent {@link consume} call must present a matching binding or it
-   * will be refused (F-005 mitigation). Default `{}` for callers that
-   * predate the binding requirement; new code should always pass it.
+   * subsequent {@link consume} call MUST present a matching binding or it
+   * will be refused (F-005 mitigation).
+   *
+   * ship-ready iter3: the parameter is required (not defaulted) so a
+   * TypeScript build catches any handler that forgets to pass it. The
+   * pen-test re-check found that every production handler was relying
+   * on the previous default-`{}` behaviour, which silently disabled
+   * the binding check and re-opened the cross-tenant replay attack.
    */
   public issue(
     mutation: PendingMutation,
-    binding: TokenBinding = {},
+    binding: TokenBinding,
   ): string {
     this.gc();
     const token = randomUUID();
@@ -244,7 +249,7 @@ export class CommitTokenStore {
   public consume(
     token: string,
     expectedOperation: CommitOperation,
-    consumer: TokenBinding = {},
+    consumer: TokenBinding,
   ):
     | { readonly ok: true; readonly mutation: PendingMutation }
     | ConsumeFailure {

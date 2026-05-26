@@ -60,10 +60,12 @@ function findMismatchesCached(
 import {
   applyPagination,
   fail,
-  hasSession,
   maybeNotModified,
   ok,
   readPageParams,
+  resolveRouteSession,
+  sessionMayAccessTenant,
+  tenantFromAssessmentNumber,
   weakEtag,
 } from "@/lib/api-helpers";
 import { getEvaluationContext, recoveryStatsFor } from "@/lib/clients";
@@ -118,9 +120,19 @@ function maxGranted(c: MismatchCandidate): string {
 }
 
 export async function GET(req: NextRequest): Promise<Response> {
-  if (!hasSession(req)) {
+  // ship-ready iter3: the previous gate used `hasSession`, which reads
+  // through the api-helpers `readSession` path. That path tolerated
+  // ANY non-empty `RA_DEV_AUTOLOGIN_SESSION` value (returned a
+  // placeholder `{id: dev}` object), completely bypassing the
+  // `parseDevAutologin` allowlist that the rest of the platform
+  // adopted in iter1. Switching to `resolveRouteSession` makes this
+  // route enforce the same allowlist + cookie + header chain as every
+  // other authenticated endpoint.
+  const session = await resolveRouteSession(req);
+  if (!session) {
     return fail("unauthorized", "Authentication required.");
   }
+  const isPlatformAdmin = session.roles.includes("platform_admin");
 
   const url = req.nextUrl;
   const severityRaw = url.searchParams.get("severity");
@@ -136,7 +148,18 @@ export async function GET(req: NextRequest): Promise<Response> {
   const evalCtx = getEvaluationContext();
   const all = findMismatchesCached(evalCtx);
 
-  let filtered: readonly MismatchCandidate[] = all;
+  // ship-ready iter3: scope the candidate list to the session's
+  // tenant before any other filter. Same derivation model as the
+  // [assessmentNumber] routes — the assessment-number prefix carries
+  // the owning tenant. platform_admin bypasses the scope.
+  let filtered: readonly MismatchCandidate[] = isPlatformAdmin
+    ? all
+    : all.filter((c) =>
+        sessionMayAccessTenant(
+          session,
+          tenantFromAssessmentNumber(c.property.assessmentNumber),
+        ),
+      );
   if (severity !== null) {
     filtered = filtered.filter((c) => c.severity === severity);
   }

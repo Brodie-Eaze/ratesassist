@@ -91,6 +91,7 @@ export async function updateOwnerContactHandler(
     const consumed = ctx.commitTokens.consume(
       input.commitToken,
       "update_owner_contact",
+      { tenantId: ctx.tenantId, actorId: ctx.actorId },
     );
     if (!consumed.ok) {
       const reason =
@@ -163,12 +164,15 @@ export async function updateOwnerContactHandler(
       mutated: false,
     };
   }
-  const token = ctx.commitTokens.issue({
-    operation: "update_owner_contact",
-    ownerId: owner.ownerId,
-    ...(patch.phone !== undefined ? { newPhone: patch.phone } : {}),
-    ...(patch.email !== undefined ? { newEmail: patch.email } : {}),
-  });
+  const token = ctx.commitTokens.issue(
+    {
+      operation: "update_owner_contact",
+      ownerId: owner.ownerId,
+      ...(patch.phone !== undefined ? { newPhone: patch.phone } : {}),
+      ...(patch.email !== undefined ? { newEmail: patch.email } : {}),
+    },
+    { tenantId: ctx.tenantId, actorId: ctx.actorId },
+  );
   const text = [
     `Proposed change to ${owner.name} (${owner.ownerId}):`,
     ...lines,
@@ -211,6 +215,7 @@ export async function addPropertyNoteHandler(
     const consumed = ctx.commitTokens.consume(
       input.commitToken,
       "add_property_note",
+      { tenantId: ctx.tenantId, actorId: ctx.actorId },
     );
     if (!consumed.ok) {
       const reason =
@@ -263,7 +268,7 @@ export async function addPropertyNoteHandler(
     operation: "add_property_note",
     assessmentNumber: input.assessmentNumber,
     note: input.note,
-  });
+  }, { tenantId: ctx.tenantId, actorId: ctx.actorId });
   const text = [
     `Proposed note for ${property.assessmentNumber} (${property.address}):`,
     ``,

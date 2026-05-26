@@ -405,17 +405,27 @@ describe("parseDevAutologin", () => {
   });
 
   it("parses JSON config with an allowlisted role", () => {
-    // SEC-F003 ship-ready iter1: autologin can only mint
-    // rates_officer or ratepayer. rates_supervisor used to be
-    // accepted; the test now exercises the new policy with the
-    // only role that survives the allowlist.
+    // SEC-F003 iter1: autologin can only mint rates_officer or ratepayer.
+    // iter3: tenantId must equal the demo default (TPS) — cross-tenant
+    // tenantId values in the env are refused entirely.
     process.env["RA_DEV_AUTOLOGIN_SESSION"] = JSON.stringify({
-      tenantId: "AC",
+      tenantId: "TPS",
       roles: ["rates_officer"],
     });
     const r = parseDevAutologin();
-    expect(r?.tenantId).toBe("AC");
+    expect(r?.tenantId).toBe("TPS");
     expect(r?.roles).toEqual(["rates_officer"]);
+  });
+
+  it("refuses cross-tenant tenantId in the env (Q4 case f)", () => {
+    // Council code-review surfaced that an env carrying just
+    // `{tenantId:"KAL"}` would mint a rates_officer for a foreign
+    // tenant — wide-open cross-tenant lever via deploy env. The
+    // restriction refuses any non-demo tenant explicitly.
+    process.env["RA_DEV_AUTOLOGIN_SESSION"] = JSON.stringify({
+      tenantId: "KAL",
+    });
+    expect(parseDevAutologin()).toBeNull();
   });
 
   it("refuses to mint privileged roles even with valid JSON", () => {

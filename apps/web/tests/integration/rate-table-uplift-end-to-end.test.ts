@@ -44,7 +44,11 @@ beforeEach(async () => {
 
 describe("rate-table uplift end-to-end", () => {
   it("computes correctAnnualRates = max(UV × rate, minPayment) for KAL-4401-12", async () => {
-    const s = makeSession(["rates_supervisor"]);
+    // ship-ready iter3: candidates route now scopes by assessment-number
+    // tenant prefix. KAL-4401-12 belongs to "KAL"; the test's session
+    // default tenant is "demo-tenant" which would filter it out.
+    // platform_admin bypasses the scope for this integration check.
+    const s = makeSession(["platform_admin"]);
     const req = new NextRequest(
       new URL("http://localhost/api/recovery/candidates?limit=200"),
       {

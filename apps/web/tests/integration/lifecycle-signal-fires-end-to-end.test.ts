@@ -50,12 +50,15 @@ beforeEach(async () => {
 
 describe("lifecycle signal fires end-to-end", () => {
   it("emits an audit row, then surfaces the change.commercial_use signal on a candidate", async () => {
-    // The in-proc adapter records audit entries under tenantId="demo-tenant"
-    // unless the route forwards attribution (the /api/tools/[name] route
-    // does not yet thread session attribution through). We pin both
-    // sessions to the demo tenant so the audit-log query sees the row.
-    const admin = makeSession(["council_admin"], "demo-tenant");
-    const supervisor = makeSession(["rates_supervisor"], "demo-tenant");
+    // ship-ready iter3: /api/recovery/candidates now scopes by the
+    // session tenant (derived from the candidate's assessment-number
+    // prefix). The test fixture KAL-4401-12 lives in the "KAL"
+    // tenant scope, so the session must hit KAL or be platform_admin.
+    // We use platform_admin so both the audit-log path (records under
+    // demo-tenant) AND the candidates scoping (would otherwise filter
+    // out KAL) both work.
+    const admin = makeSession(["platform_admin"], "demo-tenant");
+    const supervisor = makeSession(["platform_admin"], "demo-tenant");
 
     // 1. Generate one audit entry by previewing + confirming an
     //    add_property_note (a known fail-closed-tolerant mutation that

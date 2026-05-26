@@ -285,6 +285,7 @@ export async function importRateScheduleHandler(
     const consumed = ctx.commitTokens.consume(
       input.commitToken,
       "import_rate_schedule",
+      { tenantId: ctx.tenantId, actorId: ctx.actorId },
     );
     if (!consumed.ok) {
       const reason =
@@ -412,7 +413,7 @@ export async function importRateScheduleHandler(
     mergeStrategy: input.mergeStrategy,
     rowCount: validCount,
     rows: parsed.rows as ReadonlyArray<Record<string, unknown>>,
-  });
+  }, { tenantId: ctx.tenantId, actorId: ctx.actorId });
 
   const sampleRows = parsed.rows.slice(0, 5).map((r) => ({
     rateCode: r.rateCode,
@@ -748,6 +749,7 @@ export async function importLandgateTitleDataHandler(
     const consumed = ctx.commitTokens.consume(
       input.commitToken,
       "import_landgate_title_data",
+      { tenantId: ctx.tenantId, actorId: ctx.actorId },
     );
     if (!consumed.ok) {
       const reason =
@@ -856,7 +858,7 @@ export async function importLandgateTitleDataHandler(
     encumbranceCount: agg.encumbranceCount,
     strataParentCount: agg.strataParentCount,
     records: agg.records as ReadonlyArray<Record<string, unknown>>,
-  });
+  }, { tenantId: ctx.tenantId, actorId: ctx.actorId });
 
   const sampleRecords = agg.records.slice(0, 5).map((r) => ({
     ven: r.ven,
@@ -1013,6 +1015,7 @@ export async function importWcEligibilityHandler(
     const consumed = ctx.commitTokens.consume(
       input.commitToken,
       "import_wc_eligibility",
+      { tenantId: ctx.tenantId, actorId: ctx.actorId },
     );
     if (!consumed.ok) {
       const reason =
@@ -1120,7 +1123,7 @@ export async function importWcEligibilityHandler(
     retrievedAt,
     rowCount: parsed.rows.length,
     rows: parsed.rows as ReadonlyArray<Record<string, unknown>>,
-  });
+  }, { tenantId: ctx.tenantId, actorId: ctx.actorId });
 
   const sampleRows = parsed.rows.slice(0, 5).map((r) => ({
     customerId: r.customerId,
@@ -1251,6 +1254,7 @@ export async function requestStrataConversionHandler(
     const consumed = ctx.commitTokens.consume(
       input.commitToken,
       "request_strata_conversion",
+      { tenantId: ctx.tenantId, actorId: ctx.actorId },
     );
     if (!consumed.ok) {
       const reason =
@@ -1412,18 +1416,21 @@ export async function requestStrataConversionHandler(
   }
 
   // ===== PREVIEW PATH =====
-  const token = ctx.commitTokens.issue({
-    operation: "request_strata_conversion",
-    parentAssessmentNumber: input.parentAssessmentNumber,
-    toState: input.toState,
-    childCts: (input.childCts ?? []).map((cc) => ({
-      volume: cc.volume,
-      folio: cc.folio,
-      ...(cc.ven !== undefined ? { ven: cc.ven } : {}),
-      ...(cc.address !== undefined ? { address: cc.address } : {}),
-    })),
-    ...(input.reason !== undefined ? { reason: input.reason } : {}),
-  });
+  const token = ctx.commitTokens.issue(
+    {
+      operation: "request_strata_conversion",
+      parentAssessmentNumber: input.parentAssessmentNumber,
+      toState: input.toState,
+      childCts: (input.childCts ?? []).map((cc) => ({
+        volume: cc.volume,
+        folio: cc.folio,
+        ...(cc.ven !== undefined ? { ven: cc.ven } : {}),
+        ...(cc.address !== undefined ? { address: cc.address } : {}),
+      })),
+      ...(input.reason !== undefined ? { reason: input.reason } : {}),
+    },
+    { tenantId: ctx.tenantId, actorId: ctx.actorId },
+  );
 
   const childPreview = (input.childCts ?? []).map((cc) => ({
     volume: cc.volume,

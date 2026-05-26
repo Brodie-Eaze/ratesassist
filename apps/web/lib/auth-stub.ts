@@ -139,6 +139,26 @@ export function parseDevAutologin(): StubSessionInput | null {
       if (!parsed.roles.every((r) => ALL_ROLES.includes(r))) return null;
       if (!parsed.roles.every(isAutologinAllowedRole)) return null;
     }
+    // ship-ready iter3 (Q4 case f): the council code-review surfaced
+    // that a JSON blob carrying ONLY `{tenantId: "KAL"}` (no role
+    // field) would happily mint a rates_officer session bound to a
+    // FOREIGN tenant — the env was a fully open cross-tenant lever.
+    // In production-demo mode (`RA_DEMO_AUTOLOGIN=1`) this is a
+    // standing capability for anyone with deploy-env access to
+    // impersonate a clerk in ANY tenant they like.
+    //
+    // We now refuse autologin entirely when the env tries to set a
+    // tenantId that doesn't match the DEMO_DEFAULTS tenant. The
+    // demo principal is hardcoded to `TPS` for the council-CFO
+    // walkthrough; operators who need to demo a different tenant
+    // must change `DEMO_DEFAULTS` in source (visible diff, code
+    // review, audit trail), not flip an env var.
+    if (
+      parsed.tenantId !== undefined &&
+      parsed.tenantId !== DEMO_DEFAULTS.tenantId
+    ) {
+      return null;
+    }
     return parsed;
   } catch {
     return null;

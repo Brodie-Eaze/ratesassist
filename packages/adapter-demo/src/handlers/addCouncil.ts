@@ -36,6 +36,7 @@ export async function addCouncilHandler(
     const consumed = ctx.commitTokens.consume(
       input.commitToken,
       "add_council",
+      { tenantId: ctx.tenantId, actorId: ctx.actorId },
     );
     if (!consumed.ok) {
       const reason =
@@ -118,7 +119,7 @@ export async function addCouncilHandler(
     population: input.population,
     rateableProperties: input.rateableProperties,
     rateRevenue: input.rateRevenue,
-  });
+  }, { tenantId: ctx.tenantId, actorId: ctx.actorId });
   const text = [
     `Proposed new council:`,
     `  Code: ${input.code}`,

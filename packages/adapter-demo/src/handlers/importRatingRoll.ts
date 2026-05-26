@@ -114,6 +114,7 @@ export async function importRatingRollHandler(
     const consumed = ctx.commitTokens.consume(
       input.commitToken,
       "import_rating_roll",
+      { tenantId: ctx.tenantId, actorId: ctx.actorId },
     );
     if (!consumed.ok) {
       const reason =
@@ -244,7 +245,7 @@ export async function importRatingRollHandler(
     mergeStrategy: input.mergeStrategy,
     rowCount: validCount,
     rows: parsed.rows as ReadonlyArray<Record<string, unknown>>,
-  });
+  }, { tenantId: ctx.tenantId, actorId: ctx.actorId });
 
   const sampleRows = parsed.rows.slice(0, 5).map((r) => ({
     assessmentNumber: r.assessmentNumber,
