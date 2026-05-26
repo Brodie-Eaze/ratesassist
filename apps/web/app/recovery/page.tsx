@@ -249,18 +249,15 @@ function RecoveryPageInner() {
    * stays as `?signal=<family>` for backwards compatibility with /alerts
    * and the older links the clerks may have bookmarked.
    */
-  const [recoveryType, setRecoveryType] = useState<"all" | RecoveryTypeValue>("all");
-  const [recoveryDropdownOpen, setRecoveryDropdownOpen] = useState<boolean>(false);
-  const [signalDropdownOpen, setSignalDropdownOpen] = useState<boolean>(false);
-  const recoveryDropdownRef = useRef<HTMLDivElement | null>(null);
-  const signalDropdownRef = useRef<HTMLDivElement | null>(null);
   const searchParams = useSearchParams();
-
-  // Pre-apply the dropdown filter when arriving via /recovery?signal=<family>.
-  // The legacy /alerts redirect uses `recently_granted`; deep-links from the
-  // older pill-row implementation use the same param shape, so they keep
-  // working unchanged.
-  useEffect(() => {
+  // Pre-apply the dropdown filter from `?signal=<family>` ONCE, at
+  // mount. Earlier this lived in a `useEffect([searchParams])`, which
+  // silently overrode a user's dropdown choice every time the URL
+  // changed (e.g. when a child component pushed a new query param).
+  // The initial-value form keeps deep-link compatibility for /alerts
+  // and older bookmarks but is mount-only — clicking the dropdown
+  // afterwards stays sticky.
+  const initialRecoveryType: "all" | RecoveryTypeValue = (() => {
     const sig = searchParams?.get("signal");
     if (
       sig === "recently_granted" ||
@@ -270,9 +267,17 @@ function RecoveryPageInner() {
       sig === "concession_review" ||
       sig === "strata_conversion"
     ) {
-      setRecoveryType(sig);
+      return sig;
     }
-  }, [searchParams]);
+    return "all";
+  })();
+  const [recoveryType, setRecoveryType] = useState<"all" | RecoveryTypeValue>(
+    initialRecoveryType,
+  );
+  const [recoveryDropdownOpen, setRecoveryDropdownOpen] = useState<boolean>(false);
+  const [signalDropdownOpen, setSignalDropdownOpen] = useState<boolean>(false);
+  const recoveryDropdownRef = useRef<HTMLDivElement | null>(null);
+  const signalDropdownRef = useRef<HTMLDivElement | null>(null);
 
   // Close the recovery-type dropdown on outside click.
   useEffect(() => {

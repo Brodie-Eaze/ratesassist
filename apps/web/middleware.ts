@@ -82,12 +82,45 @@ const MUTATING_METHODS: ReadonlySet<string> = new Set([
   "DELETE",
 ]);
 
+/**
+ * Hardcoded CSRF/Origin-check exempt paths.
+ *
+ * Pen-test F-007 (ship-ready iter1) flagged that the previous
+ * env-driven `RA_CSRF_EXEMPT_PATHS` was a single-typo footgun: setting
+ * the env to "/api/" disabled CSRF on the entire MCP dispatcher,
+ * turning every mutating tool into a cross-origin write target for
+ * any malicious page a logged-in clerk visited.
+ *
+ * The exempt list is now constant. Callbacks that legitimately bypass
+ * the Origin check (SSO OAuth callback only) are listed here in
+ * source — any new exemption requires a code review and a commit
+ * message explaining why the path is safe.
+ *
+ * Behaviour preservation: the env var is read with a deprecation log
+ * but otherwise ignored. Operators who set it will see the warning
+ * in /api/ready logs and can remove it at their convenience.
+ */
+const HARDCODED_CSRF_EXEMPT_PATHS: ReadonlyArray<string> = [
+  // SSO callback — the IdP redirects with a one-time code in the URL,
+  // and we cannot constrain its Origin header. The OAuth state-token
+  // check inside the callback handler is the actual CSRF defense.
+  "/api/auth/sso/callback",
+] as const;
+
+let warnedCsrfEnvDeprecated = false;
+
 function csrfExemptPaths(): readonly string[] {
-  const raw = process.env["RA_CSRF_EXEMPT_PATHS"] ?? "";
-  return raw
-    .split(",")
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
+  if (
+    !warnedCsrfEnvDeprecated &&
+    (process.env["RA_CSRF_EXEMPT_PATHS"] ?? "").length > 0
+  ) {
+    warnedCsrfEnvDeprecated = true;
+    // eslint-disable-next-line no-console
+    console.warn(
+      "[security] RA_CSRF_EXEMPT_PATHS env var is ignored (F-007 mitigation). Exempt paths are now hardcoded in middleware.ts.",
+    );
+  }
+  return HARDCODED_CSRF_EXEMPT_PATHS;
 }
 
 function pathIsExempt(path: string, exempt: readonly string[]): boolean {

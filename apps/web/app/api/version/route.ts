@@ -45,6 +45,11 @@ function readGitSha(): string {
     process.env.GIT_SHA ??
     process.env.COMMIT_SHA;
   if (fromEnv && fromEnv.length > 0) return fromEnv;
+  // F-009 mitigation (pen-test): refuse to fork `git rev-parse HEAD`
+  // in production. In Vercel/Railway containers there is no .git
+  // directory anyway, so the call would always throw — and an
+  // adversary probing /api/version would get cheap CPU fork-DoS.
+  if (process.env.NODE_ENV === "production") return "unknown";
   try {
     return execSync("git rev-parse HEAD", { stdio: ["ignore", "pipe", "ignore"] })
       .toString()
@@ -65,6 +70,11 @@ function build(): VersionPayload {
   return cached;
 }
 
+// Resolve the version payload eagerly at module-load so the first
+// request doesn't pay the `git rev-parse` / fs-read cost, and so
+// container cold-start instrumentation can see a stable `gitSha`.
+const eagerPayload: VersionPayload = build();
+
 export function GET(): NextResponse {
-  return NextResponse.json(build());
+  return NextResponse.json(eagerPayload);
 }

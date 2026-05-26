@@ -71,17 +71,31 @@ describe("CSRF / Origin check (SEC-014)", () => {
     expect(res.status).toBe(403);
   });
 
-  it("RA_CSRF_EXEMPT_PATHS exempts a path prefix", async () => {
+  it("RA_CSRF_EXEMPT_PATHS env is ignored (F-007 mitigation)", async () => {
+    // Pen-test F-007 / ship-ready iter2: the env-driven exempt list
+    // used to disable the Origin check entirely if anyone set it.
+    // The list is now hardcoded to ["/api/auth/sso/callback"] in
+    // middleware.ts; setting the env still doesn't help.
     process.env.RA_CSRF_EXEMPT_PATHS = "/api/webhook";
     try {
       const req = makeReq("POST", "https://app.example.com/api/webhook/x", {
         host: "app.example.com",
       });
       const res = await middleware(req);
-      expect(res.status).not.toBe(403);
+      expect(res.status).toBe(403);
     } finally {
       delete process.env.RA_CSRF_EXEMPT_PATHS;
     }
+  });
+
+  it("/api/auth/sso/callback IS exempt (hardcoded list)", async () => {
+    const req = makeReq(
+      "POST",
+      "https://app.example.com/api/auth/sso/callback",
+      { host: "app.example.com" },
+    );
+    const res = await middleware(req);
+    expect(res.status).not.toBe(403);
   });
 
   it("/api/tools/* is NOT exempt by default", async () => {

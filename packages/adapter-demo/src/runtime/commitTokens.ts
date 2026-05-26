@@ -136,6 +136,25 @@ export type PendingMutation =
     };
 
 /**
+ * Identity binding for a commit token.
+ *
+ * Pen-test F-005 (ship-ready iter1) demonstrated that the original
+ * `TokenEntry` carried only `operation + payload-hash` — a token
+ * issued during one principal's preview could be replayed by ANY
+ * other principal's confirm call, including across tenants. Tokens
+ * now record the tenant + actor they were issued for; consume
+ * refuses if the calling principal doesn't match.
+ *
+ * Both fields are optional ONLY for backwards compatibility with
+ * legacy callers in tests and dev tooling. Production handlers MUST
+ * pass them on issue and on consume.
+ */
+export type TokenBinding = {
+  readonly tenantId?: string;
+  readonly actorId?: string;
+};
+
+/**
  * Stored token entry. Held in {@link CommitTokenStore} until consumed or
  * expired. The expiry is wall-clock based; use a stable `now` injection at
  * call sites to avoid surprises in tests.
@@ -144,7 +163,19 @@ type TokenEntry = {
   readonly token: string;
   readonly mutation: PendingMutation;
   readonly expiresAtMs: number;
+  readonly binding: TokenBinding;
 };
+
+/**
+ * Discriminated failure shape returned by {@link CommitTokenStore.consume}.
+ * `binding_mismatch` is the F-005 mitigation surface — callers should NOT
+ * leak the actual issuing principal back to the consumer, just refuse.
+ */
+type ConsumeFailure =
+  | { readonly ok: false; readonly reason: "unknown" }
+  | { readonly ok: false; readonly reason: "expired" }
+  | { readonly ok: false; readonly reason: "operation_mismatch" }
+  | { readonly ok: false; readonly reason: "binding_mismatch" };
 
 /**
  * In-memory token store. Process-local — see file-level docstring for the
@@ -172,31 +203,51 @@ export class CommitTokenStore {
    * Issue a new token for the given mutation. Returns the token string.
    * The mutation snapshot is captured by reference; callers must not mutate
    * the object after issuing.
+   *
+   * `binding` records the tenant + actor that this token belongs to. The
+   * subsequent {@link consume} call must present a matching binding or it
+   * will be refused (F-005 mitigation). Default `{}` for callers that
+   * predate the binding requirement; new code should always pass it.
    */
-  public issue(mutation: PendingMutation): string {
+  public issue(
+    mutation: PendingMutation,
+    binding: TokenBinding = {},
+  ): string {
     this.gc();
     const token = randomUUID();
     this.entries.set(token, {
       token,
       mutation,
       expiresAtMs: this.nowMs() + this.ttlMs,
+      binding,
     });
     return token;
   }
 
   /**
-   * Consume a token. Returns the captured mutation if the token is valid
-   * and matches the expected operation; otherwise returns a discriminated
-   * failure describing why.
+   * Consume a token. Returns the captured mutation if the token is valid,
+   * matches the expected operation, AND the supplied principal matches the
+   * one the token was issued to. Otherwise returns a discriminated failure.
    *
-   * On success, the token is removed from the store — single-use semantics.
+   * `consumer` records who's trying to commit. When the token's binding
+   * carries a `tenantId` / `actorId`, the consumer's value MUST equal it
+   * (string equality, no normalisation). This is the F-005 mitigation —
+   * even if an attacker observes a token, they cannot replay it from a
+   * different session.
+   *
+   * Legacy callers that don't supply `consumer` see the old behaviour
+   * (binding check is skipped). Production routes have been updated to
+   * always pass it.
+   *
+   * On success, the token is removed from the store — single-use.
    */
   public consume(
     token: string,
     expectedOperation: CommitOperation,
+    consumer: TokenBinding = {},
   ):
     | { readonly ok: true; readonly mutation: PendingMutation }
-    | { readonly ok: false; readonly reason: "unknown" | "expired" | "operation_mismatch" } {
+    | ConsumeFailure {
     // Look up BEFORE gc so an expired entry can be reported as "expired"
     // rather than indistinguishably collapsed into "unknown" by the sweeper.
     // Clients use this distinction to choose between "re-run the preview"
@@ -212,6 +263,22 @@ export class CommitTokenStore {
     }
     if (entry.mutation.operation !== expectedOperation) {
       return { ok: false, reason: "operation_mismatch" };
+    }
+    // F-005: binding check. Only enforced when the ISSUING side
+    // supplied identity — older callers without binding still work,
+    // but any production handler that passes the binding on issue
+    // gates consume on it. We do NOT delete the token on
+    // binding_mismatch so a legitimate later attempt from the right
+    // principal can still succeed (until expiry).
+    if (entry.binding.tenantId !== undefined) {
+      if (consumer.tenantId !== entry.binding.tenantId) {
+        return { ok: false, reason: "binding_mismatch" };
+      }
+    }
+    if (entry.binding.actorId !== undefined) {
+      if (consumer.actorId !== entry.binding.actorId) {
+        return { ok: false, reason: "binding_mismatch" };
+      }
     }
     this.entries.delete(token);
     return { ok: true, mutation: entry.mutation };

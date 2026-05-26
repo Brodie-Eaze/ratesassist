@@ -19,6 +19,11 @@ import { NextResponse } from "next/server";
 import { findMismatches } from "@ratesassist/recovery-engine";
 import { COUNCILS, OWNERS, PROPERTIES, TENEMENTS } from "@/lib/data";
 import { getEvaluationContext, recoveryStatsFor } from "@/lib/clients";
+import {
+  resolveRouteSession,
+  sessionMayAccessTenant,
+  tenantFromAssessmentNumber,
+} from "@/lib/api-helpers";
 
 export const runtime = "nodejs";
 
@@ -42,18 +47,79 @@ function parseInclude(param: string | null): ReadonlySet<IncludeKey> {
 }
 
 export async function GET(req: Request) {
+  // F-008 mitigation: pen-test flagged that `/api/data` returned the
+  // full multi-tenant PROPERTIES/OWNERS/TENEMENTS arrays to any
+  // authenticated session — one request was sufficient to exfiltrate
+  // every council's rate book. Require a session, then scope every
+  // returned array to records that belong to the session's tenant.
+  // Platform admins still receive everything (the dashboard exists).
+  const session = await resolveRouteSession(req);
+  if (!session) {
+    return NextResponse.json(
+      { ok: false, code: "unauthorized", message: "Authentication required." },
+      { status: 401 },
+    );
+  }
+  const isPlatformAdmin = session.roles.includes("platform_admin");
+
   const ctx = getEvaluationContext();
   const mismatches = findMismatches(ctx);
-  const stats = recoveryStatsFor(mismatches);
+
+  // Scope mismatches by the tenant prefix on the candidate's
+  // assessment number. This is the same shape used by every other
+  // [assessmentNumber] route post-F-002.
+  const scopedMismatches = isPlatformAdmin
+    ? mismatches
+    : mismatches.filter((m) =>
+        sessionMayAccessTenant(
+          session,
+          tenantFromAssessmentNumber(m.property.assessmentNumber),
+        ),
+      );
+  const stats = recoveryStatsFor(scopedMismatches);
 
   const include = parseInclude(new URL(req.url).searchParams.get("include"));
 
+  // Scope each bulk array to the session's tenant.
+  const scopedProperties = isPlatformAdmin
+    ? PROPERTIES
+    : PROPERTIES.filter((p) =>
+        sessionMayAccessTenant(
+          session,
+          tenantFromAssessmentNumber(p.assessmentNumber),
+        ),
+      );
+  // Owners are state-scoped (O-WA-NNN); include only those that
+  // touch at least one in-scope property. PROPERTIES already has a
+  // `ownerIds` field per record.
+  const inScopeOwnerIds = new Set<string>();
+  for (const p of scopedProperties) {
+    for (const oid of (p as { ownerIds?: ReadonlyArray<string> }).ownerIds ?? []) {
+      inScopeOwnerIds.add(oid);
+    }
+  }
+  const scopedOwners = isPlatformAdmin
+    ? OWNERS
+    : OWNERS.filter((o) => inScopeOwnerIds.has(o.ownerId));
+  // Tenements aren't tenant-bound (they're a state-level dataset);
+  // they remain unscoped — they're not PII.
+  const scopedTenements = TENEMENTS;
+
+  // Scope COUNCILS to the session's tenant (single entry for a
+  // non-platform-admin) so the UI doesn't render selectors for
+  // councils the user can't access.
+  const scopedCouncils = isPlatformAdmin
+    ? COUNCILS
+    : COUNCILS.filter((c) =>
+        (c as { code?: string }).code === session.tenantId,
+      );
+
   return NextResponse.json({
-    councils: COUNCILS,
-    mismatches,
+    councils: scopedCouncils,
+    mismatches: scopedMismatches,
     stats,
-    ...(include.has("properties") ? { properties: PROPERTIES } : {}),
-    ...(include.has("owners") ? { owners: OWNERS } : {}),
-    ...(include.has("tenements") ? { tenements: TENEMENTS } : {}),
+    ...(include.has("properties") ? { properties: scopedProperties } : {}),
+    ...(include.has("owners") ? { owners: scopedOwners } : {}),
+    ...(include.has("tenements") ? { tenements: scopedTenements } : {}),
   });
 }

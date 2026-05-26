@@ -25,8 +25,37 @@
  */
 
 import type { NextRequest } from "next/server";
-import { findMismatches } from "@ratesassist/recovery-engine";
+import {
+  findMismatches,
+  type EvaluationContext,
+} from "@ratesassist/recovery-engine";
 import type { MismatchCandidate } from "@ratesassist/contract";
+
+/**
+ * Memoised sweep — keyed by the EvaluationContext reference.
+ *
+ * Performance review surfaced (P0): every filter-click on /recovery
+ * re-ran `findMismatches(evalCtx)` over the full 50k-row context.
+ * The context is rebuilt only when something material changes
+ * (mutation lands, lifecycle event, periodic refresh), so caching
+ * the previous sweep by identity is safe — when the context object
+ * is replaced, the cache misses and we re-sweep.
+ *
+ * Capacity is 1 entry — there's only ever one live context. Holding
+ * a single ref is enough; a Map would just leak as contexts age out.
+ */
+let _lastCtx: EvaluationContext | null = null;
+let _lastResult: readonly MismatchCandidate[] | null = null;
+
+function findMismatchesCached(
+  ctx: EvaluationContext,
+): readonly MismatchCandidate[] {
+  if (ctx === _lastCtx && _lastResult !== null) return _lastResult;
+  const fresh = findMismatches(ctx);
+  _lastCtx = ctx;
+  _lastResult = fresh;
+  return fresh;
+}
 
 import {
   applyPagination,
@@ -105,7 +134,7 @@ export async function GET(req: NextRequest): Promise<Response> {
   const severity = severityRaw as Severity | null;
 
   const evalCtx = getEvaluationContext();
-  const all = findMismatches(evalCtx);
+  const all = findMismatchesCached(evalCtx);
 
   let filtered: readonly MismatchCandidate[] = all;
   if (severity !== null) {
