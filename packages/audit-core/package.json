@@ -1,0 +1,25 @@
+{
+  "name": "@ratesassist/audit-core",
+  "version": "0.2.0",
+  "private": true,
+  "description": "RatesAssist tamper-evident audit hash chain — shared core. The canonicaliser and chainHash live here so both the in-memory adapter store AND the Postgres-backed sink hash byte-identical rows. Anything that changes the bytes flowing into computeRowHash is a breaking change requiring a chain rebuild.",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.9",
+    "@types/node": "^22.9.0"
+  }
+}

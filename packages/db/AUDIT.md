@@ -69,12 +69,55 @@ taking down rates operations.
   backups + a separate write-once archival sink (planned for Phase 2
   finalisation). Configured via the operational runbooks, not in this code.
 
-## Tamper-evidence
+## Tamper-evidence (Phase 9 P0)
 
-Out of scope for Round 5. The Phase 9 plan adds a hash chain over rows in
-occurrence order, with periodic publication of the chain head. The schema
-is already compatible: a `prev_hash` + `row_hash` pair will be added
-without a backfill (treat NULL as "before the chain head").
+Every audit row carries `prev_hash` and `row_hash` columns, a per-tenant
+SHA-256 hash chain. The canonicaliser lives in `@ratesassist/audit-core`
+and is shared with the in-memory demo store — both stores produce
+byte-identical hashes for the same row body.
+
+- `prev_hash` = the previous row's `row_hash`, or `genesisHash(tenantId)`
+  for the first row of a tenant's chain.
+- `row_hash`  = SHA-256(prev_hash || canonical(row_without_hashes)).
+- Pre-migration rows carry the sentinel `__PRE_CHAIN__`; the verifier
+  explicitly skips them and surfaces them as unverifiable legacy history.
+
+### Concurrency
+
+`withAudit()` and `recordAuditEvent()` acquire
+`pg_advisory_xact_lock(hashtext(tenant_id))` BEFORE reading the chain
+head and inserting the new row. The lock is per-tenant, scoped to the
+transaction, and auto-released on commit/rollback. Cross-tenant writers
+do not serialise.
+
+### Verifier
+
+`GET /api/audit/verify-chain[?tenantId=…&since=…&limit=…]` walks the
+chain forward (using the `audit_log_tenant_chain_idx` index) and
+recomputes every hash via the shared canonicaliser. Returns:
+
+- `ok: true, totalRows, latestTs, evictionTruncated: false` — clean chain.
+- `ok: true, totalRows, latestTs, evictionTruncated: true` — `since=`
+  window cut past genesis; the chain is intact, just not visible from
+  this window.
+- `ok: false, brokenAt, expectedHash, actualHash, evictionTruncated: false`
+  — GENUINE break. Handler logs `audit.chain_break` at error level and
+  best-effort captures to Sentry. SEV1 ops alert.
+
+### Migrations
+
+| File | Purpose | Lock impact |
+|------|---------|------------|
+| `0002_audit_chain_columns.sql` | Add columns (NULLABLE) + indexes (CONCURRENTLY) + sentinel stamp on legacy rows | Minor (metadata adds; no table rewrite) |
+| `0003_audit_chain_validate.sql` | NOT NULL via `NOT VALID` + `VALIDATE CONSTRAINT` (no table-rewrite lock) | Moderate (SHARE UPDATE EXCLUSIVE for the validate scan) |
+| `0004_audit_chain_rollback.sql` | Pre-written rollback. Drops indexes CONCURRENTLY then columns + constraints. | Brief ACCESS EXCLUSIVE for the column drops |
+
+Deploy order: `0001` → `0002` → backfill verifier confirms the legacy
+rows are stamped + a `audit_chain_genesis` row exists per tenant → `0003`.
+The chain-aware writer (`withAudit`) is gated behind a feature flag
+(`AUDIT_CHAIN_ENABLED`) so it can be disabled while `0002` columns are
+nullable; rollback to legacy INSERTs is a feature-flag flip, not a
+schema change.
 
 ## Data classification
 

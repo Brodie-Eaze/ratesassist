@@ -79,6 +79,16 @@ describe("security headers (SEC-003)", () => {
     expect(csp!.value).toContain("https://abr.business.gov.au");
   });
 
+  it("CSP allows Sentry ingest in connect-src", async () => {
+    const blocks = await nextConfig.headers!();
+    const csp = blocks[0]!.headers.find(
+      (h) => h.key === "Content-Security-Policy",
+    );
+    // US pilot uses *.sentry.io; AU migration is still a *.sentry.io
+    // subdomain, so this wildcard covers both.
+    expect(csp!.value).toContain("https://*.sentry.io");
+  });
+
   it("X-Frame-Options is DENY", async () => {
     const blocks = await nextConfig.headers!();
     const xfo = blocks[0]!.headers.find((h) => h.key === "X-Frame-Options");

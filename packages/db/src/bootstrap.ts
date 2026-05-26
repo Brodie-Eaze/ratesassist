@@ -28,15 +28,16 @@ import { tenants } from "./schema.js";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 /**
- * Resolve and read the migration SQL. Path is computed relative to the
- * source file so it works both from src/ (tests / tsx) and dist/ (compiled).
+ * Resolve and read a migration SQL file by name. Path is computed relative
+ * to the source file so it works both from src/ (tests / tsx) and dist/
+ * (compiled). Throws if the file cannot be found.
  */
-export function loadMigrationSql(): string {
-  // src/bootstrap.ts → ../migrations/0001_init.sql
-  // dist/bootstrap.js → ../migrations/0001_init.sql (when shipped — symlink/copy)
+export function loadMigrationSqlByName(name: string): string {
+  // src/bootstrap.ts → ../migrations/<name>
+  // dist/bootstrap.js → ../migrations/<name> (when shipped — symlink/copy)
   const candidates = [
-    resolve(__dirname, "../migrations/0001_init.sql"),
-    resolve(__dirname, "../../migrations/0001_init.sql"),
+    resolve(__dirname, "../migrations", name),
+    resolve(__dirname, "../../migrations", name),
   ];
   for (const p of candidates) {
     try {
@@ -46,25 +47,59 @@ export function loadMigrationSql(): string {
     }
   }
   throw new Error(
-    `[@ratesassist/db] could not locate migrations/0001_init.sql under ${candidates.join(", ")}`,
+    `[@ratesassist/db] could not locate migrations/${name} under ${candidates.join(", ")}`,
   );
 }
 
+/** @deprecated Prefer {@link loadMigrationSqlByName}. Kept for back-compat. */
+export function loadMigrationSql(): string {
+  return loadMigrationSqlByName("0001_init.sql");
+}
+
 /**
- * Apply the initial migration. Idempotent. For pglite we strip the
- * `CREATE EXTENSION IF NOT EXISTS pgcrypto;` line because pglite ships a
- * built-in `gen_random_uuid()` without needing the extension.
+ * Ordered list of forward-only migrations applied by {@link ensureSchema}.
+ * Index order is the apply order. Adding a migration here means it ships
+ * with every fresh boot; deployers running real Postgres should mirror the
+ * order via their migration runner.
+ *
+ * 0003 (NOT NULL flip) is included so dev/test envs always run with the
+ * fully-validated chain. Production deployers MUST run the genesis-marker
+ * backfill BEFORE 0003 — see AUDIT.md.
+ */
+const MIGRATIONS_IN_ORDER: ReadonlyArray<string> = [
+  "0001_init.sql",
+  "0002_audit_chain_columns.sql",
+  "0003_audit_chain_validate.sql",
+];
+
+function stripPgliteIncompatibilities(sqlText: string): string {
+  // pglite does not ship `pgcrypto`; it ships gen_random_uuid() natively.
+  let s = sqlText.replace(/CREATE EXTENSION IF NOT EXISTS pgcrypto;\s*/i, "");
+  // pglite refuses CREATE INDEX CONCURRENTLY when the implicit
+  // multi-statement transaction it wraps around `pg.exec()` is open. The
+  // keyword is purely a lock-impact optimisation for real Postgres — the
+  // index is created either way. Strip it for pglite so dev/test boots.
+  s = s.replace(/CREATE\s+(UNIQUE\s+)?INDEX\s+CONCURRENTLY/gi, "CREATE $1INDEX");
+  s = s.replace(/DROP\s+INDEX\s+CONCURRENTLY/gi, "DROP INDEX");
+  return s;
+}
+
+/**
+ * Apply every migration in order. Idempotent. For pglite we strip:
+ *   - `CREATE EXTENSION IF NOT EXISTS pgcrypto;` (pglite has gen_random_uuid()
+ *     built-in)
+ *   - `CONCURRENTLY` (pglite executes multi-statement input inside one tx,
+ *     and CONCURRENTLY refuses to run inside a tx; the keyword is a real-
+ *     Postgres lock-impact optimisation only).
+ *
+ * Production deployers should NOT use this helper to apply chain migrations
+ * — run the SQL files through your migration tool of choice so the lock
+ * impact is auditable. This helper exists for dev/test/CI boots.
  */
 export async function ensureSchema(db: Db): Promise<void> {
-  let sqlText = loadMigrationSql();
-
-  // pglite-specific tweaks: drop the pgcrypto extension line.
   const driver = getDriverKind();
+
   if (driver === "pglite") {
-    sqlText = sqlText.replace(
-      /CREATE EXTENSION IF NOT EXISTS pgcrypto;\s*/i,
-      "",
-    );
     // Use pglite's native multi-statement exec — drizzle's tagged execute
     // expects single statements and does not parse the `DO $$ ... $$`
     // dollar-quoted bodies correctly for our migration.
@@ -74,14 +109,19 @@ export async function ensureSchema(db: Db): Promise<void> {
         "[@ratesassist/db] driver kind 'pglite' but no PGlite instance — getDb() not called?",
       );
     }
-    await pg.exec(sqlText);
+    for (const name of MIGRATIONS_IN_ORDER) {
+      await pg.exec(stripPgliteIncompatibilities(loadMigrationSqlByName(name)));
+    }
     return;
   }
 
-  // node-postgres: feed the whole script in a single query. Postgres handles
+  // node-postgres: feed each script in a single query. Postgres handles
   // multi-statement input natively over the simple query protocol.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  await (db as any).execute(sql.raw(sqlText));
+  for (const name of MIGRATIONS_IN_ORDER) {
+    const sqlText = loadMigrationSqlByName(name);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (db as any).execute(sql.raw(sqlText));
+  }
 }
 
 /**

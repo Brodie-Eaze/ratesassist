@@ -13,6 +13,7 @@ import {
   runWithCorrelation,
 } from "@/lib/correlation";
 import { getSessionFromRequest } from "@/lib/auth";
+import { captureTenantOverrideRefused } from "@/lib/sentry";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -231,6 +232,14 @@ export async function POST(
         if (violation !== null) {
           log.warn({
             msg: "tool.tenant_override_refused",
+            actorId: session.userId,
+            sessionTenant: session.tenantId,
+            attemptedPath: violation.path,
+            attemptedValue: String(violation.value),
+          });
+          // Audit-grade signal — pages the on-call via Sentry alert
+          // rule #2. No-op when SENTRY_DSN is unset.
+          captureTenantOverrideRefused({
             actorId: session.userId,
             sessionTenant: session.tenantId,
             attemptedPath: violation.path,

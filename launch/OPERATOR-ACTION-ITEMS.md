@@ -67,12 +67,14 @@
 ### OP-05 — Sentry US account signup + DSN
 **Source:** Sentry design (`launch/OBSERVABILITY-DESIGN.md`)
 **Why required:** The 3am operational layer. Without a DSN the `lib/sentry.ts` wiring is a no-op — exceptions, tenant-override-refused events, and imagery-degraded events go to /dev/null. Reliability-engineer P0 from the prior audit.
+**Status (code side):** `@sentry/nextjs@^10.54.0` is installed; `apps/web/lib/sentry.ts`, `apps/web/instrumentation.ts`, `apps/web/app/global-error.tsx`, and the three audit-grade capture call sites are wired and tested. `initSentry()` is a hard no-op when `SENTRY_DSN` is unset — the pilot ships today; the DSN signup below activates the pipe.
 **Steps:**
 1. https://sentry.io → sign up free tier (5k errors/mo + 10k perf events)
 2. Create a Next.js project named `ratesassist-web`
 3. Copy DSN → paste into Railway env as `SENTRY_DSN`
-4. Configure 3 alert rules per `launch/OBSERVABILITY-DESIGN.md` §6
-5. Move to paid AU (Sydney) region on council #2 contract (~$26/mo)
+4. Optional: set `SENTRY_ENVIRONMENT=pilot` and `SENTRY_RELEASE=<git-sha>` for nicer release tagging
+5. Configure 3 alert rules per `launch/OBSERVABILITY-DESIGN.md` §6
+6. Move to paid AU (Sydney) region on council #2 contract (~$26/mo)
 **Who:** Brodie
 **Estimated time:** 15 min
 

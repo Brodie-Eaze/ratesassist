@@ -26,6 +26,7 @@ import {
   runWithCorrelation,
 } from "@/lib/correlation";
 import { getClientIp } from "@/lib/rate-limit";
+import { captureCrossTenantRefused } from "@/lib/sentry";
 import { runTool } from "@/lib/tools";
 
 export const runtime = "nodejs";
@@ -182,6 +183,18 @@ export async function POST(
           userId: session.userId,
           sessionTenant: session.tenantId,
           assetTenant,
+        });
+        // Audit-grade signal — pages the on-call via Sentry alert
+        // rule #2. No-op when SENTRY_DSN is unset.
+        captureCrossTenantRefused({
+          actorId: session.userId,
+          sessionTenant: session.tenantId,
+          // assetTenant is null when the assessment doesn't match the
+          // tenant-prefix shape; record that explicitly so Sentry tags
+          // can distinguish a malformed probe from a real cross-tenant
+          // attempt.
+          attemptedTenant: assetTenant ?? "unknown",
+          route: `/api/strata/${assessment}/request-conversion`,
         });
         return NextResponse.json(
           {

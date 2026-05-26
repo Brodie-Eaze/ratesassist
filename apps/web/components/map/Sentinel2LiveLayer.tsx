@@ -35,6 +35,7 @@ import {
   SENTINEL_LATEST_MAX_NATIVE,
   ESRI_IMAGERY_MAX_DISPLAY,
 } from "./types";
+import { captureImageryDegraded } from "@/lib/sentry";
 
 /**
  * Web Mercator (EPSG:3857) constants — the projection Leaflet uses for
@@ -145,6 +146,10 @@ export default function Sentinel2LiveLayer(): null {
             }),
           );
         }
+        // Audit-grade upstream signal — surfaces in Sentry as an
+        // `info`-level issue so the on-call sees correlated upstream
+        // outages. No-op when SENTRY_DSN is unset.
+        captureImageryDegraded({ source: "sentinel-latest" });
       }
     };
     layer.on("tileerror", onTileError);

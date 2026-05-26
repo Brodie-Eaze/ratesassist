@@ -80,10 +80,25 @@ export default async function EvidencePackPage({
                 href={`/api/evidence/${assessment}.html`}
                 target="_blank"
                 rel="noopener"
-                className="btn-primary"
+                className="btn-ghost"
               >
                 <Download className="w-4 h-4" />
-                Print / PDF
+                View pack
+              </a>
+              {/* Statutory-grade PDF — landed for the council pilot's
+                  acceptance criterion #6 (generate at least one statutory
+                  rate certificate through the platform during the 60-day
+                  pilot). Hits /api/evidence/<assessment>/pdf which
+                  enforces tenant scoping + writes a pdf.generated audit
+                  row. The `download` attribute triggers a browser save. */}
+              <a
+                href={`/api/evidence/${assessment}/pdf`}
+                className="btn-primary"
+                download
+                data-testid="download-pdf"
+              >
+                <Download className="w-4 h-4" />
+                Download PDF
               </a>
             </div>
           )}

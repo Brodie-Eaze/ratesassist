@@ -27,6 +27,7 @@ export {
   ensureSchema,
   ensureSeeded,
   loadMigrationSql,
+  loadMigrationSqlByName,
 } from "./bootstrap.js";
 
 // Re-export a thin set of drizzle-orm helpers so workspace consumers

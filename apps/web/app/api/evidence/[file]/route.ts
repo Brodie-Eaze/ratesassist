@@ -1,13 +1,34 @@
 import { NextResponse } from "next/server";
 import { buildEvidencePack } from "@ratesassist/recovery-engine";
 import { getEvaluationContext } from "@/lib/clients";
+import {
+  resolveRouteSession,
+  sessionMayAccessTenant,
+  tenantFromAssessmentNumber,
+} from "@/lib/api-helpers";
 
 export const runtime = "nodejs";
 
 export async function GET(
-  _req: Request,
+  req: Request,
   ctx: { params: Promise<{ file: string }> },
 ) {
+  // Task #11 — /launch wave-2 follow-up. The PDF generator agent
+  // surfaced that the original .md / .html evidence routes here had
+  // NO session check and NO tenant scoping — a clerk in any tenant
+  // could fetch any other council's evidence pack by guessing the
+  // assessment number. The new PDF route at `./pdf/route.ts` is
+  // properly gated; this route was the last unscoped sibling. Same
+  // gate model applied here: 401 unsigned, 404 cross-tenant (no
+  // enumeration oracle).
+  const session = await resolveRouteSession(req);
+  if (!session) {
+    return NextResponse.json(
+      { ok: false, code: "unauthorized", message: "Authentication required." },
+      { status: 401 },
+    );
+  }
+
   const { file } = await ctx.params;
   // Strict path-param validation — alphanumerics + dashes, .md or .html.
   if (!/^[A-Z0-9-]{3,40}\.(md|html)$/.test(file)) {
@@ -16,6 +37,19 @@ export async function GET(
   const dot = file.lastIndexOf(".");
   const assessment = file.slice(0, dot);
   const ext = file.slice(dot + 1);
+
+  // Strip the extension first (the `[file]` segment encodes
+  // `<assessment>.<ext>` whereas the tenant prefix is on the bare
+  // assessment number), then refuse cross-tenant. Identical 404
+  // shape to "asset doesn't exist" so the endpoint isn't an
+  // enumeration oracle for which assessments belong to other tenants.
+  const assetTenant = tenantFromAssessmentNumber(assessment);
+  if (!sessionMayAccessTenant(session, assetTenant)) {
+    return NextResponse.json(
+      { error: "no pack", reason: "not_found" },
+      { status: 404 },
+    );
+  }
 
   const result = buildEvidencePack(assessment, getEvaluationContext());
   if (result.kind !== "ok") {

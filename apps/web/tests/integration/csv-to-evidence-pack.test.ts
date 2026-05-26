@@ -141,9 +141,14 @@ describe("CSV → evidence pack (DB-wired, pglite)", () => {
 
     // 4. evidence pack for an assessment we know fires signals against
     // the demo fixtures (TPS-1102-91 — recently_granted + owner-industry
-    // term + LLC-rural).
+    // term + LLC-rural). The evidence route is now session-gated
+    // (Task #11) so the request must carry the same x-session header
+    // as the other steps in this journey.
     const evidenceReq = new Request(
       "http://localhost/api/evidence/TPS-1102-91.md",
+      {
+        headers: new Headers({ [SESSION_HEADER]: JSON.stringify(s) }),
+      },
     );
     const evidenceRes = await evidenceGET(evidenceReq, {
       params: Promise.resolve({ file: "TPS-1102-91.md" }),

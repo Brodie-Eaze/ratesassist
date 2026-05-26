@@ -25,6 +25,7 @@ import {
   runWithCorrelation,
 } from "@/lib/correlation";
 import { getClientIp } from "@/lib/rate-limit";
+import { captureCrossTenantRefused } from "@/lib/sentry";
 import { runTool } from "@/lib/tools";
 
 export const runtime = "nodejs";
@@ -164,6 +165,14 @@ export async function POST(
           userId: session.userId,
           sessionTenant: session.tenantId,
           attemptedTenant: code,
+        });
+        // Audit-grade signal — pages the on-call via Sentry alert
+        // rule #2. No-op when SENTRY_DSN is unset.
+        captureCrossTenantRefused({
+          actorId: session.userId,
+          sessionTenant: session.tenantId,
+          attemptedTenant: code,
+          route: `/api/councils/${code}/import`,
         });
         return NextResponse.json(
           {

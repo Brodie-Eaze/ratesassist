@@ -385,6 +385,17 @@ export type MismatchCandidateInsert = typeof mismatchCandidates.$inferInsert;
 export type MismatchCandidateSelect = typeof mismatchCandidates.$inferSelect;
 
 // ===== Audit log (append-only; UPDATE/DELETE revoked at SQL level) =====
+//
+// `prev_hash` / `row_hash` are the tamper-evident chain (Phase 9). Both
+// columns are NULLABLE in this Drizzle schema because the 0002 migration
+// adds them as nullable; 0003 flips to NOT NULL after backfill. Loading
+// `audit_log_tenant_chain_idx` requires the chain order: (tenantId,
+// occurredAt ASC, id ASC). The pre-existing `audit_log_tenant_occurred_idx`
+// stays — it serves "newest N rows" UI reads (DESC).
+//
+// The partial unique index `audit_log_tenant_row_hash_unique` enforces no
+// duplicate hashes per tenant on populated rows only — legacy rows carry the
+// __PRE_CHAIN__ sentinel which would otherwise alias to itself.
 
 export const auditLog = pgTable(
   "audit_log",
@@ -404,12 +415,24 @@ export const auditLog = pgTable(
     occurredAt: timestamp("occurred_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
+    /** sha256 hex of the previous row in this tenant's chain, or genesisHash for the first. */
+    prevHash: text("prev_hash"),
+    /** sha256(prevHash + canonical(this-row-without-hashes)). */
+    rowHash: text("row_hash"),
   },
   (t) => ({
     tenantOccurredIdx: index("audit_log_tenant_occurred_idx").on(
       t.tenantId,
       sql`${t.occurredAt} DESC`,
     ),
+    tenantChainIdx: index("audit_log_tenant_chain_idx").on(
+      t.tenantId,
+      t.occurredAt,
+      t.id,
+    ),
+    tenantRowHashUnique: uniqueIndex("audit_log_tenant_row_hash_unique")
+      .on(t.tenantId, t.rowHash)
+      .where(sql`row_hash IS NOT NULL`),
   }),
 );
 

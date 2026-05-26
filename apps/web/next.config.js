@@ -58,7 +58,10 @@ const CSP_DIRECTIVES = [
   // latest cloud-free scene, ~14-day freshness). Allowed alongside the
   // existing static map sources.
   "img-src 'self' data: https://server.arcgisonline.com https://sentinel.arcgis.com https://*.basemaps.cartocdn.com https://*.tile.openstreetmap.org https://tiles.maps.eox.at",
-  "connect-src 'self' https://services.slip.wa.gov.au https://abr.business.gov.au https://api.anthropic.com https://api.anthropic.com.au",
+  // *.sentry.io: Sentry US ingest for the pilot. AU region (Sydney) is
+  // a DSN swap on council #1; no CSP change needed when migrating
+  // because the AU ingest is still a *.sentry.io subdomain.
+  "connect-src 'self' https://services.slip.wa.gov.au https://abr.business.gov.au https://api.anthropic.com https://api.anthropic.com.au https://*.sentry.io",
   "font-src 'self' data:",
   "frame-ancestors 'none'",
   "base-uri 'self'",
@@ -114,6 +117,13 @@ const nextConfig = {
       "pg",
       "@ratesassist/db",
       "@ratesassist/adapter-demo",
+      // pdfkit ships AFM font data files alongside its JS that webpack
+      // won't include by default. Mark it external so Node resolves the
+      // package at runtime from node_modules. qrcode is included for
+      // parallel reasons — its dependency tree pulls in `dijkstrajs`
+      // which trips up Next's vendor-chunking heuristics.
+      "pdfkit",
+      "qrcode",
     ],
     serverActions: {
       bodySizeLimit: "5mb",

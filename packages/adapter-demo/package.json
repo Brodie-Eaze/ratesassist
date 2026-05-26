@@ -27,6 +27,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
+    "@ratesassist/audit-core": "*",
     "@ratesassist/contract": "*",
     "@ratesassist/identity": "*",
     "@ratesassist/recovery-engine": "*",
