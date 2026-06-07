@@ -73,6 +73,18 @@ function tileCoordToExportImageUrl(coords: {
     size: "256,256",
     format: "jpg",
     f: "image",
+    // Explicitly request most-recent-first compositing so every tile renders
+    // the newest cloud-free Sentinel-2 acquisition in the bbox rather than an
+    // arbitrary overlap. Esri's default for this service is already recency-
+    // ordered, but specifying it in the mosaicRule guards against a future
+    // service-config change on Esri's side flipping to geographic ordering.
+    mosaicRule: JSON.stringify({
+      mosaicMethod: "esriMosaicAttribute",
+      sortField: "acquisitionDate",
+      sortValue: "2000/01/01 00:00:00",
+      ascending: false,
+      mosaicOperation: "MT_FIRST",
+    }),
   });
   return `${SENTINEL_LATEST_EXPORT_IMAGE}?${params.toString()}`;
 }

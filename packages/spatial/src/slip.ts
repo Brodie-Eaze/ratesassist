@@ -26,6 +26,10 @@ import type {
   SlipLayerDefinition,
   SpatialErrorCode,
 } from "./types.js";
+import {
+  buildConditionalHeaders,
+  recordResponseHeaders,
+} from "./freshness.js";
 
 // ===== Constants =====
 
@@ -77,6 +81,16 @@ export const SLIP_LAYERS = {
     candidateLayers: [3, 0],
     label: "DMIRS Mining Tenements",
   },
+  // MINEDEX (DMIRS-001) — mines + mineral deposit SITES (point geometry), layer 0
+  // of the same Industry_and_Mining MapServer. Unlike `miningTenements` (granted
+  // boundaries), MINEDEX carries operating/PRODUCTION status — the stronger
+  // "should be rated as mining" signal — and is refreshed daily. Free public REST.
+  minedexSites: {
+    serviceUrl:
+      "https://services.slip.wa.gov.au/public/rest/services/SLIP_Public_Services/Industry_and_Mining/MapServer",
+    candidateLayers: [0],
+    label: "MINEDEX Mines & Mineral Deposits (DMIRS-001)",
+  },
   cadastre: {
     serviceUrl:
       "https://services.slip.wa.gov.au/public/rest/services/SLIP_Public_Services/Property_and_Planning/MapServer",
@@ -123,7 +137,17 @@ export const BoundingBoxSchema = z
 
 // ===== Cache =====
 
-type CacheEntry = { readonly ts: number; readonly features: readonly GeoJsonFeature[] };
+type CacheEntry = {
+  readonly ts: number;
+  readonly features: readonly GeoJsonFeature[];
+  /**
+   * The exact query URL that returned this data — stored so the next stale-
+   * cache poll can send `If-None-Match` on the same URL and receive a 304
+   * NOT MODIFIED if SLIP hasn't updated the layer, avoiding re-downloading
+   * the full GeoJSON payload.
+   */
+  readonly successUrl?: string;
+};
 
 /**
  * In-memory cache. Process-local; cleared on dev reload. Production deployments
@@ -241,6 +265,61 @@ export async function fetchSlipFeatures(
     };
   }
 
+  // 2.5. Conditional GET fast path (ETag / If-None-Match).
+  // When the cache is stale but we know which URL last succeeded, try a cheap
+  // conditional GET before looping through candidateLayers. A 304 NOT MODIFIED
+  // confirms data hasn't changed, extending the TTL without re-parsing the full
+  // GeoJSON payload (~20–100 KB per layer for a council-scale bbox).
+  // If the conditional GET fails for any reason, fall through to the normal loop.
+  if (cached !== undefined && cached.successUrl !== undefined) {
+    const condHeaders = buildConditionalHeaders(cached.successUrl);
+    if (Object.keys(condHeaders).length > 0) {
+      const condCtrl = new AbortController();
+      const onCondAbort = (): void => condCtrl.abort();
+      if (signal !== undefined) {
+        if (signal.aborted) {
+          return failure("timeout", "aborted by caller", correlationId);
+        }
+        signal.addEventListener("abort", onCondAbort, { once: true });
+      }
+      const condTimer = setTimeout(() => condCtrl.abort(), timeoutMs);
+
+      try {
+        const condRes = await fetcher(cached.successUrl, {
+          signal: condCtrl.signal,
+          headers: condHeaders,
+        });
+        clearTimeout(condTimer);
+        if (signal !== undefined) signal.removeEventListener("abort", onCondAbort);
+
+        if (condRes.status === 304) {
+          // Server confirms data unchanged — extend TTL, skip re-parsing.
+          _cache.set(key, {
+            ts: Date.now(),
+            features: cached.features,
+            successUrl: cached.successUrl,
+          });
+          return {
+            ok: true,
+            source: "cache",
+            features: cached.features,
+            queriedAt: new Date().toISOString(),
+          };
+        }
+
+        // Non-304 (200, 410, 503, …) — fall through to the normal candidate
+        // loop. Drain the response body to avoid a connection leak.
+        condRes.body?.cancel().catch((): void => {
+          /* noop — cancel is best-effort */
+        });
+      } catch {
+        // Timeout or network error on the conditional GET — fall through.
+        clearTimeout(condTimer);
+        if (signal !== undefined) signal.removeEventListener("abort", onCondAbort);
+      }
+    }
+  }
+
   // 3. Build the ArcGIS query URL once; only the layer index varies per attempt.
   const [minLng, minLat, maxLng, maxLat] = bbox;
   const geometry = encodeURIComponent(
@@ -315,7 +394,9 @@ export async function fetchSlipFeatures(
         lastError = { code: "upstream_error", message: detail };
         continue;
       }
-      _cache.set(key, { ts: Date.now(), features: json.features });
+      // Store the winning URL + ETag for future conditional GET.
+      recordResponseHeaders(url, res.headers);
+      _cache.set(key, { ts: Date.now(), features: json.features, successUrl: url });
       return {
         ok: true,
         source: "live",
