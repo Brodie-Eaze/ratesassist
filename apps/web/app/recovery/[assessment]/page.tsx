@@ -328,7 +328,7 @@ export default async function EvidencePackPage({
                     data-testid="headline-panel"
                   >
                     <div className="label mb-2">
-                      Headline — top {pack.headlineSignals.length} signal
+                      Top {pack.headlineSignals.length} signal
                       {pack.headlineSignals.length === 1 ? "" : "s"} by weight
                     </div>
                     <ol className="space-y-2">

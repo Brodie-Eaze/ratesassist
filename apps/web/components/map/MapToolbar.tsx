@@ -8,6 +8,7 @@
  * parent owns every piece of state this surface reflects.
  */
 
+import { useEffect, useState } from "react";
 import { Ruler, Printer } from "lucide-react";
 import type { BasemapKey, SlipAerialProbeResult, ZoomTarget } from "./types";
 
@@ -187,17 +188,16 @@ export default function MapToolbar({
 /**
  * Static freshness metadata per basemap.
  *
- * The labels here are deliberately conservative — they describe the
- * SOURCE'S typical refresh cadence, not a guarantee that the very tile
- * a clerk is looking at was acquired on a given date. For the "Sentinel-2
- * Live" layer, the Esri Living Atlas service rolls in the freshest
- * cloud-free Sentinel-2 L2A scene per area, which is usually <14 days
- * old in WA (Sentinel-2 has a 5-day revisit cycle and Esri rejects
- * scenes >60% cloud cover).
+ * Labels describe the source's typical refresh cadence as a fallback.
+ * For `sentinel-latest`, the `ImageryCurrencyBadge` fetches the ACTUAL
+ * acquisition date from `/api/imagery/sentinel-freshness` (a server-side
+ * Esri ImageServer probe) and replaces this label with a real date string
+ * ("Acquired yesterday · 10m · 0.4% cloud"). The static label is the
+ * graceful fallback when the probe is unavailable or loading.
  *
  * When the daily Planet PlanetScope pipeline lands (see
- * internal/IMAGERY-CADENCE-PLAN.md), a new "planet-daily" basemap entry
- * will be added with `freshness: "daily, 3m"`.
+ * internal/IMAGERY-CADENCE-PLAN.md), a "planet-daily" entry will be added
+ * with `freshness: "daily, 3m"`.
  */
 const BASEMAP_FRESHNESS: Record<
   BasemapKey,
@@ -211,6 +211,30 @@ const BASEMAP_FRESHNESS: Record<
   street:            { label: "Carto OSM basemap", tone: "static" },
   topo:              { label: "Esri topo basemap", tone: "static" },
 };
+
+/**
+ * Build the human-readable label for the Sentinel-2 Live badge given the
+ * real acquisition data returned by `/api/imagery/sentinel-freshness`.
+ *
+ * Examples:
+ *   daysAgo 0  → "Acquired today · 10m · 0.4% cloud"
+ *   daysAgo 1  → "Acquired yesterday · 10m"
+ *   daysAgo 5  → "Acquired 5 days ago · 10m · 12.0% cloud"
+ *   null input → fallback static label ("~14-day cadence · 10m")
+ */
+function sentinelLiveLabel(
+  freshness: { daysAgo: number; cloudCoverPercent: number | null } | null,
+): string {
+  if (!freshness) return BASEMAP_FRESHNESS["sentinel-latest"].label;
+  const { daysAgo, cloudCoverPercent } = freshness;
+  let dateStr: string;
+  if (daysAgo === 0) dateStr = "Acquired today";
+  else if (daysAgo === 1) dateStr = "Acquired yesterday";
+  else dateStr = `Acquired ${daysAgo} days ago`;
+  const ccStr =
+    cloudCoverPercent !== null ? ` · ${cloudCoverPercent}% cloud` : "";
+  return `${dateStr} · 10m${ccStr}`;
+}
 
 const FRESHNESS_TONE_STYLE: Record<
   "live" | "recent" | "static",
@@ -237,6 +261,59 @@ function ImageryCurrencyBadge({
   basemap: BasemapKey;
   slipProbe: SlipAerialProbeResult | null;
 }): JSX.Element | null {
+  // Listen for tile-error events from Sentinel2LiveLayer. When Esri's
+  // exportImage endpoint fails, the layer fires `ratesassist:imagery_degraded`
+  // on window and we flip the badge from "live" (green) to "recent" (amber)
+  // so the officer sees the degradation at a glance.
+  const [degraded, setDegraded] = useState(false);
+  useEffect(() => {
+    const handler = (): void => setDegraded(true);
+    window.addEventListener("ratesassist:imagery_degraded", handler);
+    return () => window.removeEventListener("ratesassist:imagery_degraded", handler);
+  }, []);
+
+  // Fetch the REAL Sentinel-2 acquisition date from the server-side Esri
+  // ImageServer probe (cached 1h). On success, the badge shows the actual
+  // date ("Acquired yesterday · 10m · 0.4% cloud") instead of the static
+  // "~14-day cadence" fallback. On failure, the fallback is used silently.
+  const [sentinelFreshness, setSentinelFreshness] = useState<{
+    daysAgo: number;
+    cloudCoverPercent: number | null;
+  } | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void fetch("/api/imagery/sentinel-freshness")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: unknown) => {
+        if (!alive) return;
+        if (
+          d !== null &&
+          typeof d === "object" &&
+          (d as { ok?: unknown }).ok === true
+        ) {
+          const payload = (d as { data?: { daysAgo?: unknown; cloudCoverPercent?: unknown } }).data;
+          if (
+            payload !== undefined &&
+            typeof payload.daysAgo === "number"
+          ) {
+            setSentinelFreshness({
+              daysAgo: payload.daysAgo,
+              cloudCoverPercent:
+                typeof payload.cloudCoverPercent === "number"
+                  ? payload.cloudCoverPercent
+                  : null,
+            });
+          }
+        }
+      })
+      .catch((): void => {
+        /* fallback to static label — probe failure is non-critical */
+      });
+    return (): void => {
+      alive = false;
+    };
+  }, []);
+
   // Hide the badge for SLIP-aerial when the probe failed — the basemap
   // isn't actually rendering anything so labelling it would be confusing.
   if (basemap === "slip-aerial" && !(slipProbe && slipProbe.ok)) {
@@ -244,6 +321,43 @@ function ImageryCurrencyBadge({
   }
   const meta = BASEMAP_FRESHNESS[basemap];
   if (!meta) return null;
+
+  // For sentinel-latest, use the real acquisition date when available.
+  const displayLabel =
+    basemap === "sentinel-latest" && !degraded
+      ? sentinelLiveLabel(sentinelFreshness)
+      : meta.label;
+
+  // Override the tone to "recent" (amber) when degraded — keeps the label
+  // text so the officer can still see the source, but the amber colour
+  // signals that the tiles may be stale or partial.
+  const effectiveTone = (degraded && meta.tone === "live") ? "recent" : meta.tone;
+
+  const titleText = (() => {
+    if (degraded && meta.tone === "live") {
+      return "Sentinel-2 imagery may be degraded — one or more tiles failed to load (Esri upstream issue).";
+    }
+    if (effectiveTone === "live") {
+      return sentinelFreshness !== null
+        ? `Most recent cloud-free Sentinel-2 scene over WA — acquired ${
+            sentinelFreshness.daysAgo === 0
+              ? "today"
+              : sentinelFreshness.daysAgo === 1
+                ? "yesterday"
+                : `${sentinelFreshness.daysAgo} days ago`
+          }${
+            sentinelFreshness.cloudCoverPercent !== null
+              ? ` with ${sentinelFreshness.cloudCoverPercent}% cloud cover`
+              : ""
+          }. 10 m/pixel (ESA Sentinel-2 L2A).`
+        : "Rolling latest cloud-free Sentinel-2 acquisition — typically within the last fortnight.";
+    }
+    if (effectiveTone === "recent") {
+      return "Landgate aerial captures refresh on a 6-12 month cycle (metro faster than remote).";
+    }
+    return "Static composite — useful as a reference but not for change detection.";
+  })();
+
   return (
     <div
       style={{
@@ -256,17 +370,12 @@ function ImageryCurrencyBadge({
         fontWeight: 500,
         letterSpacing: 0.2,
         boxShadow: "0 1px 3px rgba(0,0,0,0.18)",
-        ...FRESHNESS_TONE_STYLE[meta.tone],
+        ...FRESHNESS_TONE_STYLE[effectiveTone],
       }}
-      title={
-        meta.tone === "live"
-          ? "Rolling latest cloud-free Sentinel-2 acquisition — typically within the last fortnight."
-          : meta.tone === "recent"
-            ? "Landgate aerial captures refresh on a 6-12 month cycle (metro faster than remote)."
-            : "Static composite — useful as a reference but not for change detection."
-      }
+      title={titleText}
     >
-      Imagery currency: {meta.label}
+      {degraded && meta.tone === "live" ? "⚠ Imagery degraded — " : "Imagery: "}
+      {displayLabel}
     </div>
   );
 }

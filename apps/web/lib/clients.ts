@@ -19,6 +19,7 @@ import {
   type ChangeDetectionEntry,
   type EvaluationContext,
 } from "@ratesassist/recovery-engine";
+import { buildLiveTenementsByAssessment } from "@ratesassist/spatial";
 import {
   TARGET_STATE_SCOPE,
   WA_RATE_TABLES,
@@ -48,11 +49,39 @@ import { scoped } from "./logger";
 // import per process — bootstrap is memoised in {@link getWebDb}.
 
 /**
- * Default ABN-Lookup base. Library code does not read environment, so we read
- * `ABN_LOOKUP_BASE` here and pass it through to the factory.
+ * SEC-002: ABN_LOOKUP_BASE allowlist. Mirrors the SEC-011 DMIRS guard. An
+ * env-supplied override must point at the official ATO ABR JSON service.
+ * Without this gate, an attacker who controls the env (e.g. a misconfigured
+ * PaaS dashboard) could pivot ABN/owner lookups to a hostile origin and feed
+ * fabricated entity data (directorships, GST status, trading names) back into
+ * the recovery audit as "authoritative" evidence — or exfiltrate the queried
+ * ABNs and owner names to an attacker-controlled host.
+ *
+ * The allowlist is intentionally narrow: only the abr.business.gov.au public
+ * host. Internal or staging variants must be added explicitly.
  */
-const ABN_LOOKUP_BASE: string =
-  process.env["ABN_LOOKUP_BASE"] ?? "https://abr.business.gov.au/json";
+export function isAllowedAbnBase(url: string): boolean {
+  return /^https:\/\/abr\.business\.gov\.au\//i.test(url);
+}
+
+/**
+ * Default ABN-Lookup base. Library code does not read environment, so we read
+ * `ABN_LOOKUP_BASE` here and pass it through to the factory. Any env override
+ * is allowlist-checked (SEC-002) and refused if it is not the official ABR host.
+ */
+const ABN_LOOKUP_BASE: string = (() => {
+  const envValue = process.env["ABN_LOOKUP_BASE"];
+  if (typeof envValue === "string" && envValue.length > 0) {
+    if (!isAllowedAbnBase(envValue)) {
+      throw new Error(
+        `ABN_LOOKUP_BASE refused: '${envValue}' is not on the ABR allowlist ` +
+          `(must start with https://abr.business.gov.au/)`,
+      );
+    }
+    return envValue;
+  }
+  return "https://abr.business.gov.au/json";
+})();
 
 /**
  * Singleton ABN client. The legacy app silently fell back to mock data on
@@ -479,6 +508,17 @@ function buildContextFromInMemory(): EvaluationContext {
 }
 
 /**
+ * Feature flag (default OFF): hydrate `tenementsByAssessment` from LIVE
+ * DMIRS/SLIP register data — fetched for the council footprint and intersected
+ * against parcels — instead of the seeded DB rows. Set `RA_LIVE_TENEMENTS=1`
+ * (or `true`) to enable. Any live-path failure falls back to the DB map, so the
+ * flag can only ADD live signal, never blank the scorecard.
+ */
+const LIVE_TENEMENTS_ENABLED =
+  process.env["RA_LIVE_TENEMENTS"] === "1" ||
+  process.env["RA_LIVE_TENEMENTS"]?.toLowerCase() === "true";
+
+/**
  * Build an EvaluationContext by reading properties / owners / tenements /
  * transactions from Postgres. Each tenant scope is queried separately
  * inside {@link withTenant} so RLS-enforced reads succeed. Tenements live
@@ -629,18 +669,39 @@ async function buildContextFromDb(): Promise<EvaluationContext> {
   const ownersById = new Map<string, Owner>(
     ownersAcc.map((o) => [o.ownerId, o]),
   );
-  const tenementsByAssessment = new Map<string, Tenement[]>();
+  const dbTenementsByAssessment = new Map<string, Tenement[]>();
   for (const tenement of tenementsAcc) {
     for (const an of tenement.intersectsAssessmentNumbers) {
-      const list = tenementsByAssessment.get(an);
+      const list = dbTenementsByAssessment.get(an);
       if (list === undefined) {
-        tenementsByAssessment.set(an, [tenement]);
+        dbTenementsByAssessment.set(an, [tenement]);
       } else {
         list.push(tenement);
       }
     }
   }
   const enrichedProperties = overlayVenCt(overlayValuations(propertiesAcc));
+
+  // LIVE tenements (flag-gated, default OFF). When enabled, replace the
+  // DB-derived map with one built from live DMIRS/SLIP register data fetched for
+  // this council's footprint and intersected against its parcels. Any failure
+  // (disabled, oversized bbox, fetch error, zero matches) keeps the DB map.
+  let tenementsByAssessment: ReadonlyMap<string, readonly Tenement[]> =
+    dbTenementsByAssessment;
+  if (LIVE_TENEMENTS_ENABLED) {
+    const live = await buildLiveTenementsByAssessment(enrichedProperties);
+    if (live.ok) {
+      tenementsByAssessment = live.tenementsByAssessment;
+      log.info({
+        msg: "eval_context.live_tenements",
+        source: live.source,
+        tenements: live.tenementCount,
+        matchedAssessments: live.matchedAssessments,
+      });
+    } else {
+      log.info({ msg: "eval_context.live_tenements_fallback", reason: live.reason });
+    }
+  }
   const propertiesByOwnerId = new Map<string, Property[]>();
   const ruralBySuburb = new Map<string, Property[]>();
   for (const p of enrichedProperties) {
@@ -687,6 +748,402 @@ async function buildContextFromDb(): Promise<EvaluationContext> {
     rateTablesByCouncil: RATE_TABLES_BY_COUNCIL,
     targetStateScope: TARGET_STATE_SCOPE,
   };
+}
+
+// ===== E3: Per-tenant scoped context cache =====
+//
+// The global `cachedContext` above loads ALL tenants at once (O(tenants ×
+// rows)), which becomes a memory cliff at 100k+ properties/tenant. The
+// per-tenant cache below builds an EvaluationContext scoped to a single
+// tenant, cached independently with a 5-minute TTL.
+//
+// Scale improvement:
+//   Before E3: 1 context = all tenants × all properties (unbounded)
+//   After  E3: 1 context per tenant × candidate properties only
+//              (~30–40% of full dataset after SQL pre-filter)
+//
+// Key design choices:
+//   1. Per-tenant isolation — each tenantId gets its own cache entry.
+//      A mutation in tenant A invalidates only A's entry, not all others.
+//   2. TTL = 5 minutes — officers actively query the system; staleness
+//      of up to 5 minutes is acceptable. Mutations call
+//      `invalidateEvaluationContextForTenant` immediately so they see the
+//      new state on the next request.
+//   3. SQL candidate pre-filter — `findCandidateAssessmentsBySql` from
+//      `./mismatchSql` returns only the assessment numbers that can fire
+//      at least one signal. This avoids loading urban/residential
+//      properties that no current signal ever touches.
+//   4. Tenement scope — loads only tenements that overlap this tenant's
+//      candidate properties (via `tenement_properties` join table), not
+//      the entire global tenement register.
+
+const PER_TENANT_CTX_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+interface PerTenantCacheEntry {
+  readonly ctx: EvaluationContext;
+  readonly ts: number;
+}
+
+const _tenantCtxCache = new Map<string, PerTenantCacheEntry>();
+
+/**
+ * Build an EvaluationContext scoped to a single tenant (E3 path).
+ *
+ * Unlike the legacy `buildContextFromDb` (which loads all tenants), this
+ * function:
+ *   1. Loads only the specified tenant's properties (filtered to candidates
+ *      by `findCandidateAssessmentsBySql`).
+ *   2. Loads only that tenant's owners.
+ *   3. Loads only tenements that intersect this tenant's candidate
+ *      properties, via the `tenement_properties` FK join table.
+ *   4. Falls back to the full-context build if the SQL pre-filter is
+ *      unavailable (e.g. fresh DB with no tenement_properties rows) so the
+ *      recovery engine still produces results.
+ */
+async function buildContextFromDbForTenant(
+  tenantId: string,
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
+  db: import("@ratesassist/db").Db,
+): Promise<EvaluationContext> {
+  const log = scoped("apps/web/clients");
+  const start = Date.now();
+  const {
+    eq,
+    and,
+    inArray,
+    sql: sqlTag,
+    owners: ownersTable,
+    properties: propertiesTable,
+    propertyOwners: propertyOwnersTable,
+    tenants: tenantsTable,
+    tenements: tenementsTable,
+    tenementProperties: tenementPropertiesTable,
+    withTenant,
+  } = await import("@ratesassist/db");
+
+  // ── Step 0: Resolve the tenant's council code ─────────────────────────────
+  // The `council` field on Property uses the short code (e.g. "TPS"), not
+  // the UUID. The session's tenantId IS the short code, so look it up by
+  // `code` (not `id` which is a UUID — querying a UUID column with "TPS"
+  // produces a 22P02 error). If no row is found, fall back to tenantId itself.
+  const tenantRows = await db
+    .select({ id: tenantsTable.id, code: tenantsTable.code })
+    .from(tenantsTable)
+    .where(eq(tenantsTable.code, tenantId));
+  const tenantCode = tenantRows[0]?.code ?? tenantId;
+  // The UUID to use for columns typed as `uuid` (e.g. properties.tenant_id,
+  // owners.tenant_id). The session tenantId is the short code; the DB rows
+  // hold the UUID. If no row was found (fresh DB with no tenants row yet),
+  // fall back to tenantId — it will produce a graceful empty result rather
+  // than a 22P02 error.
+  const tenantUuid = tenantRows[0]?.id ?? tenantId;
+
+  // ── Step 1: SQL candidate pre-filter ─────────────────────────────────────
+  // Identify assessment numbers that CAN fire a signal before loading rows.
+  // Degrades gracefully: if the filter returns 0 (e.g. empty DB), fall back
+  // to loading all properties for the tenant.
+  let candidateAssessments: ReadonlySet<string> | null = null;
+  try {
+    const { findCandidateAssessmentsBySql } = await import("./mismatchSql");
+    candidateAssessments = await findCandidateAssessmentsBySql(db, tenantUuid);
+  } catch (e) {
+    log.warn({
+      msg: "eval_context.candidate_prefilter_failed",
+      tenantId,
+      err: e instanceof Error ? e.message : String(e),
+    });
+  }
+
+  // ── Step 2: Load candidate properties for this tenant ────────────────────
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const propertyRows: any[] = await withTenant(db, tenantUuid, async (tx) => {
+    const baseCondition = and(
+      eq(propertiesTable.tenantId, tenantUuid),
+      sqlTag`${propertiesTable.deletedAt} IS NULL`,
+    );
+    // If we got a non-empty candidate set, add the IN filter. If the set is
+    // empty (no candidates) or null (filter failed), load everything.
+    if (candidateAssessments !== null && candidateAssessments.size > 0) {
+      const candidates = Array.from(candidateAssessments);
+      return tx
+        .select()
+        .from(propertiesTable)
+        .where(and(baseCondition, inArray(propertiesTable.assessmentNumber, candidates)));
+    }
+    return tx
+      .select()
+      .from(propertiesTable)
+      .where(baseCondition);
+  });
+
+  const propertyIdSet = new Set<string>(propertyRows.map((p) => p.id));
+  const assessmentNumberSet = new Set<string>(propertyRows.map((p) => p.assessmentNumber));
+
+  // ── Step 3: Load owners for this tenant ──────────────────────────────────
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const ownerRows: any[] = await withTenant(db, tenantUuid, async (tx) => {
+    return tx
+      .select()
+      .from(ownersTable)
+      .where(eq(ownersTable.tenantId, tenantUuid));
+  });
+  const ownerIdToExt = new Map<string, string>();
+  const ownersAcc: Owner[] = [];
+  for (const o of ownerRows) {
+    ownerIdToExt.set(o.id, o.ownerExtId);
+    const ownerExtId: string = o.ownerExtId;
+    const checkedAt: Date | null = o.abnCheckedAt ?? null;
+    const status: "Active" | "Cancelled" | "Suspended" | null = o.abnStatus ?? null;
+    ownersAcc.push({
+      ownerId: ownerExtId,
+      name: o.name,
+      abn: o.abn ?? null,
+      abnCheck:
+        checkedAt !== null && status !== null
+          ? { kind: "checked", status, checkedAt: checkedAt.toISOString() }
+          : { kind: "unchecked" },
+      postalAddress: o.postalAddress,
+      email: o.email ?? null,
+      phone: o.phone ?? null,
+      ownerSince: o.ownerSince,
+      previousOwners: o.previousOwners ?? [],
+    });
+  }
+
+  // ── Step 4: Property→Owner join (scoped to candidate properties) ─────────
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const allPropertyOwnerRows: any[] = await withTenant(db, tenantUuid, async (tx) => {
+    return tx.select().from(propertyOwnersTable);
+  });
+  const propertyOwnerRows = allPropertyOwnerRows.filter((r) =>
+    propertyIdSet.has(r.propertyId),
+  );
+  const ownersByPropertyId = new Map<string, string[]>();
+  for (const row of propertyOwnerRows) {
+    const list = ownersByPropertyId.get(row.propertyId) ?? [];
+    const extId = ownerIdToExt.get(row.ownerId);
+    if (extId !== undefined) list.push(extId);
+    ownersByPropertyId.set(row.propertyId, list);
+  }
+
+  // ── Step 5: Build Property objects ───────────────────────────────────────
+  const propertiesAcc: Property[] = [];
+  for (const p of propertyRows) {
+    const ownerIds: string[] = ownersByPropertyId.get(p.id) ?? [];
+    propertiesAcc.push({
+      assessmentNumber: p.assessmentNumber,
+      council: tenantCode,
+      address: p.address,
+      suburb: p.suburb,
+      postcode: p.postcode,
+      state: p.state,
+      landUse: p.landUse,
+      valuation: Number(p.valuation),
+      annualRates: Number(p.annualRates),
+      balance: Number(p.balance),
+      lastPaymentDate: p.lastPaymentDate
+        ? (p.lastPaymentDate as Date).toISOString().slice(0, 10)
+        : null,
+      lastPaymentAmount:
+        p.lastPaymentAmount !== null && p.lastPaymentAmount !== undefined
+          ? Number(p.lastPaymentAmount)
+          : null,
+      paymentMethod: p.paymentMethod ?? null,
+      pensionerRebate: p.pensionerRebate ?? false,
+      paymentArrangement: p.paymentArrangement ?? false,
+      ownerIds,
+      notes: p.notes ?? [],
+      lat: Number(p.centroidLat),
+      lng: Number(p.centroidLng),
+      ...parcelFromGeoJson(p.parcel),
+    });
+  }
+
+  // ── Step 7: Load tenements scoped to candidate properties ────────────────
+  // Use the tenement_properties join table to avoid loading the entire
+  // global tenement register. Only load tenements that intersect at least
+  // one candidate property for this tenant.
+  let tenementsAcc: Tenement[] = [];
+  if (propertyIdSet.size > 0) {
+    // propertyIdSet.size > 0 guarantees propertyIds.length > 0 here,
+    // so inArray won't generate invalid empty-IN SQL.
+    const propertyIds = Array.from(propertyIdSet);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const joinRows: any[] = await db
+      .select({ tenementId: tenementPropertiesTable.tenementId })
+      .from(tenementPropertiesTable)
+      .where(inArray(tenementPropertiesTable.propertyId, propertyIds));
+
+    const tenementUuids = [...new Set(joinRows.map((r) => r.tenementId))];
+    if (tenementUuids.length > 0) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const tenementRows: any[] = await db
+        .select()
+        .from(tenementsTable)
+        .where(inArray(tenementsTable.id, tenementUuids));
+
+      tenementsAcc = tenementRows.map((t) => ({
+        tenementId: t.tenementId,
+        type: t.type,
+        status: t.status,
+        holder: t.holder,
+        holderAbn: t.holderAbn ?? null,
+        commodity: t.commodity ?? [],
+        grantedDate: t.grantedDate,
+        expiryDate: t.expiryDate,
+        areaHectares: Number(t.areaHectares),
+        intersectsAssessmentNumbers: (t.intersectsAssessmentNumbers ?? []).filter(
+          (an: string) => assessmentNumberSet.has(an),
+        ),
+        isProducing: t.isProducing ?? false,
+        lastWorkProgramYear: t.lastWorkProgramYear ?? null,
+        polygon: polygonFromGeoJson(t.polygon),
+      }));
+    }
+  }
+
+  // ── Step 8: Build indexes ─────────────────────────────────────────────────
+  const ownersById = new Map<string, Owner>(
+    ownersAcc.map((o) => [o.ownerId, o]),
+  );
+  const tenementsByAssessment = new Map<string, Tenement[]>();
+  for (const tenement of tenementsAcc) {
+    for (const an of tenement.intersectsAssessmentNumbers) {
+      const list = tenementsByAssessment.get(an);
+      if (list === undefined) {
+        tenementsByAssessment.set(an, [tenement]);
+      } else {
+        list.push(tenement);
+      }
+    }
+  }
+
+  const enrichedProperties = overlayVenCt(overlayValuations(propertiesAcc));
+
+  // Live tenements gate — honours the RA_LIVE_TENEMENTS flag (same as the
+  // global buildContextFromDb path).
+  let finalTenementsByAssessment: ReadonlyMap<string, readonly Tenement[]> =
+    tenementsByAssessment;
+  if (LIVE_TENEMENTS_ENABLED) {
+    const live = await buildLiveTenementsByAssessment(enrichedProperties);
+    if (live.ok) {
+      finalTenementsByAssessment = live.tenementsByAssessment;
+      log.info({
+        msg: "eval_context.live_tenements",
+        source: live.source,
+        tenements: live.tenementCount,
+        matchedAssessments: live.matchedAssessments,
+        tenantId,
+      });
+    }
+  }
+
+  const propertiesByOwnerId = new Map<string, Property[]>();
+  const ruralBySuburb = new Map<string, Property[]>();
+  for (const p of enrichedProperties) {
+    for (const ownerId of p.ownerIds) {
+      const bucket = propertiesByOwnerId.get(ownerId);
+      if (bucket === undefined) {
+        propertiesByOwnerId.set(ownerId, [p]);
+      } else {
+        bucket.push(p);
+      }
+    }
+    if (p.landUse === "Rural") {
+      const bucket = ruralBySuburb.get(p.suburb);
+      if (bucket === undefined) {
+        ruralBySuburb.set(p.suburb, [p]);
+      } else {
+        bucket.push(p);
+      }
+    }
+  }
+
+  log.info({
+    msg: "eval_context.tenant_hydrated",
+    tenantId,
+    tenantCode,
+    durationMs: Date.now() - start,
+    properties: enrichedProperties.length,
+    candidatesFiltered: candidateAssessments?.size ?? "all",
+    owners: ownersAcc.length,
+    tenements: tenementsAcc.length,
+  });
+
+  return {
+    properties: enrichedProperties,
+    ownersById,
+    tenementsByAssessment: finalTenementsByAssessment,
+    propertiesByOwnerId,
+    ruralBySuburb,
+    lagCandidatesByAssessment: MOCK_LAG_CANDIDATES_BY_ASSESSMENT,
+    addressDiscrepanciesByAssessment: MOCK_ADDRESS_DISCREPANCIES_BY_ASSESSMENT,
+    emitsApprovalsByTenement: MOCK_EMITS_APPROVALS_BY_TENEMENT,
+    changeDetectionByAssessment: MOCK_CHANGE_DETECTION_BY_ASSESSMENT,
+    landgateRecordsByVen: MOCK_LANDGATE_RECORDS_BY_VEN,
+    waterCorpEligibilityByCardOrProprietor: MOCK_WC_ELIGIBILITY,
+    proprietorDeceasedReferences: MOCK_PROPRIETOR_DECEASED_REFERENCES,
+    rateTablesByCouncil: RATE_TABLES_BY_COUNCIL,
+    targetStateScope: TARGET_STATE_SCOPE,
+  };
+}
+
+/**
+ * Per-tenant evaluation context (E3 path — scoped, cached, SQL-pre-filtered).
+ *
+ * Returns the EvaluationContext for the specified tenant, building and
+ * caching it per-tenant with a 5-minute TTL. Prefers the tenant-scoped
+ * DB path when `isDbWired()` is true; falls back to the in-memory demo
+ * data when the DB is not wired (dev without `RA_USE_DB=true`).
+ *
+ * Call sites that know the active tenantId (routes with a resolved session)
+ * should prefer this function over `getEvaluationContext()` to get the
+ * scale-safe path.
+ */
+export async function getEvaluationContextForTenant(
+  tenantId: string,
+): Promise<EvaluationContext> {
+  // Per-tenant cache hit?
+  const cached = _tenantCtxCache.get(tenantId);
+  if (cached !== undefined && Date.now() - cached.ts < PER_TENANT_CTX_TTL_MS) {
+    return cached.ctx;
+  }
+
+  if (!isDbWired()) {
+    // Dev without DB: fall back to the in-memory demo data (same data for
+    // every tenantId, but correct in shape for signal evaluation).
+    const ctx = buildContextFromInMemory();
+    _tenantCtxCache.set(tenantId, { ctx, ts: Date.now() });
+    return ctx;
+  }
+
+  const { getWebDb } = await import("./db");
+  const db = await getWebDb();
+  const ctx = await buildContextFromDbForTenant(tenantId, db);
+  _tenantCtxCache.set(tenantId, { ctx, ts: Date.now() });
+  return ctx;
+}
+
+/**
+ * Invalidate the cached EvaluationContext for a specific tenant.
+ *
+ * Mutation handlers (import, strata conversion, Landgate title import, etc.)
+ * MUST call this after a successful commit so subsequent recovery sweeps for
+ * that tenant observe the new state.
+ *
+ * This is narrower than `invalidateEvaluationContext()` (which clears the
+ * global single-tenant cache); callers that know the tenantId should prefer
+ * this to avoid invalidating other tenants' caches unnecessarily.
+ */
+export function invalidateEvaluationContextForTenant(tenantId: string): void {
+  _tenantCtxCache.delete(tenantId);
+  // No async re-hydration here — the next call to
+  // getEvaluationContextForTenant will rebuild lazily.
+}
+
+/** Test hook: reset ALL per-tenant cache entries. */
+export function __resetPerTenantContextCacheForTests(): void {
+  _tenantCtxCache.clear();
 }
 
 /**

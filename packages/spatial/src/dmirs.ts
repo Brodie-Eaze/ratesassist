@@ -28,6 +28,10 @@ import type {
   GeoJsonFeature,
   GeoJsonFeatureCollection,
 } from "./types.js";
+import {
+  buildConditionalHeaders,
+  recordResponseHeaders,
+} from "./freshness.js";
 
 // ===== Constants =====
 
@@ -200,12 +204,21 @@ export async function fetchDmirsTenementsForCouncil(
   let probeWasTimeout = false;
 
   try {
-    const res = await fetcher(probeUrl, { signal: ctrl.signal });
-    if (res.ok) {
-      // Drain the body so we don't leak the connection. We don't parse it —
-      // honest labelling means we won't pretend a capabilities response is
-      // feature data.
+    const res = await fetcher(probeUrl, {
+      signal: ctrl.signal,
+      // Send If-None-Match / If-Modified-Since if a prior probe stored them.
+      // A 304 NOT MODIFIED confirms capabilities haven't changed and avoids
+      // downloading the full WFS GetCapabilities XML body (~50–200 KB).
+      headers: buildConditionalHeaders(probeUrl),
+    });
+    if (res.status === 304) {
+      // Server confirms capabilities unchanged — probe passed without body.
+      probeOk = true;
+    } else if (res.ok) {
+      // Drain body so we don't leak the connection. We don't parse it —
+      // honest labelling means we won't pretend capabilities XML is feature data.
       await res.text();
+      recordResponseHeaders(probeUrl, res.headers);
       probeOk = true;
     } else {
       probeError = `HTTP ${res.status}`;

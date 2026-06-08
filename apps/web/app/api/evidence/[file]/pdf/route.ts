@@ -39,7 +39,7 @@ import {
   tenantFromAssessmentNumber,
 } from "@/lib/api-helpers";
 import { COUNCILS } from "@/lib/data";
-import { getEvaluationContext } from "@/lib/clients";
+import { getEvaluationContextForTenant, getEvaluationContext } from "@/lib/clients";
 import { correlationIdFromHeaders } from "@/lib/correlation";
 import { renderEvidencePdf } from "@/lib/evidencePdf";
 import { getClientIp } from "@/lib/rate-limit";
@@ -77,6 +77,10 @@ export async function GET(
 
   // ---- 3. Tenant scoping: cross-tenant returns 404 (not 403). ----
   const assetTenant = tenantFromAssessmentNumber(assessmentNumber);
+  if (!assetTenant) {
+    // Assessment number has no recognisable tenant prefix — treat as not found.
+    return fail("not_found", `Evidence pack for ${assessmentNumber} not found.`);
+  }
   if (!sessionMayAccessTenant(session, assetTenant)) {
     log.warn({
       msg: "evidence.pdf.cross_tenant_blocked",
@@ -88,7 +92,13 @@ export async function GET(
   }
 
   // ---- 4. Build the pack. ----
-  const result = buildEvidencePack(assessmentNumber, getEvaluationContext());
+  // E3: per-tenant SQL-scoped context, scoped to the ASSET's tenant
+  // (not the session tenant). platform_admin sessions may carry an
+  // arbitrary session.tenantId that doesn't match the asset; using
+  // assetTenant ensures we load the right properties regardless of
+  // which council the admin belongs to.
+  const evalCtx = await getEvaluationContextForTenant(assetTenant);
+  const result = buildEvidencePack(assessmentNumber, evalCtx);
   if (result.kind !== "ok") {
     log.info({
       msg: "evidence.pdf.no_pack",
