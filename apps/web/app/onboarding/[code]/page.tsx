@@ -84,6 +84,7 @@ export default function OnboardingPage({
   const { code } = params;
   const router = useRouter();
   const [step, setStep] = useState<Step>(1);
+  const [loading, setLoading] = useState(true);
   const [council, setCouncil] = useState<Council | null>(null);
   const [councilError, setCouncilError] = useState<string | null>(null);
 
@@ -115,12 +116,15 @@ export default function OnboardingPage({
         if (cancelled) return;
         if (!found) {
           setCouncilError(`Council "${code}" not found.`);
+          setLoading(false);
           return;
         }
         setCouncil(found);
+        setLoading(false);
       } catch (e) {
         if (cancelled) return;
         setCouncilError(e instanceof Error ? e.message : String(e));
+        setLoading(false);
       }
     })();
     return () => {
@@ -129,6 +133,14 @@ export default function OnboardingPage({
   }, [code]);
 
   const sampleHref = "/api/sample/rating-roll.csv";
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-sm text-ink-500">Loading council details…</div>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-4xl mx-auto p-6 space-y-6">
@@ -278,7 +290,7 @@ function StepBar({ step }: { step: Step }) {
             <span
               className={`w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-medium ${
                 done
-                  ? "bg-success-600 text-white"
+                  ? "bg-success-700 text-white"
                   : active
                     ? "bg-accent-600 text-white"
                     : "bg-ink-100 text-ink-500"

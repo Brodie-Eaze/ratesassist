@@ -15,6 +15,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { runTool } from "@/lib/tools";
+import { fail, resolveRouteSession } from "@/lib/api-helpers";
+import { getClientIp, rateLimitComposite, retryAfterSeconds } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,6 +24,18 @@ export const dynamic = "force-dynamic";
 const VALID_SEVERITY = new Set(["high", "medium", "low"]);
 
 export async function GET(req: NextRequest) {
+  const session = await resolveRouteSession(req);
+  if (session === null) return fail("unauthorized", "Authentication required.");
+
+  const ip = getClientIp(req);
+  const rl = rateLimitComposite({ scope: "lag-window", ip, tenantId: session.tenantId, max: 20 });
+  if (!rl.ok) {
+    return NextResponse.json(
+      { ok: false, code: "rate_limited", error: "Too many requests" },
+      { status: 429, headers: { "Retry-After": retryAfterSeconds(rl.resetAt) } }
+    );
+  }
+
   const { searchParams } = req.nextUrl;
   const sinceDaysRaw = searchParams.get("sinceDays");
   const sinceDays = sinceDaysRaw === null ? 90 : Number(sinceDaysRaw);

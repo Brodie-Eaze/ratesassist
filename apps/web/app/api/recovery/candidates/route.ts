@@ -24,7 +24,7 @@
  * Cache-Control: private, max-age=60. Weak ETag from canonical JSON.
  */
 
-import type { NextRequest } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import {
   findMismatches,
   type EvaluationContext,
@@ -69,6 +69,7 @@ import {
   weakEtag,
 } from "@/lib/api-helpers";
 import { getEvaluationContext, recoveryStatsFor } from "@/lib/clients";
+import { getClientIp, rateLimitComposite, retryAfterSeconds } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -131,6 +132,14 @@ export async function GET(req: NextRequest): Promise<Response> {
   const session = await resolveRouteSession(req);
   if (!session) {
     return fail("unauthorized", "Authentication required.");
+  }
+  const ip = getClientIp(req);
+  const rl = rateLimitComposite({ scope: "recovery-candidates", ip, tenantId: session.tenantId, max: 20 });
+  if (!rl.ok) {
+    return NextResponse.json(
+      { ok: false, code: "rate_limited", error: "Too many requests" },
+      { status: 429, headers: { "Retry-After": retryAfterSeconds(rl.resetAt) } }
+    );
   }
   const isPlatformAdmin = session.roles.includes("platform_admin");
 

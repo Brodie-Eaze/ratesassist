@@ -582,7 +582,8 @@ async function buildContextFromDbForTenant(
   // ── Step 4: Property→Owner join (scoped to candidate properties) ─────────
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const allPropertyOwnerRows: any[] = await withTenant(db, tenantUuid, async (tx) => {
-    return tx.select().from(propertyOwnersTable);
+    return tx.select().from(propertyOwnersTable)
+      .where(inArray(propertyOwnersTable.propertyId, Array.from(propertyIdSet)));
   });
   const propertyOwnerRows = allPropertyOwnerRows.filter((r) =>
     propertyIdSet.has(r.propertyId),

@@ -75,11 +75,14 @@ describe("notify_clerk handler", () => {
     expect(entries[0]!.targetType).toBe("property");
     expect(entries[0]!.targetId).toBe(sampleProp.assessmentNumber);
     const after = entries[0]!.after as {
-      recipient: string;
+      recipientHash: string;
+      recipientDomain: string;
       provider: string;
       severity: string;
     };
-    expect(after.recipient).toBe("clerk@council.example");
+    // PII is hashed — verify domain extraction and hash is present but not the raw address
+    expect(after.recipientDomain).toBe("council.example");
+    expect(after.recipientHash).toMatch(/^[0-9a-f]{64}$/); // sha256 hex
     expect(after.provider).toBe("console");
     expect(after.severity).toBe("high");
   });

@@ -23,18 +23,29 @@
  * exports often hit dataset sizes where caching has no useful effect.
  */
 
-import type { NextRequest } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { findMismatches } from "@ratesassist/recovery-engine";
 import type { MismatchCandidate } from "@ratesassist/contract";
 
 import { runTool } from "@/lib/tools";
-import { fail, hasSession, streamCsv } from "@/lib/api-helpers";
-import { getEvaluationContext } from "@/lib/clients";
+import { fail, resolveRouteSession, streamCsv } from "@/lib/api-helpers";
+import { getEvaluationContextForTenant } from "@/lib/clients";
+import { correlationIdFromHeaders } from "@/lib/correlation";
+import { getClientIp, rateLimitComposite, retryAfterSeconds } from "@/lib/rate-limit";
+
+const ROW_CAP = 10_000;
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type ExportType = "candidates" | "grants" | "overdue";
+
+/** Minimal session shape the export helpers need for tenant scoping. */
+type RouteSession = {
+  readonly userId: string;
+  readonly tenantId: string;
+  readonly roles: ReadonlyArray<string>;
+};
 
 const VALID_TYPES: ReadonlySet<string> = new Set([
   "candidates",
@@ -61,8 +72,21 @@ async function readJsonBody(req: NextRequest): Promise<Record<string, unknown>> 
 }
 
 export async function POST(req: NextRequest): Promise<Response> {
-  if (!hasSession(req)) {
+  // Resolve the real session (header → cookie → dev autologin) so we can
+  // tenant-scope the export. `hasSession` only proved presence — these
+  // datasets carry ratepayer addresses + arrears, so we MUST scope by the
+  // caller's council, not merely confirm they're logged in.
+  const session = await resolveRouteSession(req);
+  if (session === null) {
     return fail("unauthorized", "Authentication required.");
+  }
+  const ip = getClientIp(req);
+  const rl = rateLimitComposite({ scope: "exports-csv", ip, tenantId: session.tenantId, max: 5 });
+  if (!rl.ok) {
+    return NextResponse.json(
+      { ok: false, code: "rate_limited", error: "Too many requests" },
+      { status: 429, headers: { "Retry-After": retryAfterSeconds(rl.resetAt) } }
+    );
   }
 
   const typeRaw = req.nextUrl.searchParams.get("type");
@@ -74,24 +98,35 @@ export async function POST(req: NextRequest): Promise<Response> {
   }
   const type = typeRaw as ExportType;
   const body = await readJsonBody(req);
+  const correlationId = correlationIdFromHeaders(req.headers);
 
   switch (type) {
     case "candidates":
-      return await exportCandidates(body);
+      return await exportCandidates(session, body);
     case "grants":
-      return await exportGrants(body);
+      return await exportGrants(session, body, correlationId);
     case "overdue":
-      return await exportOverdue(body);
+      return await exportOverdue(session, body, correlationId);
   }
 }
 
-async function exportCandidates(filter: Record<string, unknown>): Promise<Response> {
+async function exportCandidates(
+  session: RouteSession,
+  filter: Record<string, unknown>,
+): Promise<Response> {
   const severity =
     typeof filter.severity === "string" ? filter.severity : null;
   const signalId = typeof filter.signal === "string" ? filter.signal : null;
 
-  const ctx = getEvaluationContext();
-  let rows: readonly MismatchCandidate[] = findMismatches(ctx);
+  // E3: per-tenant SQL-scoped context. With per-tenant ctx the
+  // `council: session.tenantId` filter in findMismatches is redundant
+  // but kept as an explicit safety net for platform_admin calls that
+  // reuse this helper in a non-admin path.
+  const ctx = await getEvaluationContextForTenant(session.tenantId);
+  const isAdmin = session.roles.includes("platform_admin");
+  let rows: readonly MismatchCandidate[] = isAdmin
+    ? findMismatches(ctx)
+    : findMismatches(ctx, { council: session.tenantId });
   if (severity !== null) rows = rows.filter((c) => c.severity === severity);
   if (signalId !== null) rows = rows.filter((c) => c.signals.some((s) => s.id === signalId));
 
@@ -112,10 +147,15 @@ async function exportCandidates(filter: Record<string, unknown>): Promise<Respon
     signals: c.signals.map((s) => s.id).join(";"),
     reason: c.reason,
   }));
-  return streamCsv(csvRows, `ratesassist-candidates-${todayIso()}.csv`);
+  const cappedRows = csvRows.slice(0, ROW_CAP);
+  return streamCsv(cappedRows, `ratesassist-candidates-${todayIso()}.csv`);
 }
 
-async function exportGrants(filter: Record<string, unknown>): Promise<Response> {
+async function exportGrants(
+  session: RouteSession,
+  filter: Record<string, unknown>,
+  correlationId?: string,
+): Promise<Response> {
   const sinceDays =
     typeof filter.sinceDays === "number" && filter.sinceDays >= 1 && filter.sinceDays <= 365
       ? filter.sinceDays
@@ -129,7 +169,14 @@ async function exportGrants(filter: Record<string, unknown>): Promise<Response> 
   if (types !== undefined && types.length > 0) input.types = types;
   if (lgaName !== undefined) input.lgaName = lgaName;
 
-  const result = await runTool("list_recent_grants", input);
+  // DMIRS tenement grants are statewide public data — no tenant scoping
+  // applies (every council cross-references the whole register). We still
+  // attribute the actor so the export is attributable in the audit log.
+  const result = await runTool("list_recent_grants", input, correlationId, {
+    tenantId: session.tenantId,
+    actorId: session.userId,
+    actorKind: "user",
+  });
   if (!result.ok) {
     return fail("upstream_error", result.error ?? "list_recent_grants failed", 502);
   }
@@ -148,15 +195,33 @@ async function exportGrants(filter: Record<string, unknown>): Promise<Response> 
       area_hectares: g.areaHectares ?? "",
     };
   });
-  return streamCsv(csvRows, `ratesassist-grants-${todayIso()}.csv`);
+  const cappedGrants = csvRows.slice(0, ROW_CAP);
+  return streamCsv(cappedGrants, `ratesassist-grants-${todayIso()}.csv`);
 }
 
-async function exportOverdue(filter: Record<string, unknown>): Promise<Response> {
+async function exportOverdue(
+  session: RouteSession,
+  filter: Record<string, unknown>,
+  correlationId?: string,
+): Promise<Response> {
   const input: Record<string, unknown> = {};
-  if (typeof filter.council === "string") input.council = filter.council;
+  // Tenant scope — overdue ledgers carry ratepayer arrears (PII). A
+  // non-admin session is pinned to its own council; any `council` in the
+  // request body is ignored so a TPS officer cannot pull KAL's arrears.
+  // platform_admin may target a specific council (or all, when omitted).
+  const isAdmin = session.roles.includes("platform_admin");
+  if (isAdmin) {
+    if (typeof filter.council === "string") input.council = filter.council;
+  } else {
+    input.council = session.tenantId;
+  }
   if (typeof filter.minDaysOverdue === "number") input.minDaysOverdue = filter.minDaysOverdue;
 
-  const result = await runTool("list_overdue", input);
+  const result = await runTool("list_overdue", input, correlationId, {
+    tenantId: session.tenantId,
+    actorId: session.userId,
+    actorKind: "user",
+  });
   if (!result.ok) {
     return fail("upstream_error", result.error ?? "list_overdue failed", 502);
   }
@@ -177,5 +242,6 @@ async function exportOverdue(filter: Record<string, unknown>): Promise<Response>
       last_payment_amount_aud: p.lastPaymentAmount ?? "",
     };
   });
-  return streamCsv(csvRows, `ratesassist-overdue-${todayIso()}.csv`);
+  const cappedOverdue = csvRows.slice(0, ROW_CAP);
+  return streamCsv(cappedOverdue, `ratesassist-overdue-${todayIso()}.csv`);
 }

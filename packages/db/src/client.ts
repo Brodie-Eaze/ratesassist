@@ -10,14 +10,21 @@
  * - If `DATABASE_URL` starts with `postgres://` or `postgresql://`, we use a
  *   real node-postgres pool.
  * - `RA_USE_DB=true` with no `DATABASE_URL` is permitted in development
- *   (defaults to pglite). In production (`NODE_ENV=production`), the same
- *   condition still allows pglite — gate the production-pg requirement at
- *   the app deployment layer rather than here so we keep a single boot path.
+ *   (defaults to pglite). In production (`NODE_ENV=production`) the pglite
+ *   driver is an EPHEMERAL in-memory store — all state (audit chain, notes,
+ *   determinations) is lost on every cold start. `getDb()` therefore REFUSES
+ *   to boot on pglite in production unless the operator explicitly sets
+ *   `RA_ALLOW_EPHEMERAL_DB=1` to acknowledge a stateless deployment (e.g. the
+ *   pre-pilot demo that reseeds synthetic data each boot). With real council
+ *   PII you must set a `postgres://` `DATABASE_URL`; the default is fail-closed.
  *
  * Pool sizing
  * -----------
- * - Production (`NODE_ENV=production`): 20 connections.
- * - Otherwise: 5 connections.
+ * - Production (`NODE_ENV=production`): 20 connections; otherwise 5.
+ * - Override the ceiling with `RA_DB_POOL_MAX` (positive integer). Important
+ *   behind RDS Proxy — the proxy multiplexes, so each task wants a SMALLER
+ *   client pool — and for keeping `tasks × max` under the RDS instance's
+ *   `max_connections` as ECS autoscales out.
  * - statement_timeout = 15s; idle_in_transaction_session_timeout = 10s.
  *
  * Tenant isolation
@@ -67,6 +74,24 @@ function classifyUrl(url: string | undefined): DriverKind {
   return "pglite";
 }
 
+/**
+ * Resolve the pool ceiling: `RA_DB_POOL_MAX` if it parses to a positive
+ * integer, else 20 in production / 5 elsewhere. Invalid overrides warn and
+ * fall back rather than silently mis-sizing the pool.
+ */
+function resolvePoolMax(): number {
+  const raw = process.env["RA_DB_POOL_MAX"];
+  if (raw !== undefined && raw !== "") {
+    const n = Number.parseInt(raw, 10);
+    if (Number.isInteger(n) && n > 0) return n;
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[@ratesassist/db] ignoring invalid RA_DB_POOL_MAX="${raw}" (want a positive integer); using NODE_ENV default.`,
+    );
+  }
+  return process.env.NODE_ENV === "production" ? 20 : 5;
+}
+
 function buildPgPool(): pg.Pool {
   const url = process.env.DATABASE_URL;
   if (url === undefined || url === "") {
@@ -74,10 +99,10 @@ function buildPgPool(): pg.Pool {
       "[@ratesassist/db] postgres driver requires DATABASE_URL.",
     );
   }
-  const max = process.env.NODE_ENV === "production" ? 20 : 5;
   return new pg.Pool({
     connectionString: url,
-    max,
+    max: resolvePoolMax(),
+    connectionTimeoutMillis: 5_000,
     statement_timeout: 15_000,
     idle_in_transaction_session_timeout: 10_000,
   });
@@ -104,6 +129,33 @@ export function getDb(): Db {
     pool = buildPgPool();
     cached = drizzleNodePg(pool, { schema });
     return cached;
+  }
+  // RELIABILITY / DURABILITY: pglite is in-memory and ephemeral. Booting on it
+  // in production silently discards the tamper-evident audit chain and every
+  // officer determination on each cold start. Fail closed: refuse unless the
+  // operator has explicitly acknowledged a stateless deployment.
+  if (
+    process.env.NODE_ENV === "production" &&
+    process.env.RA_ALLOW_EPHEMERAL_DB !== "1"
+  ) {
+    throw new Error(
+      "[@ratesassist/db] Refusing to boot on the in-memory pglite driver in production: " +
+        "all state (audit chain, notes, determinations) would be lost on restart. " +
+        "Set DATABASE_URL to a postgres:// URL for a durable store, or set " +
+        "RA_ALLOW_EPHEMERAL_DB=1 to acknowledge an intentionally stateless deployment.",
+    );
+  }
+  if (process.env.NODE_ENV === "production") {
+    // Escape hatch engaged — make the ephemeral choice loud and auditable.
+    // eslint-disable-next-line no-console
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        scope: "db",
+        event: "db.ephemeral_in_production",
+        msg: "Booting on in-memory pglite in production (RA_ALLOW_EPHEMERAL_DB=1). State is NOT durable.",
+      }),
+    );
   }
   pglite = buildPglite();
   cached = drizzlePglite(pglite, { schema });
