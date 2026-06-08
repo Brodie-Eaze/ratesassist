@@ -41,8 +41,12 @@ import type { MismatchCandidate } from "@ratesassist/contract";
  * the previous sweep by identity is safe — when the context object
  * is replaced, the cache misses and we re-sweep.
  *
- * Capacity is 1 entry — there's only ever one live context. Holding
- * a single ref is enough; a Map would just leak as contexts age out.
+ * Capacity is 1 entry. With per-tenant evaluation contexts (E3), the
+ * most recent tenant's sweep is cached. Under single-tenant deployments
+ * (the normal case) this is effectively a full hit — the same context
+ * object is returned for 5 minutes by `getEvaluationContextForTenant`.
+ * In a high-concurrency multi-tenant deployment this entry thrashes; a
+ * `Map<tenantId, result>` would be the right upgrade at that point.
  */
 let _lastCtx: EvaluationContext | null = null;
 let _lastResult: readonly MismatchCandidate[] | null = null;
@@ -68,7 +72,7 @@ import {
   tenantFromAssessmentNumber,
   weakEtag,
 } from "@/lib/api-helpers";
-import { getEvaluationContext, recoveryStatsFor } from "@/lib/clients";
+import { getEvaluationContext, getEvaluationContextForTenant, recoveryStatsFor } from "@/lib/clients";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -145,7 +149,14 @@ export async function GET(req: NextRequest): Promise<Response> {
   }
   const severity = severityRaw as Severity | null;
 
-  const evalCtx = getEvaluationContext();
+  // E3: per-tenant SQL-scoped context — loads only this tenant's
+  // candidate properties instead of the global all-tenants context.
+  // platform_admin uses the global context so they can see all tenants'
+  // candidates (e.g. cross-tenant evidence review, rate-table integration
+  // tests, and bulk tooling). Non-admin sessions scope to their own tenant.
+  const evalCtx = isPlatformAdmin
+    ? getEvaluationContext()
+    : await getEvaluationContextForTenant(session.tenantId);
   const all = findMismatchesCached(evalCtx);
 
   // ship-ready iter3: scope the candidate list to the session's

@@ -20,6 +20,7 @@ import {
   Cpu,
   Building,
   Upload,
+  Scale,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Wordmark } from "./Brand";
@@ -42,6 +43,7 @@ const NAV: NavItem[] = [
   { href: "/signals",         label: "Signal Catalogue",icon: Sparkles,     product: "Recovery", group: "Recovery" },
   { href: "/aerial",          label: "Aerial Evidence",icon: Eye,           product: "Recovery", group: "Recovery" },
   { href: "/intel",           label: "Dashboards",     icon: BarChart3,     product: "Intel",    group: "Intel" },
+  { href: "/roll-quality",    label: "Roll Quality",   icon: Scale,         product: "Intel",    group: "Intel" },
   { href: "/reconciliation",  label: "Reconciliation", icon: Wallet,        product: "Assist",   group: "Operations" },
   { href: "/certificates",    label: "Certificates",   icon: FileBadge,     product: "Assist",   group: "Operations" },
   { href: "/activity",        label: "Activity Log",   icon: History,       product: null,       group: "Operations" },
@@ -103,7 +105,7 @@ export function Sidebar() {
   const onboarding = useOnboardingNeeded();
 
   return (
-    <aside className="w-60 bg-white border-r border-ink-200 flex flex-col">
+    <aside className="w-64 bg-white border-r border-ink-200 flex flex-col">
       <div className="px-5 py-5 border-b border-ink-200">
         <Wordmark size="md" />
         <div className="text-[10px] uppercase tracking-widest text-ink-400 mt-1">
@@ -111,7 +113,7 @@ export function Sidebar() {
         </div>
       </div>
 
-      <nav className="flex-1 p-3 space-y-3 overflow-y-auto">
+      <nav aria-label="Primary" className="flex-1 p-3 space-y-3 overflow-y-auto">
         {onboarding.needed && onboarding.code && (
           <div>
             <div className="px-3 mb-1 text-[10px] uppercase tracking-widest text-accent-600 font-medium">
@@ -160,12 +162,7 @@ export function Sidebar() {
                       )}
                     >
                       <Icon className="w-4 h-4 shrink-0" />
-                      <span className="flex-1 truncate">{item.label}</span>
-                      {item.product && (
-                        <span className="text-[9px] uppercase tracking-widest text-ink-400">
-                          {item.product}
-                        </span>
-                      )}
+                      <span className="truncate">{item.label}</span>
                     </Link>
                   );
                 })}
