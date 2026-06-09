@@ -243,9 +243,11 @@ function RecoveryPageInner() {
    * Single recovery-type filter replaces the 6 boolean toggle pills the page
    * used to show (Newly granted, Cadastre lag, Address mismatch, Title
    * mismatch, Concession review, Strata conversion). One dropdown carries
-   * the same intent without crowding the filter row. URL deep-link param
-   * stays as `?signal=<family>` for backwards compatibility with /alerts
-   * and the older links the clerks may have bookmarked.
+   * the same intent without crowding the filter row. The legacy
+   * `?signal=<family>` deep-link from /alerts and older bookmarks is
+   * still DECODED on mount (so old links keep working), but the URL is
+   * normalised to the canonical `?recoveryType=` form on first render —
+   * the legacy param shape is read-compatible, not write-preserved.
    */
   const searchParams = useSearchParams();
   const router = useRouter();

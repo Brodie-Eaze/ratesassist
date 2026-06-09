@@ -5,9 +5,16 @@ import { PropertyMapClientShell } from "./_PropertyMapShell";
 import { SignalAccordion } from "@/components/recovery/SignalAccordion";
 import { TitleStateSection } from "@/components/recovery/TitleStateSection";
 import { ConcessionAuditSection } from "@/components/recovery/ConcessionAuditSection";
+import { headers } from "next/headers";
+import { redirect } from "next/navigation";
 import { buildEvidencePack } from "@ratesassist/recovery-engine";
 import type { EvidencePackResult } from "@ratesassist/recovery-engine";
-import { getEvaluationContext } from "@/lib/clients";
+import { getEvaluationContextForTenant } from "@/lib/clients";
+import { SESSION_HEADER } from "@/lib/auth";
+import {
+  sessionMayAccessTenant,
+  tenantFromAssessmentNumber,
+} from "@/lib/api-helpers";
 import { ArrowLeft, AlertTriangle, CheckCircle2, Download } from "lucide-react";
 import { formatAud } from "@/lib/utils";
 
@@ -134,7 +141,46 @@ export default async function EvidencePackPage({
   params: Promise<{ assessment: string }>;
 }) {
   const { assessment } = await params;
-  const result = buildEvidencePack(assessment, getEvaluationContext());
+
+  // Session + tenant gate — same model as the evidence API routes. The
+  // middleware injects the pre-validated session into the x-session
+  // header; missing session redirects to /login (defensive — middleware
+  // normally redirects before we render). Cross-tenant renders the same
+  // "not found" state as a nonexistent assessment so this page is not an
+  // enumeration oracle, and the evaluation context is scoped to the
+  // ASSET's tenant — never the global cross-tenant snapshot.
+  const h = await headers();
+  const rawSession = h.get(SESSION_HEADER);
+  let session: { tenantId: string; roles: ReadonlyArray<string> } | null = null;
+  if (rawSession) {
+    try {
+      const parsed = JSON.parse(rawSession) as {
+        tenantId?: unknown;
+        roles?: unknown;
+      };
+      if (typeof parsed.tenantId === "string" && Array.isArray(parsed.roles)) {
+        session = {
+          tenantId: parsed.tenantId,
+          roles: parsed.roles.filter((r): r is string => typeof r === "string"),
+        };
+      }
+    } catch {
+      session = null;
+    }
+  }
+  if (!session) {
+    redirect("/login");
+  }
+
+  const assetTenant = tenantFromAssessmentNumber(assessment);
+  const crossTenantBlocked = !sessionMayAccessTenant(session, assetTenant);
+
+  const result: EvidencePackResult = crossTenantBlocked
+    ? { kind: "no_property" }
+    : buildEvidencePack(
+        assessment,
+        await getEvaluationContextForTenant(assetTenant ?? session.tenantId),
+      );
   const pack = result.kind === "ok" ? result.pack : null;
 
   return (
