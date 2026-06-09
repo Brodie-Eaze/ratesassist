@@ -36,8 +36,10 @@ This document lists every sub-processor RatesAssist currently uses, every sub-pr
 | # | Provider | Role | Data classes (planned) | Residency (planned) | Phase | Status |
 |---|---|---|---|---|---|---|
 | 5 | **AWS (ap-southeast-2, Sydney)** | Production hosting (compute, RDS Postgres, S3, KMS) | All classes including PROTECTED | AU-only (Sydney) | Phase 6 — Production Hardening | Planned |
-| 6 | **WorkOS, Inc.** | Enterprise SSO (Microsoft Entra / SAML / OIDC) | Authentication metadata; not council operational data | US; SCC-equivalent contractual arrangements | Phase 4 — Officer SSO | Planned |
+| 6 | **WorkOS, Inc.** | Enterprise SSO (Microsoft Entra / SAML / OIDC) | Authentication metadata; not council operational data | US; SCC-equivalent contractual arrangements | Phase 4 — Officer SSO | Built, **inactive** — see note ¹ |
 | 7 | **Render.com (alternate)** | Alternate application hosting under evaluation | All classes in transit; OFFICIAL at rest | AU-region offering required before adoption | Phase 6 (if AWS migration is deferred) | Under evaluation; not currently active |
+
+¹ **WorkOS:** the OIDC callback and session-mapping integration is implemented in the codebase but is **not active and processes no data**. Until a council provisions SSO secrets, the production auth callback returns `501`. WorkOS becomes a live sub-processor (and moves to the table above) only when a council enables SSO; the 30-day customer-notice commitment below applies at that point.
 
 ---
 

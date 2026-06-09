@@ -20,6 +20,8 @@ const STATUS_META: Record<
   { icon: typeof CheckCircle2; cls: string; label: string }
 > = {
   live: { icon: CheckCircle2, cls: "text-success-700 bg-success-50", label: "Live" },
+  stub: { icon: CircleDashed, cls: "text-ink-500 bg-ink-50", label: "Stub" },
+  planned: { icon: CircleDashed, cls: "text-ink-400 bg-ink-50", label: "Planned" },
   degraded: { icon: AlertCircle, cls: "text-warn-700 bg-warn-50", label: "Degraded" },
   unconfigured: {
     icon: CircleDashed,

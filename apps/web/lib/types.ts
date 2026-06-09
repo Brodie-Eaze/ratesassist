@@ -84,7 +84,7 @@ export type ChatMessage = {
 
 // ----- Connections / integrations (UI cards on /connections page) -----
 
-export type IntegrationStatus = "live" | "degraded" | "unconfigured" | "error";
+export type IntegrationStatus = "live" | "stub" | "planned" | "degraded" | "unconfigured" | "error";
 
 export type Integration = {
   id: string;

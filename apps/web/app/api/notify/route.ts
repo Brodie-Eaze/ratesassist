@@ -12,12 +12,18 @@
 
 import { NextRequest, NextResponse } from "next/server";
 
-import { fail, ok } from "@/lib/api-helpers";
+import {
+  fail,
+  ok,
+  sessionMayAccessTenant,
+  tenantFromAssessmentNumber,
+} from "@/lib/api-helpers";
 import { getSessionFromRequest, hasPermission } from "@/lib/auth";
 import { scoped } from "@/lib/logger";
 import { getClientIp } from "@/lib/rate-limit";
 import { runTool } from "@/lib/tools";
 import { correlationIdFromHeaders } from "@/lib/correlation";
+import { captureCrossTenantRefused } from "@/lib/sentry";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -57,6 +63,30 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       "invalid_input",
       "recipientEmail, subject, and candidateAssessmentNumber are required",
     );
+  }
+
+  // Defence-in-depth tenant scope. The assessment number embeds its owning
+  // council (e.g. KAL-4401-12 → KAL). An officer bound to council A must not
+  // fire a clerk notification about council B's candidate — even though the
+  // discovery + export scoping already stops them enumerating foreign
+  // assessment numbers. platform_admin bypasses for cross-tenant ops. Masked
+  // as 404 so this endpoint can't be an existence oracle for assessment
+  // numbers on other tenants.
+  const assetTenant = tenantFromAssessmentNumber(candidateAssessmentNumber);
+  if (!sessionMayAccessTenant(session, assetTenant)) {
+    log.warn({
+      msg: "notify.cross_tenant_refused",
+      userId: session.userId,
+      sessionTenant: session.tenantId,
+      attemptedAssessment: candidateAssessmentNumber,
+    });
+    captureCrossTenantRefused({
+      actorId: session.userId,
+      sessionTenant: session.tenantId,
+      attemptedTenant: assetTenant ?? "unknown",
+      route: "/api/notify",
+    });
+    return fail("not_found", "candidate not found");
   }
 
   const ip = getClientIp(req);

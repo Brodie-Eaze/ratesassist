@@ -1,22 +1,33 @@
 /**
  * Public landing page — first thing an unauthenticated visitor sees.
  *
- * Hero stat is a hard-coded aggregate ("Across pilot councils: $4.2M+ in
- * identified recovery") rather than a live read from /api/recovery/candidates.
+ * Hero stat is a hard-coded aggregate (a modelled, pre-pilot recovery
+ * opportunity — "$4.2M+ identified across assessed council rate rolls")
+ * rather than a live read from /api/recovery/candidates.
  * Rationale: the candidates endpoint is auth-gated and the landing page is
  * public, so a live read would either require a public unauthenticated
  * counter (extra attack surface, more code) or render as a placeholder for
- * un-authed visitors. The hard-coded figure is honest — it reflects the
- * cumulative pilot estimate — and we update it manually when we onboard a
- * new council. DOCUMENTED: any future "live counter" path should land
- * behind a dedicated, rate-limited, no-PII public endpoint.
+ * un-authed visitors. The figure is framed honestly — a cumulative pre-pilot
+ * ESTIMATE, not realized recovery, with no claim of live pilot deployments —
+ * and we update it manually as councils onboard. DOCUMENTED: any future
+ * "live counter" path should land behind a dedicated, rate-limited, no-PII
+ * public endpoint.
  *
  * Australian English throughout.
  */
 
+import Link from "next/link";
+
 import { PublicLayout } from "@/components/PublicLayout";
 
 const CONTACT_EMAIL = "brodie@amalafinance.com.au";
+
+/* Keyboard-focus treatment (WCAG 2.4.7) — the design system is hover-only,
+ * so these append a visible focus-visible ring for keyboard users. */
+const FOCUS_BTN =
+  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-600 focus-visible:ring-offset-2";
+const FOCUS_LINK =
+  "rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-600 focus-visible:ring-offset-2";
 
 const PILLARS: ReadonlyArray<{ title: string; body: string }> = [
   {
@@ -27,7 +38,7 @@ const PILLARS: ReadonlyArray<{ title: string; body: string }> = [
   {
     title: "Audit-grade evidence packs",
     body:
-      "Every recovery candidate ships with a tamper-evident audit chain, statutory basis, signal trail, and a council-ready reclassification notice. Defensible at the State Administrative Tribunal.",
+      "Every recovery candidate ships with a tamper-evident audit chain, statutory basis, signal trail, and a council-ready reclassification notice. Built to stand up at the State Administrative Tribunal.",
   },
   {
     title: "Pay only on recovery",
@@ -37,10 +48,10 @@ const PILLARS: ReadonlyArray<{ title: string; body: string }> = [
 ];
 
 const TRUST_BADGES: ReadonlyArray<string> = [
-  "WA-data resident",
+  "AU-data resident",
   "Audit-logged",
-  "Privacy Act compliant",
-  "AU-region LLM",
+  "Privacy Act (APP) aligned",
+  "AU-region LLM where available",
 ];
 
 export default function LandingPage() {
@@ -59,14 +70,14 @@ export default function LandingPage() {
           </p>
           <div className="mt-10 rounded-2xl border border-ink-100 bg-white p-6 shadow-sm md:p-8">
             <p className="text-xs uppercase tracking-widest text-ink-500">
-              Across pilot councils
+              Modelled recovery opportunity
             </p>
             <p className="mt-2 text-4xl font-semibold text-accent-700 md:text-5xl">
               AUD 4.2M+
             </p>
             <p className="mt-1 text-sm text-ink-600">
-              identified recovery opportunity to date (cumulative, manually
-              updated as councils onboard).
+              identified across assessed council rate rolls — a cumulative,
+              pre-pilot estimate, manually updated as councils onboard.
             </p>
           </div>
           <div className="mt-10 flex flex-wrap gap-3">
@@ -79,14 +90,20 @@ export default function LandingPage() {
               </span>
             ))}
           </div>
-          <div className="mt-10">
+          <div className="mt-10 flex flex-wrap items-center gap-3">
             <a
               href={`mailto:${CONTACT_EMAIL}?subject=RatesAssist%20pilot%20enquiry`}
-              className="inline-flex items-center gap-2 rounded-lg bg-accent-600 px-5 py-3 text-white shadow-sm hover:bg-accent-700"
+              className={`inline-flex items-center gap-2 rounded-lg bg-accent-600 px-5 py-3 text-white shadow-sm hover:bg-accent-700 ${FOCUS_BTN}`}
               data-testid="landing-cta"
             >
-              Talk to us about a pilot →
+              Talk to us about a pilot <span aria-hidden="true">→</span>
             </a>
+            <Link
+              href="/how-it-works"
+              className={`inline-flex items-center gap-2 rounded-lg border border-ink-200 bg-white px-5 py-3 text-ink-800 hover:border-ink-300 hover:text-ink-900 ${FOCUS_BTN}`}
+            >
+              See how it works <span aria-hidden="true">→</span>
+            </Link>
           </div>
         </div>
       </section>
@@ -106,6 +123,15 @@ export default function LandingPage() {
             </article>
           ))}
         </div>
+        <div className="mt-8">
+          <Link
+            href="/how-it-works"
+            className={`inline-flex items-center gap-2 text-sm font-medium text-accent-700 hover:text-accent-800 ${FOCUS_LINK}`}
+          >
+            See the full architecture, agents, and flow{" "}
+            <span aria-hidden="true">→</span>
+          </Link>
+        </div>
       </section>
 
       <section className="border-t border-ink-100 bg-ink-50">
@@ -119,7 +145,7 @@ export default function LandingPage() {
           </p>
           <a
             href={`mailto:${CONTACT_EMAIL}?subject=RatesAssist%20pilot%20enquiry`}
-            className="mt-6 inline-flex items-center gap-2 rounded-lg bg-accent-600 px-5 py-3 text-white shadow-sm hover:bg-accent-700"
+            className={`mt-6 inline-flex items-center gap-2 rounded-lg bg-accent-600 px-5 py-3 text-white shadow-sm hover:bg-accent-700 ${FOCUS_BTN}`}
           >
             Email {CONTACT_EMAIL}
           </a>
