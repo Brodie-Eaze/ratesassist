@@ -39,10 +39,10 @@ import {
   tenantFromAssessmentNumber,
 } from "@/lib/api-helpers";
 import { COUNCILS } from "@/lib/data";
-import { getEvaluationContext } from "@/lib/clients";
+import { getEvaluationContextForTenant } from "@/lib/clients";
 import { correlationIdFromHeaders } from "@/lib/correlation";
 import { renderEvidencePdf } from "@/lib/evidencePdf";
-import { getClientIp } from "@/lib/rate-limit";
+import { getClientIp, rateLimitComposite, retryAfterSeconds } from "@/lib/rate-limit";
 import { scoped } from "@/lib/logger";
 import { buildEvidencePack } from "@ratesassist/recovery-engine";
 
@@ -67,6 +67,16 @@ export async function GET(
     return fail("unauthorized", "Authentication required.");
   }
 
+  // ---- 1b. Rate limit: PDF renders are expensive (pdfkit on main thread). ----
+  const ip = getClientIp(req);
+  const rl = rateLimitComposite({ scope: "evidence-pdf", ip, tenantId: session.tenantId, max: 5 });
+  if (!rl.ok) {
+    return NextResponse.json(
+      { ok: false, code: "rate_limited", error: "Too many requests" },
+      { status: 429, headers: { "Retry-After": retryAfterSeconds(rl.resetAt) } },
+    );
+  }
+
   // ---- 2. Path-param validation. ----
   const { file } = await ctx.params;
   if (!ASSESSMENT_PATTERN.test(file)) {
@@ -87,14 +97,35 @@ export async function GET(
     return fail("not_found", `Evidence pack for ${assessmentNumber} not found.`);
   }
 
-  // ---- 4. Build the pack. ----
-  const result = buildEvidencePack(assessmentNumber, getEvaluationContext());
+  // ---- 4. Build the pack (per-tenant context: E3 isolation). ----
+  // Scope to the ASSET's tenant, not the session's: access was already
+  // authorised by sessionMayAccessTenant above, and a platform_admin
+  // reading a TPS asset needs the TPS context — while the context itself
+  // still only ever contains ONE tenant's data (never the global
+  // cross-tenant snapshot that could leak wrong-council records into a
+  // statutory PDF).
+  const evalCtx = await getEvaluationContextForTenant(
+    assetTenant ?? session.tenantId,
+  );
+  const result = buildEvidencePack(assessmentNumber, evalCtx);
   if (result.kind !== "ok") {
     log.info({
       msg: "evidence.pdf.no_pack",
       assessmentNumber,
       reason: result.kind,
     });
+    if (result.kind === "no_owner") {
+      return NextResponse.json(
+        { ok: false, code: "owner_missing", error: "No owner record found for this property. Reconcile the owner table before generating a statutory PDF." },
+        { status: 422 },
+      );
+    }
+    if (result.kind === "no_state_template") {
+      return NextResponse.json(
+        { ok: false, code: "jurisdiction_unsupported", error: `State '${result.state}' is not yet supported for PDF generation.`, supportedStates: ["WA"] },
+        { status: 501 },
+      );
+    }
     return fail("not_found", `Evidence pack for ${assessmentNumber} not available.`);
   }
   const pack = result.pack;

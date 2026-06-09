@@ -329,8 +329,13 @@ const STREET_SUFFIX_MAP: ReadonlyMap<string, string> = new Map<string, string>([
  * Lower-cases, strips punctuation, expands common street-suffix abbreviations,
  * collapses whitespace, and trims. Imperfect (no AS-4590 parse) but enough to
  * make obvious typographical and abbreviation differences reconcile.
+ *
+ * Exported so the evidence pack's concession audit section computes its
+ * "Match" column with the SAME comparison the `id.pensioner_not_at_property`
+ * signal uses to fire — a pack whose Match column disagrees with its own
+ * signal trail is internally contradictory in front of a legal reviewer.
  */
-function normaliseAddress(address: string): string {
+export function normaliseAddress(address: string): string {
   const baseTokens = normaliseName(address).split(" ");
   const expanded = baseTokens.map((tok) => STREET_SUFFIX_MAP.get(tok) ?? tok);
   return expanded.join(" ");

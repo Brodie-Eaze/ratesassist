@@ -6,7 +6,7 @@ import { SignalAccordion } from "@/components/recovery/SignalAccordion";
 import { TitleStateSection } from "@/components/recovery/TitleStateSection";
 import { ConcessionAuditSection } from "@/components/recovery/ConcessionAuditSection";
 import { buildEvidencePack } from "@ratesassist/recovery-engine";
-import { getProperty } from "@/lib/data";
+import type { EvidencePackResult } from "@ratesassist/recovery-engine";
 import { getEvaluationContext } from "@/lib/clients";
 import { ArrowLeft, AlertTriangle, CheckCircle2, Download } from "lucide-react";
 import { formatAud } from "@/lib/utils";
@@ -36,6 +36,98 @@ function safeRateSourceUrl(url: string | undefined | null): string | null {
   }
 }
 
+/**
+ * Discriminated non-ok render — one accurate UI state per
+ * {@link EvidencePackResult} variant. The previous binary `!pack` branch
+ * collapsed `no_owner` (a data-integrity defect that blocks notice
+ * drafting) and `no_state_template` (an unsupported jurisdiction) into
+ * the same "all signals clean" reassurance as `no_signals` — factually
+ * wrong copy on both. The exhaustive switch also makes any future
+ * variant a TypeScript error here instead of a silent fall-through.
+ */
+function NonOkPackState({
+  result,
+  assessment,
+}: {
+  result: Exclude<EvidencePackResult, { kind: "ok" }>;
+  assessment: string;
+}) {
+  switch (result.kind) {
+    case "no_property":
+      return (
+        <div className="card p-8 text-center" data-testid="pack-state-no-property">
+          <div className="text-ink-700">
+            Assessment <code className="text-accent-700">{assessment}</code> not
+            found in the rating register.
+          </div>
+          <div className="text-sm text-ink-500 mt-2">
+            Check the assessment number, or browse{" "}
+            <Link href="/properties" className="text-accent-700 hover:underline">
+              all properties
+            </Link>
+            .
+          </div>
+        </div>
+      );
+    case "no_signals":
+      return (
+        <div className="card p-8 text-center" data-testid="pack-state-no-signals">
+          <div className="flex justify-center mb-3">
+            <CheckCircle2 className="w-8 h-8 text-success-500" />
+          </div>
+          <div className="text-ink-700">
+            Property{" "}
+            <span className="font-medium">{result.property.address}</span>{" "}
+            (<code className="text-accent-700">{assessment}</code>) has no
+            detection signals firing.
+          </div>
+          <div className="text-sm text-ink-500 mt-2">
+            Nothing to recover — the rating register, DMIRS, ABN/ASIC and
+            aerial signals are all clean for this assessment.
+          </div>
+        </div>
+      );
+    case "no_owner":
+      return (
+        <div
+          className="card p-8 text-center border-warn-500 bg-warn-50/40"
+          data-testid="pack-state-no-owner"
+        >
+          <div className="flex justify-center mb-3">
+            <AlertTriangle className="w-8 h-8 text-warn-600" />
+          </div>
+          <div className="font-medium text-ink-900">Data integrity alert</div>
+          <div className="text-ink-700 mt-2">
+            Detection signals are firing on{" "}
+            <span className="font-medium">{result.property.address}</span>{" "}
+            (<code className="text-accent-700">{assessment}</code>), but the
+            property has <span className="font-medium">no linked owner record</span>.
+          </div>
+          <div className="text-sm text-ink-500 mt-2">
+            An evidence pack cannot be generated without a rated owner.
+            Reconcile the owner record in the rating system, then return
+            to this page.
+          </div>
+        </div>
+      );
+    case "no_state_template":
+      return (
+        <div className="card p-8 text-center" data-testid="pack-state-no-state-template">
+          <div className="text-ink-700">
+            Evidence packs are not yet supported for properties in{" "}
+            <span className="font-medium">{result.state}</span>.
+          </div>
+          <div className="text-sm text-ink-500 mt-2">
+            Signals fired on <code className="text-accent-700">{assessment}</code>,
+            but the statutory template for this jurisdiction has not been
+            built. Currently supported: WA. Contact support to register
+            interest in your state.
+          </div>
+        </div>
+      );
+  }
+}
+
 export default async function EvidencePackPage({
   params,
 }: {
@@ -44,7 +136,6 @@ export default async function EvidencePackPage({
   const { assessment } = await params;
   const result = buildEvidencePack(assessment, getEvaluationContext());
   const pack = result.kind === "ok" ? result.pack : null;
-  const property = pack ? null : getProperty(assessment);
 
   return (
     <div className="flex h-screen">
@@ -106,39 +197,9 @@ export default async function EvidencePackPage({
 
         <div className="flex-1 overflow-y-auto bg-ink-50 p-6">
           <div className="max-w-3xl mx-auto">
-            {!pack ? (
-              <div className="card p-8 text-center">
-                {property ? (
-                  <>
-                    <div className="text-ink-700">
-                      Property{" "}
-                      <span className="font-medium">{property.address}</span>{" "}
-                      (<code className="text-accent-700">{assessment}</code>) has
-                      no detection signals firing.
-                    </div>
-                    <div className="text-sm text-ink-500 mt-2">
-                      Nothing to recover — the rating register, DMIRS, ABN/ASIC
-                      and aerial signals are all clean for this assessment.
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div className="text-ink-700">
-                      Assessment{" "}
-                      <code className="text-accent-700">{assessment}</code> not
-                      found in the rating register.
-                    </div>
-                    <div className="text-sm text-ink-500 mt-2">
-                      Check the assessment number, or browse{" "}
-                      <Link href="/properties" className="text-accent-700 hover:underline">
-                        all properties
-                      </Link>
-                      .
-                    </div>
-                  </>
-                )}
-              </div>
-            ) : (
+            {result.kind !== "ok" ? (
+              <NonOkPackState result={result} assessment={assessment} />
+            ) : !pack ? null : (
               <>
                 <div className="card p-4 mb-4 bg-accent-50/40 border-accent-300">
                   <div className="grid grid-cols-3 gap-4">
