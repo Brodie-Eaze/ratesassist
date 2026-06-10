@@ -31,6 +31,10 @@ beforeEach(async () => {
   inproc._resetInproc();
   const audit = await import("@ratesassist/adapter-demo/audit");
   audit._resetForTests();
+  // The import route now carries a 3/min composite rate limit (A6-NEW-02);
+  // this suite fires more requests than that per window.
+  const rl = await import("../lib/rate-limit");
+  rl.__resetRateLimitBucketsForTests();
 });
 
 function session(roles: Role[], tenantId = "TPS"): Session {

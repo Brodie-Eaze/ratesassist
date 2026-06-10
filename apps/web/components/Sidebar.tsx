@@ -68,8 +68,10 @@ function useOnboardingNeeded(): { code: string | null; needed: boolean } {
       try {
         const r = await fetch("/api/me");
         if (!r.ok) return;
-        const me = (await r.json()) as { tenantId?: string };
-        const code = me.tenantId ?? null;
+        // /api/me returns { ok, session: { tenantId, ... }, permissions } —
+        // the tenant id lives on session, not the envelope.
+        const me = (await r.json()) as { session?: { tenantId?: string } };
+        const code = me.session?.tenantId ?? null;
         if (!code) return;
         // Use the tools route to ask `list_properties` how many rows the
         // active council has. A 0-result response → onboarding is incomplete.

@@ -108,15 +108,23 @@ function isAutologinAllowedRole(r: Role): boolean {
  */
 export function parseDevAutologin(): StubSessionInput | null {
   // Autologin is a convenience for local dev. In production it's refused
-  // unless RA_DEMO_AUTOLOGIN=1 is explicitly set on the deploy — this is
-  // the escape hatch for council-CFO demo deployments where SSO isn't
-  // wired yet. Every UI surface still shows the autologin source via
-  // /api/me, so it's never a silent capability.
-  if (
-    process.env.NODE_ENV === "production" &&
-    process.env["RA_DEMO_AUTOLOGIN"] !== "1"
-  ) {
-    return null;
+  // unless RA_DEMO_AUTOLOGIN=1 is explicitly set on the deploy — the
+  // escape hatch for council-CFO demo deployments where SSO isn't wired
+  // yet, disclosed in MoU §7(c) and the PIA. Every UI surface still shows
+  // the autologin source via /api/me, so it's never a silent capability.
+  //
+  // Gauntlet B1: the risk register commits to disabling this hatch by end
+  // of pilot week 1 — that control is now enforced in CODE, not process.
+  // Production autologin additionally requires RA_DEMO_AUTOLOGIN_EXPIRES
+  // (ISO date/datetime); unset, malformed, or past → autologin refused.
+  // An operator can no longer enable the hatch indefinitely by flipping
+  // one env var and forgetting it.
+  if (process.env.NODE_ENV === "production") {
+    if (process.env["RA_DEMO_AUTOLOGIN"] !== "1") return null;
+    const expiresRaw = process.env["RA_DEMO_AUTOLOGIN_EXPIRES"];
+    if (!expiresRaw) return null;
+    const expiresMs = Date.parse(expiresRaw);
+    if (!Number.isFinite(expiresMs) || expiresMs <= Date.now()) return null;
   }
   const raw = process.env["RA_DEV_AUTOLOGIN_SESSION"];
   if (!raw) return null;

@@ -5,7 +5,7 @@ import { resolveRouteSession } from "@/lib/api-helpers";
 import {
   exceedsBodyCap,
   getClientIp,
-  rateLimit,
+  rateLimitComposite,
   retryAfterSeconds,
 } from "@/lib/rate-limit";
 import { scoped } from "@/lib/logger";
@@ -76,7 +76,26 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         );
       }
 
-      const rl = rateLimit(ip, RATE_LIMIT_MAX);
+      // A6-NEW-04: session resolves BEFORE the limiter so the bucket keys on
+      // (scope, tenantId, ip) — one council's burst can't starve another
+      // tenant's chat on the same instance, and a single officer rotating
+      // IPs still shares the tenant dimension. Sessionless requests are
+      // rejected here (they would have been at the later check anyway).
+      const session = await resolveRouteSession(req);
+      if (session === null) {
+        log.warn({ msg: "chat.no_session" });
+        return NextResponse.json(
+          { error: "unauthorized", code: "unauthorized", correlationId },
+          { status: 401 },
+        );
+      }
+
+      const rl = rateLimitComposite({
+        scope: "chat",
+        ip,
+        tenantId: session.tenantId,
+        max: RATE_LIMIT_MAX,
+      });
       if (!rl.ok) {
         log.warn({ msg: "chat.rate_limited" });
         return NextResponse.json(
@@ -114,18 +133,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         );
       }
 
-      // Tenant + RBAC scope for the tool-dispatch loop. The middleware has
-      // already rejected sessionless requests with 401, but we self-check for
-      // defence-in-depth and to fail CLOSED: chat must never dispatch tools
-      // without a scope (an unscoped session reads every council's data).
-      const session = await resolveRouteSession(req);
-      if (session === null) {
-        log.warn({ msg: "chat.no_session" });
-        return NextResponse.json(
-          { error: "unauthorized", code: "unauthorized", correlationId },
-          { status: 401 },
-        );
-      }
+      // Tenant + RBAC scope for the tool-dispatch loop — session was already
+      // resolved (fail-closed) before the rate limiter above. Chat must never
+      // dispatch tools without a scope (an unscoped session reads every
+      // council's data).
       const scope = { tenantId: session.tenantId, roles: session.roles };
 
       const safeHistory = parse.data.history

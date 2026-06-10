@@ -17,6 +17,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 
+import { assertSessionMayWriteCouncil } from "@/lib/api-helpers";
 import { getSessionFromRequest, hasPermission } from "@/lib/auth";
 import { invalidateEvaluationContext } from "@/lib/clients";
 import { scoped } from "@/lib/logger";
@@ -24,8 +25,7 @@ import {
   correlationIdFromHeaders,
   runWithCorrelation,
 } from "@/lib/correlation";
-import { getClientIp } from "@/lib/rate-limit";
-import { captureCrossTenantRefused } from "@/lib/sentry";
+import { getClientIp, rateLimitComposite, retryAfterSeconds } from "@/lib/rate-limit";
 import { runTool } from "@/lib/tools";
 
 export const runtime = "nodejs";
@@ -143,6 +143,23 @@ export async function POST(
         );
       }
 
+      // A6-NEW-02: bulk imports are expensive two-phase-commit mutations —
+      // tight per-(tenant, ip) limit so a wedged retry loop or scripted
+      // caller can't hammer the ingest path.
+      const rlImport = rateLimitComposite({
+        scope: "council-import",
+        ip,
+        tenantId: session.tenantId,
+        max: 3,
+      });
+      if (!rlImport.ok) {
+        log.warn({ event: "rate_limited" });
+        return NextResponse.json(
+          { ok: false, code: "rate_limited", message: "Too many requests" },
+          { status: 429, headers: { "Retry-After": retryAfterSeconds(rlImport.resetAt) } },
+        );
+      }
+
       if (!/^[A-Z]{2,5}$/.test(code)) {
         return NextResponse.json(
           { ok: false, code: "invalid_input", message: "Invalid council code in path." },
@@ -154,35 +171,15 @@ export async function POST(
       // TPS could POST `/api/councils/KAL/import` and replace KAL's
       // entire rating roll while the audit log showed TPS as the
       // actor. The path `code` MUST match the session's tenant unless
-      // the caller is `platform_admin`. Audit-log breadcrumb on
-      // refusal so cross-tenant attempts are visible to the operator.
-      if (
-        code !== session.tenantId &&
-        !session.roles.includes("platform_admin")
-      ) {
-        log.warn({
-          event: "cross_tenant_refused",
-          userId: session.userId,
-          sessionTenant: session.tenantId,
-          attemptedTenant: code,
-        });
-        // Audit-grade signal — pages the on-call via Sentry alert
-        // rule #2. No-op when SENTRY_DSN is unset.
-        captureCrossTenantRefused({
-          actorId: session.userId,
-          sessionTenant: session.tenantId,
-          attemptedTenant: code,
-          route: `/api/councils/${code}/import`,
-        });
-        return NextResponse.json(
-          {
-            ok: false,
-            code: "forbidden",
-            message: `Cannot import into council ${code} from a session bound to ${session.tenantId}.`,
-          },
-          { status: 403 },
-        );
-      }
+      // the caller is `platform_admin`. Shared guard emits the
+      // cross_tenant_refused audit signal + Sentry breadcrumb on refusal.
+      const crossTenant = assertSessionMayWriteCouncil(
+        session,
+        code,
+        log,
+        `/api/councils/${code}/import`,
+      );
+      if (crossTenant) return crossTenant;
 
       const parsed = await readImportInput(req);
       if (!parsed.ok) {

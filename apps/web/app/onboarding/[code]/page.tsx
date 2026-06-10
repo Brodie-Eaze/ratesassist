@@ -108,7 +108,9 @@ export default function OnboardingPage({
       try {
         const r = await fetch("/api/tenants");
         if (!r.ok) {
+          if (cancelled) return;
           setCouncilError(`HTTP ${r.status} loading tenants`);
+          setLoading(false);
           return;
         }
         const body = (await r.json()) as { tenants: Council[] };
