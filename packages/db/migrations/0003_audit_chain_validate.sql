@@ -1,4 +1,6 @@
 -- Phase 9 P0 — audit-log hash chain, step 2/2.
+-- STATUS: SHIPPED — applied on every boot via bootstrap.ts MIGRATIONS_IN_ORDER.
+-- ("Phase 9 P0" is the authoring work-item tag, not a deployment gate.)
 --
 -- Runs AFTER:
 --   1. 0002_audit_chain_columns.sql has applied.

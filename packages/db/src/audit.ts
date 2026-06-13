@@ -183,23 +183,55 @@ async function lockTenantChain(tx: Db, tenantId: string): Promise<void> {
 }
 
 /**
- * Read the tenant's current chain head — the row_hash of the most recent
- * non-sentinel row. Returns null when no such row exists; the caller uses
- * `genesisHash(tenantId)` as the seed in that case.
+ * Read the tenant's current chain head — the `row_hash` of the row that
+ * terminates the chain (the tail). Returns null when no non-sentinel row
+ * exists; the caller uses `genesisHash(tenantId)` as the seed in that case.
  *
- * Uses the new `audit_log_tenant_chain_idx` index: forward order on
- * (tenant_id, occurred_at ASC, id ASC). We read in DESC order on the same
- * index — Postgres can use the index either way.
+ * Why NOT `ORDER BY occurred_at DESC, id DESC LIMIT 1` (the previous
+ * implementation):
+ *   `occurred_at` is stamped from `new Date()` in the application, so a
+ *   tight loop of appends — sequential OR concurrent — routinely collides
+ *   on the same millisecond. When N rows share the max `occurred_at`, the
+ *   `id DESC` tiebreak returns the row with the largest *random* UUID,
+ *   which is almost never the genuine chain tail. The next writer then
+ *   anchors `prev_hash` to a mid-chain row, FORKING the chain. (Reproduced
+ *   deterministically: a purely sequential writer forks ~15/15 at N=100.)
+ *   No ORDER BY over a wall-clock or random column can identify the tail
+ *   when timestamps tie.
+ *
+ * The chain itself is the only authority on order. The tail is the unique
+ * non-sentinel row whose `row_hash` is referenced by NO sibling's
+ * `prev_hash` within the same tenant — i.e. the row nobody chained onto.
+ * That definition is independent of `occurred_at`, `id`, and insert order,
+ * so it is immune to timestamp collisions.
+ *
+ * Correctness rests on two invariants this module already enforces under
+ * the per-tenant advisory lock held by the caller:
+ *   - The chain is linear (each `row_hash` is extended at most once), so
+ *     exactly one non-sentinel row is unreferenced — the tail. The query
+ *     therefore returns exactly one row (or zero before the first append).
+ *   - Sentinel rows (`prev_hash = __PRE_CHAIN__…`, stamped only by the
+ *     0002 backfill) are excluded from BOTH the candidate set (outer
+ *     `prev_hash <> sentinel`) and the "referenced by" check, so a legacy
+ *     sentinel row can never mask the real tail.
+ *
+ * `LIMIT 1` is defence-in-depth: under the linearity invariant the
+ * NOT EXISTS already yields a single row.
  */
 async function readChainHead(tx: Db, tenantId: string): Promise<string | null> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const raw = await (tx as any).execute(sql`
-    SELECT row_hash
-      FROM audit_log
-     WHERE tenant_id = ${tenantId}
-       AND prev_hash IS NOT NULL
-       AND prev_hash <> ${PRE_CHAIN_SENTINEL}
-     ORDER BY occurred_at DESC, id DESC
+    SELECT a.row_hash
+      FROM audit_log a
+     WHERE a.tenant_id = ${tenantId}
+       AND a.prev_hash IS NOT NULL
+       AND a.prev_hash <> ${PRE_CHAIN_SENTINEL}
+       AND NOT EXISTS (
+             SELECT 1
+               FROM audit_log b
+              WHERE b.tenant_id = a.tenant_id
+                AND b.prev_hash = a.row_hash
+           )
      LIMIT 1
   `);
   return extractHeadHash(raw);

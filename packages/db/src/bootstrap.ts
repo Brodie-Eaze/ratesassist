@@ -78,6 +78,20 @@ const MIGRATIONS_IN_ORDER: ReadonlyArray<string> = [
   // been opened. Idempotent on a fresh DB or one that already ran
   // 0002+0003.
   "0005_audit_chain_sentinel_lockdown.sql",
+  // 0006 — DB-enforced multi-tenant isolation. Adds RLS to the two
+  // tenant-scoped tables 0001 missed (users, sessions) and re-asserts
+  // every tenant policy with a hardened, explicitly fail-closed
+  // predicate. Idempotent (DROP POLICY IF EXISTS + ENABLE/FORCE are
+  // no-ops when already set). 0007 is the matching rollback — ship on
+  // disk only, never applied on forward boot.
+  "0006_rls_tenant_isolation.sql",
+  // 0008 — append-only TRUNCATE lockdown on audit_log. REVOKE TRUNCATE
+  // (the privilege REVOKE UPDATE, DELETE never covered) + a statement-level
+  // BEFORE TRUNCATE trigger that blocks even the table owner. Closes the
+  // single-statement chain-wipe path that bypasses RLS and row triggers.
+  // Idempotent (REVOKE no-op when absent; CREATE OR REPLACE + DROP TRIGGER
+  // IF EXISTS). No rollback file — drop trigger+function inline if needed.
+  "0008_audit_log_truncate_lockdown.sql",
 ];
 
 function stripPgliteIncompatibilities(sqlText: string): string {
@@ -180,4 +194,161 @@ export async function ensureSeeded(db: Db): Promise<boolean> {
   }
   await seed.runSeed(db);
   return true;
+}
+
+// ---------------------------------------------------------------------------
+// RLS serving-role seatbelt
+// ---------------------------------------------------------------------------
+//
+// The multi-tenant isolation guarantee (migration 0006) is enforced entirely
+// by PostgreSQL Row-Level Security. RLS has one fatal blind spot: it is
+// SILENTLY BYPASSED for any role that is a SUPERUSER or carries the BYPASSRLS
+// attribute. If the production app connects as such a role, every tenant
+// policy is INERT and one council can read another council's ratepayer data —
+// with no error, no log, nothing. The control looks present in the schema and
+// is completely defeated at runtime.
+//
+// pglite makes this worse to detect in dev/CI: it runs everything as an
+// implicit superuser, so RLS predicates are evaluated but role-level revokes
+// are not, and a local test will never surface the misconfiguration.
+//
+// {@link assertNonBypassRlsRole} closes that gap at boot: on a real Postgres
+// connection in production it refuses to serve a single request until it has
+// confirmed the connected role is neither superuser nor BYPASSRLS. The check
+// is a few-hundred-microsecond query run exactly once per process.
+
+/** Inputs to the pure serving-role decision. Driver kept narrow on purpose. */
+export interface ServingRoleInputs {
+  /** Active driver. RLS role-revokes only matter for real Postgres. */
+  readonly driver: "pg" | "pglite";
+  /** `process.env.NODE_ENV` — the check only bites in production. */
+  readonly nodeEnv: string | undefined;
+  /** True when `RA_ALLOW_BYPASSRLS_DB=1` — documented break-glass override. */
+  readonly allowBypassAck: boolean;
+  /** `current_setting('is_superuser')` resolved to a boolean. */
+  readonly isSuperuser: boolean;
+  /** `pg_roles.rolbypassrls` for the connected role. */
+  readonly bypassRls: boolean;
+}
+
+/**
+ * Pure decision: should the app REFUSE to serve with this DB role?
+ *
+ * Refuses only when ALL of: real Postgres driver, production, no operator
+ * acknowledgement, AND the role can defeat RLS (superuser or BYPASSRLS).
+ * Everything else (pglite, non-prod, acknowledged) is allowed. Pure and
+ * total so the full matrix is unit-testable without a live connection.
+ */
+export type ServingRoleVerdict =
+  | { readonly refuse: false }
+  | { readonly refuse: true; readonly cause: "superuser" | "bypassrls" };
+
+export function shouldRefuseServingRole(
+  inputs: ServingRoleInputs,
+): ServingRoleVerdict {
+  // pglite is the in-memory dev/test driver (gated separately by
+  // RA_ALLOW_EPHEMERAL_DB); its superuser-by-design model is not a production
+  // tenant-isolation risk because it never serves real council PII.
+  if (inputs.driver !== "pg") return { refuse: false };
+  // Owners legitimately connect as the table owner in dev/test/CI.
+  if (inputs.nodeEnv !== "production") return { refuse: false };
+  // Explicit, documented break-glass: operator accepts RLS may be inert.
+  if (inputs.allowBypassAck) return { refuse: false };
+  if (inputs.isSuperuser) return { refuse: true, cause: "superuser" };
+  if (inputs.bypassRls) return { refuse: true, cause: "bypassrls" };
+  return { refuse: false };
+}
+
+interface RoleProbeRow {
+  readonly is_superuser?: unknown;
+  readonly bypassrls?: unknown;
+}
+
+/** Normalise a drizzle/pg or pglite execute() result to its first row. */
+function firstRow(raw: unknown): RoleProbeRow | null {
+  if (raw === null || raw === undefined) return null;
+  const rows =
+    (raw as { rows?: ReadonlyArray<RoleProbeRow> }).rows ??
+    (Array.isArray(raw) ? (raw as ReadonlyArray<RoleProbeRow>) : undefined);
+  if (!rows || rows.length === 0) return null;
+  return rows[0] ?? null;
+}
+
+/** Postgres reports booleans as the string 't'/'f' over the simple protocol. */
+function toBool(v: unknown): boolean {
+  return v === true || v === "t" || v === "true" || v === "on";
+}
+
+/**
+ * Read the connected role's RLS-defeating privileges. Single round-trip;
+ * `current_setting('is_superuser')` is a GUC ('on'/'off') and `rolbypassrls`
+ * is the per-role attribute from `pg_roles`.
+ */
+async function readServingRolePrivileges(
+  db: Db,
+): Promise<{ isSuperuser: boolean; bypassRls: boolean }> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const raw = await (db as any).execute(sql`
+    SELECT current_setting('is_superuser') AS is_superuser,
+           (SELECT rolbypassrls FROM pg_roles WHERE rolname = current_user) AS bypassrls
+  `);
+  const row = firstRow(raw);
+  return {
+    isSuperuser: toBool(row?.is_superuser),
+    bypassRls: toBool(row?.bypassrls),
+  };
+}
+
+/**
+ * Boot seatbelt: refuse to serve when the production Postgres role can bypass
+ * RLS. No-op for pglite, for non-production, and when the operator has set
+ * `RA_ALLOW_BYPASSRLS_DB=1` (which is logged loudly on every boot). Call this
+ * once during bootstrap, AFTER {@link getDb}.
+ *
+ * Throws a fail-closed Error (not a warning) on a real misconfiguration so the
+ * process never begins serving cross-tenant-readable traffic.
+ */
+export async function assertNonBypassRlsRole(db: Db): Promise<void> {
+  const driver = getDriverKind() ?? "pglite";
+  const nodeEnv = process.env.NODE_ENV;
+  const allowBypassAck = process.env["RA_ALLOW_BYPASSRLS_DB"] === "1";
+
+  // Fast path: skip the round-trip whenever the verdict cannot be "refuse"
+  // regardless of role privileges. Mirrors shouldRefuseServingRole's gates.
+  if (driver !== "pg" || nodeEnv !== "production") return;
+  if (allowBypassAck) {
+    // Break-glass engaged — make it loud and auditable in CloudWatch.
+    // eslint-disable-next-line no-console
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        scope: "db",
+        event: "db.rls_serving_role_check_skipped",
+        msg: "RA_ALLOW_BYPASSRLS_DB=1 — serving-role RLS check SKIPPED. Row-Level Security may be INERT if this role is superuser or has BYPASSRLS.",
+      }),
+    );
+    return;
+  }
+
+  const { isSuperuser, bypassRls } = await readServingRolePrivileges(db);
+  const verdict = shouldRefuseServingRole({
+    driver,
+    nodeEnv,
+    allowBypassAck,
+    isSuperuser,
+    bypassRls,
+  });
+  if (!verdict.refuse) return;
+
+  const detail =
+    verdict.cause === "superuser"
+      ? "the production database role is a SUPERUSER. PostgreSQL bypasses Row-Level Security for superusers"
+      : "the production database role has the BYPASSRLS attribute. PostgreSQL bypasses Row-Level Security for this role";
+  throw new Error(
+    `[@ratesassist/db] REFUSING TO SERVE: ${detail}, so every tenant-isolation ` +
+      "policy (migration 0006) is INERT and one council could read another " +
+      "council's ratepayer data. Connect as a dedicated NOBYPASSRLS application " +
+      "role (NOT the RDS master / table owner), or set RA_ALLOW_BYPASSRLS_DB=1 " +
+      "to acknowledge an intentionally RLS-disabled boot.",
+  );
 }
