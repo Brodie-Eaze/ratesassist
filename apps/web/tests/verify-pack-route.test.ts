@@ -103,6 +103,25 @@ describe("POST /api/verify/pack", () => {
     expect(typeof body.data.document.generatedAt).toBe("string");
   });
 
+  it("RA-L3-01: verifies durably after the in-memory store is wiped (cross-task / restart)", async () => {
+    // Generate on 'task A' → receipt lands in the durable DB table (+ memory).
+    const { bytes, docId } = await generatePdf();
+    // Simulate verify being served by a DIFFERENT ECS task (or after a
+    // restart) that never had the receipt in memory: wipe the in-memory
+    // audit buffer. With only the old per-task store this returned
+    // not_verified for an authentic document; the durable table fixes it.
+    const inproc = await import("@ratesassist/adapter-demo/inproc");
+    inproc._resetInproc();
+    const audit = await import("@ratesassist/adapter-demo/audit");
+    audit._resetForTests();
+
+    const res = await verifyPOST(verifyReq(docId, bytes));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: { verified: boolean; result: string } };
+    expect(body.data.verified).toBe(true);
+    expect(body.data.result).toBe("verified");
+  });
+
   it("rejects a tampered PDF (verified: false, modified)", async () => {
     const { bytes, docId } = await generatePdf();
     // Flip one byte in the middle of the document.

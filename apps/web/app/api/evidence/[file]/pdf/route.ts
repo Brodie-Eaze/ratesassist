@@ -47,6 +47,7 @@ import {
   pdfIntegrityReceipt,
   type PdfIdentity,
 } from "@/lib/pdfIntegrity";
+import { persistPdfReceipt } from "@/lib/pdfReceiptStore";
 import { getClientIp, rateLimitComposite, retryAfterSeconds } from "@/lib/rate-limit";
 import { scoped } from "@/lib/logger";
 import { buildEvidencePack } from "@ratesassist/recovery-engine";
@@ -195,22 +196,26 @@ export async function GET(
 
   const receipt = pdfIntegrityReceipt(identity, pdf);
 
-  // ---- 7. Audit — best-effort, logged on failure. ----
+  // ---- 7. Persist the integrity receipt — best-effort. ----
   // Recorded under the ASSET tenant (see receiptTenant above) so the receipt
   // is collocated with the council whose document it is and is findable by
-  // the public verify endpoint. actorId still attributes the real operator.
-  await writeAuditAsync({
-    tenantId: receiptTenant,
+  // the public verify endpoint. Persists to the DURABLE shared store when a
+  // DB is wired (RA-L3-01) so verification works across ECS tasks, plus the
+  // in-memory audit-trail event. actorId still attributes the real operator.
+  await persistPdfReceipt({
+    tenantCode: receiptTenant,
     actorId: session.userId,
-    correlationId,
-    ip: getClientIp(req),
-    userAgent: req.headers.get("user-agent") ?? undefined,
-    packId: pack.packId,
+    docType: "evidence_pack",
+    action: "pdf.generated",
+    docId: pack.packId,
     assessmentNumber,
     operatorName: session.displayName,
     generatedAt,
     pdfSha256: receipt.sha256,
     pdfHmac: receipt.hmac,
+    correlationId,
+    ip: getClientIp(req),
+    userAgent: req.headers.get("user-agent") ?? undefined,
   });
 
   log.info({
@@ -235,56 +240,6 @@ export async function GET(
       "x-correlation-id": correlationId,
     },
   });
-}
-
-/**
- * Best-effort audit write. The adapter-demo audit module is dynamically
- * imported to mirror the lazy-load pattern used elsewhere in apps/web
- * (mcp-client, tools). Failure is swallowed and logged — the audit
- * surface logs to stderr on its own; we don't want the audit write to
- * fail the PDF download.
- */
-async function writeAuditAsync(args: {
-  tenantId: string;
-  actorId: string;
-  correlationId: string;
-  ip?: string;
-  userAgent?: string;
-  packId: string;
-  assessmentNumber: string;
-  operatorName: string;
-  generatedAt: string;
-  pdfSha256: string;
-  pdfHmac: string;
-}): Promise<void> {
-  try {
-    const audit = await import("@ratesassist/adapter-demo/audit");
-    audit.recordMutation({
-      tenantId: args.tenantId,
-      actorId: args.actorId,
-      actorKind: "user",
-      action: "pdf.generated",
-      target: { type: "evidence_pack", id: args.packId },
-      after: {
-        assessmentNumber: args.assessmentNumber,
-        operatorName: args.operatorName,
-        // JD-2 integrity receipt — the byte-hash + identity HMAC that
-        // /api/verify/pack re-derives to prove a copy is unmodified.
-        generatedAt: args.generatedAt,
-        pdfSha256: args.pdfSha256,
-        pdfHmac: args.pdfHmac,
-      },
-      correlationId: args.correlationId,
-      ...(args.ip !== undefined ? { ip: args.ip } : {}),
-      ...(args.userAgent !== undefined ? { userAgent: args.userAgent } : {}),
-    });
-  } catch {
-    // Audit failure is non-fatal — the audit module already writes a
-    // structured stderr line on internal failure. We swallow here so
-    // a missing module surface (e.g. when the route is exercised in
-    // an environment where the adapter isn't bundled) doesn't 500
-    // the PDF.
-  }
 }
 
 /**

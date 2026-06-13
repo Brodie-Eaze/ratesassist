@@ -478,6 +478,36 @@ export const apiKeys = pgTable("api_keys", {
 export type ApiKeyInsert = typeof apiKeys.$inferInsert;
 export type ApiKeySelect = typeof apiKeys.$inferSelect;
 
+// ===== PDF integrity receipts (JD-2 / RA-L3-01) =====
+//
+// Durable, shared lookup index for the PDF integrity receipt so
+// /api/verify/pack works across ECS tasks + restarts. Keyed by the
+// globally-unique doc_id; stores no PII (only hashes + council code). See
+// migration 0009. Deliberately NOT RLS-scoped (public verify reads by the
+// unguessable doc_id).
+export const pdfIntegrityReceipts = pgTable(
+  "pdf_integrity_receipt",
+  {
+    docId: text("doc_id").primaryKey(),
+    tenantCode: text("tenant_code").notNull(),
+    actorId: text("actor_id").notNull(),
+    docType: text("doc_type").notNull(),
+    generatedAt: text("generated_at").notNull(),
+    pdfSha256: text("pdf_sha256").notNull(),
+    pdfHmac: text("pdf_hmac").notNull(),
+    assessmentNumber: text("assessment_number"),
+    occurredAt: timestamp("occurred_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    tenantIdx: index("pdf_integrity_receipt_tenant_idx").on(t.tenantCode),
+  }),
+);
+
+export type PdfIntegrityReceiptInsert = typeof pdfIntegrityReceipts.$inferInsert;
+export type PdfIntegrityReceiptSelect = typeof pdfIntegrityReceipts.$inferSelect;
+
 // ===== Phase 3 stubs: users + sessions =====
 // TODO(Phase 3): expand these once SSO + session model are designed.
 

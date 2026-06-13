@@ -37,6 +37,7 @@ import {
   pdfIntegrityReceipt,
   type PdfIdentity,
 } from "@/lib/pdfIntegrity";
+import { persistPdfReceipt } from "@/lib/pdfReceiptStore";
 import { getClientIp, rateLimitComposite, retryAfterSeconds } from "@/lib/rate-limit";
 import { scoped } from "@/lib/logger";
 import { buildEvidencePack } from "@ratesassist/recovery-engine";
@@ -176,19 +177,22 @@ export async function GET(
 
   const receipt = pdfIntegrityReceipt(identity, pdf);
 
-  // ---- 7. Audit — best-effort (recorded under the asset tenant). ----
-  await writeNoticeAudit({
-    tenantId: receiptTenant,
+  // ---- 7. Persist the integrity receipt — durable when DB-wired (RA-L3-01)
+  //         + in-memory audit-trail event. Recorded under the asset tenant. ----
+  await persistPdfReceipt({
+    tenantCode: receiptTenant,
     actorId: session.userId,
-    correlationId,
-    ip,
-    userAgent: req.headers.get("user-agent") ?? undefined,
-    noticeRef,
+    docType: "statutory_notice",
+    action: "statutory_notice.drafted",
+    docId: noticeRef,
     assessmentNumber,
     operatorName: session.displayName,
     generatedAt: generatedAtFull,
     pdfSha256: receipt.sha256,
     pdfHmac: receipt.hmac,
+    correlationId,
+    ip,
+    userAgent: req.headers.get("user-agent") ?? undefined,
   });
 
   log.info({
@@ -211,44 +215,3 @@ export async function GET(
   });
 }
 
-/**
- * Best-effort audit write for a drafted notice. Mirrors the evidence PDF
- * route's lazy-import pattern; failure is swallowed + logged so a missing
- * audit surface never fails the download.
- */
-async function writeNoticeAudit(args: {
-  tenantId: string;
-  actorId: string;
-  correlationId: string;
-  ip?: string;
-  userAgent?: string;
-  noticeRef: string;
-  assessmentNumber: string;
-  operatorName: string;
-  generatedAt: string;
-  pdfSha256: string;
-  pdfHmac: string;
-}): Promise<void> {
-  try {
-    const audit = await import("@ratesassist/adapter-demo/audit");
-    audit.recordMutation({
-      tenantId: args.tenantId,
-      actorId: args.actorId,
-      actorKind: "user",
-      action: "statutory_notice.drafted",
-      target: { type: "statutory_notice", id: args.noticeRef },
-      after: {
-        assessmentNumber: args.assessmentNumber,
-        operatorName: args.operatorName,
-        generatedAt: args.generatedAt,
-        pdfSha256: args.pdfSha256,
-        pdfHmac: args.pdfHmac,
-      },
-      correlationId: args.correlationId,
-      ...(args.ip !== undefined ? { ip: args.ip } : {}),
-      ...(args.userAgent !== undefined ? { userAgent: args.userAgent } : {}),
-    });
-  } catch {
-    // Non-fatal — see the evidence PDF route for rationale.
-  }
-}
