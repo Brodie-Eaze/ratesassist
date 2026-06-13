@@ -1,0 +1,120 @@
+name: Deploy
+
+# Runs ONLY after the CI workflow ("CI") completes successfully on main, plus a
+# manual button. Chaining on workflow_run means a red CI never ships.
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag to deploy (defaults to the triggering commit SHA)."
+        required: false
+        type: string
+
+# No long-lived AWS keys: OIDC mints short-lived creds at run time.
+permissions:
+  id-token: write # assume the AWS deploy role via OIDC
+  contents: read
+
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-southeast-2 # AU data residency — Sydney only
+  ECR_REPOSITORY: ratesassist-prod-web
+  ECS_CLUSTER: ratesassist-prod-cluster
+  ECS_SERVICE: ratesassist-prod-web
+  ECS_TASK_FAMILY: ratesassist-prod-web
+  CONTAINER_NAME: ratesassist-prod-web
+
+jobs:
+  deploy:
+    name: Build, push, and roll out
+    runs-on: ubuntu-latest
+    # Gate: only proceed if the upstream CI run succeeded (workflow_dispatch has
+    # no triggering run, so allow it through too).
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    timeout-minutes: 30
+    environment: production # attach required reviewers here for a manual gate
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # For workflow_run, build the exact commit CI validated.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Resolve image tag
+        id: tag
+        run: |
+          if [ -n "${{ inputs.image_tag }}" ]; then
+            echo "tag=${{ inputs.image_tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=sha-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        id: build
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          IMAGE_TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          IMAGE_URI="${REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+          docker build -t "${IMAGE_URI}" -f Dockerfile .
+          docker push "${IMAGE_URI}"
+          echo "image=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
+
+      - name: Download current task definition
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition "${ECS_TASK_FAMILY}" \
+            --query 'taskDefinition' \
+            --output json > task-def.json
+
+      - name: Render new task definition with the new image
+        id: render
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-def.json
+          container-name: ${{ env.CONTAINER_NAME }}
+          image: ${{ steps.build.outputs.image }}
+
+      # Registers the rendered revision, updates the service, and WAITS for the
+      # deployment to stabilise. The service's circuit breaker auto-rolls-back a
+      # failed rollout; this step then surfaces the failure (non-zero exit).
+      - name: Deploy to ECS (force new deployment + wait for stable)
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render.outputs.task-definition }}
+          service: ${{ env.ECS_SERVICE }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
+          force-new-deployment: true
+
+      - name: Deployment summary
+        if: always()
+        run: |
+          {
+            echo "### RatesAssist deploy"
+            echo ""
+            echo "- Image: \`${{ steps.build.outputs.image }}\`"
+            echo "- Cluster/Service: \`${ECS_CLUSTER}\` / \`${ECS_SERVICE}\`"
+            echo "- Region: \`${AWS_REGION}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

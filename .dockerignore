@@ -1,0 +1,48 @@
+# Keep the build context small and prevent secrets / local state from ever
+# entering an image layer.
+
+# Dependencies + build output (re-created inside the image)
+**/node_modules
+**/.next
+**/dist
+**/build
+**/.turbo
+**/coverage
+
+# Secrets / local env — MUST NOT be copied into any layer
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+*.pem
+*.key
+
+# VCS + CI
+.git
+.github
+.husky
+.gitignore
+
+# Infra / deploy (not part of the app image)
+infra
+Dockerfile
+.dockerignore
+railway.toml
+vercel.json
+
+# Docs, internal notes, exports, scratch (not needed to build the app)
+*.md
+docs-export
+internal
+launch
+outreach
+reports
+**/.dmirs-cache
+
+# OS / editor cruft
+.DS_Store
+**/.DS_Store
+.vscode
+.idea
+*.log
