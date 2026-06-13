@@ -190,13 +190,25 @@ export async function getGrantDetailHandler(
 
   // Synthetic intersection — demo store has no real cadastre. Pick the
   // closest properties to the tenement centroid, capped at SYNTHETIC_MAX_KM.
+  //
+  // `council` is injected by the web layer to the caller's tenant for
+  // non-admins. The tenement metadata is public, but the intersecting
+  // parcels carry valuation / annual rates / recovery uplift — commercially
+  // sensitive per-council data — so a council must only see ITS OWN parcels.
+  // Filter BEFORE the closest-N selection so the caller gets their own
+  // nearest parcels rather than the global nearest intersected with their
+  // tenant. Omitted (platform_admin) → all councils.
   const centre = geometryCentroid(grant.geometry);
   const allProps = ctx.store.snapshotProperties();
+  const scopedProps =
+    input.council === undefined
+      ? allProps
+      : allProps.filter((p) => p.council === input.council);
   type Scored = { property: Property; distanceKm: number };
   const scored: Scored[] =
     centre === null
       ? []
-      : allProps
+      : scopedProps
           .map((p): Scored => ({
             property: p,
             distanceKm: haversineKm(centre, { lat: p.lat, lng: p.lng }),

@@ -31,7 +31,7 @@ import {
   tenantFromAssessmentNumber,
   weakEtag,
 } from "@/lib/api-helpers";
-import { getEvaluationContext } from "@/lib/clients";
+import { getEvaluationContextForTenant } from "@/lib/clients";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -122,7 +122,8 @@ export async function GET(
     // Signals come from the recovery engine sweep, which is in-process and
     // cheap (memoised context). For each property we return the matching
     // candidate's signal hits, or an empty array if not currently flagged.
-    const evalCtx = getEvaluationContext();
+    // E3: per-tenant SQL-scoped context.
+    const evalCtx = await getEvaluationContextForTenant(session.tenantId);
     const candidates = findMismatches(evalCtx);
     const match = candidates.find(
       (c) => c.property.assessmentNumber === assessmentNumber,

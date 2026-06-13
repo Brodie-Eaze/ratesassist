@@ -192,10 +192,18 @@ export async function POST(
 
       const inputs = schemas.inputs as Record<string, InputSchema>;
       const schema = inputs[name];
+      // RAW, pre-validation candidate — the object the caller actually sent.
+      // The cross-tenant scrub below MUST inspect this, NOT the post-Zod
+      // `validatedInput`: Zod's default `.object()` strips unknown keys, so a
+      // foreign `{tenantId:"KAL"}` would be silently dropped before the scrub
+      // ever saw it — no 403, no audit event. The scope-forcing in `runTool`
+      // would still mask the data (the read falls back to the caller's own
+      // tenant), but the *attempt* would go unrecorded, defeating the
+      // documented "explicit denial in the audit log" intent.
+      const rawCandidate: unknown = body.input ?? body ?? {};
       let validatedInput: Record<string, unknown>;
       if (schema) {
-        const candidate = body.input ?? body ?? {};
-        const parse = schema.safeParse(candidate);
+        const parse = schema.safeParse(rawCandidate);
         if (!parse.success) {
           log.warn({ msg: "tool.invalid_input" });
           return NextResponse.json(
@@ -226,7 +234,7 @@ export async function POST(
       const isPlatformAdmin = session.roles.includes("platform_admin");
       if (!isPlatformAdmin) {
         const violation = findTenantOverrideInTree(
-          validatedInput,
+          rawCandidate,
           session.tenantId,
         );
         if (violation !== null) {
@@ -257,13 +265,30 @@ export async function POST(
       }
 
       try {
-        const result = await runTool(name, validatedInput, correlationId, {
-          tenantId: session.tenantId,
-          actorId: session.userId,
-          actorKind: "user",
-          ip,
-          userAgent: req.headers.get("user-agent") ?? undefined,
-        });
+        // SECURITY (cross-tenant IDOR fix): pass the caller's tenant + roles
+        // as the SCOPE (5th arg), not just the attribution (4th arg). Without
+        // the scope, `runTool` skips `applyToolScope` entirely, so the
+        // per-tool policy table (assessmentGuard/ownerGuard/council-injection +
+        // RBAC) never runs. The `findTenantOverrideInTree` scrub above only
+        // blocks the explicit tenant keys (tenantId/council/code); it does NOT
+        // cover identifiers that ENCODE the tenant by prefix
+        // (assessmentNumber/ownerId/parentAssessmentNumber). Passing the scope
+        // routes this generic dispatcher through the exact same chokepoint the
+        // chat surface uses, closing the read-IDOR, draft-write-IDOR,
+        // commit-mutation-IDOR, and the RBAC-bypass class in one change.
+        const result = await runTool(
+          name,
+          validatedInput,
+          correlationId,
+          {
+            tenantId: session.tenantId,
+            actorId: session.userId,
+            actorKind: "user",
+            ip,
+            userAgent: req.headers.get("user-agent") ?? undefined,
+          },
+          { tenantId: session.tenantId, roles: session.roles },
+        );
         const durationMs = Date.now() - start;
         log.info({
           msg: "tool.request.ok",

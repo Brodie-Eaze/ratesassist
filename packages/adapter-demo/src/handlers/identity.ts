@@ -53,12 +53,20 @@ export async function verifyAbnHandler(
   };
 }
 
-/** `list_councils` — list every tenant the adapter knows about. */
+/** `list_councils` — list tenants the adapter knows about, scoped to `council`. */
 export async function listCouncilsHandler(
-  _input: schemas.ToolInputs["list_councils"],
+  input: schemas.ToolInputs["list_councils"],
   ctx: RequestContext,
 ): Promise<schemas.ToolResult> {
-  const councils = ctx.store.listCouncils();
+  // `council` is injected by the web layer to the caller's tenant for
+  // non-admins — the platform's full council set is the commercially
+  // sensitive customer base, so a council clerk must see only their own.
+  // Omitted (platform_admin / single-tenant) → every council.
+  const all = ctx.store.listCouncils();
+  const councils =
+    input.council === undefined
+      ? all
+      : all.filter((c) => c.code === input.council);
   const lines = councils
     .map(
       (c) =>

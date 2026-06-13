@@ -25,7 +25,7 @@ import {
   tenantFromAssessmentNumber,
   weakEtag,
 } from "@/lib/api-helpers";
-import { getEvaluationContext } from "@/lib/clients";
+import { getEvaluationContextForTenant } from "@/lib/clients";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -52,7 +52,8 @@ export async function GET(
     );
   }
 
-  const evalCtx = getEvaluationContext();
+  // E3: per-tenant SQL-scoped context.
+  const evalCtx = await getEvaluationContextForTenant(session.tenantId);
   const candidates = findMismatches(evalCtx);
   const candidate = candidates.find(
     (c) => c.property.assessmentNumber === assessmentNumber,

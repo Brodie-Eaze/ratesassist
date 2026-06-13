@@ -80,8 +80,23 @@ describe("audit log integration", () => {
     expect(e.targetId).toBe("O-WA-001");
     expect(e.correlationId).toBe("corr-audit-test");
     expect(e.ip).toBe("10.0.0.5");
-    expect((e.before as { phone?: string }).phone).toBe("08 9200 7700");
-    expect((e.after as { phone?: string }).phone).toBe("08 1234 5678");
+    // PII-clean audit projection (RA-01): the audit row records WHICH fields
+    // changed, never the phone/email/name values. The audit log is append-only
+    // and RTBF-exempt, so lodging the PII here would defeat erasure (APP 11.2).
+    const before = e.before as { redacted: boolean; changedFields: string[] };
+    const after = e.after as {
+      redacted: boolean;
+      changedFields: string[];
+      ownerId: string;
+    };
+    expect(before.redacted).toBe(true);
+    expect(before.changedFields).toContain("phone");
+    expect(after.changedFields).toContain("phone");
+    expect(after.ownerId).toBe("O-WA-001");
+    // The actual PII values must NOT appear anywhere in the audit payload.
+    const payload = JSON.stringify({ before: e.before, after: e.after });
+    expect(payload).not.toContain("08 9200 7700");
+    expect(payload).not.toContain("08 1234 5678");
   });
 
   it("add_property_note records before/after notes array", async () => {
@@ -113,9 +128,23 @@ describe("audit log integration", () => {
     expect(entries[0]!.action).toBe("add_property_note");
     expect(entries[0]!.targetType).toBe("property");
     expect(entries[0]!.targetId).toBe(sampleProp.assessmentNumber);
-    const after = entries[0]!.after as { addedNote: string; notes: string[] };
-    expect(after.addedNote).toBe("Audit-test note");
-    expect(after.notes.at(-1)).toBe("Audit-test note");
+    // PII-clean audit projection (RA-01): the audit row records the SHAPE
+    // of the change (note count + characters appended), never the note body.
+    // The audit log is append-only and RTBF-exempt, so lodging the free-text
+    // note here would defeat erasure (APP 11.2).
+    const before = entries[0]!.before as { redacted: boolean; noteCount: number };
+    const after = entries[0]!.after as {
+      redacted: boolean;
+      noteCount: number;
+      addedNoteChars: number;
+    };
+    expect(before.redacted).toBe(true);
+    expect(after.redacted).toBe(true);
+    expect(after.noteCount).toBe(before.noteCount + 1);
+    expect(after.addedNoteChars).toBe("Audit-test note".length);
+    // The note body must NOT appear anywhere in the audit payload.
+    const payload = JSON.stringify({ before: entries[0]!.before, after: entries[0]!.after });
+    expect(payload).not.toContain("Audit-test note");
   });
 
   it("generate_statutory_certificate writes a fail-closed audit row", async () => {

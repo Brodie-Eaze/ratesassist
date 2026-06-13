@@ -8,7 +8,10 @@ export function Wordmark({ size = "md" }: { size?: "sm" | "md" | "lg" }) {
         ? "text-2xl"
         : "text-lg";
   return (
-    <Link href="/" className={`font-semibold tracking-tight ${cls}`}>
+    <Link
+      href="/"
+      className={`rounded-sm font-semibold tracking-tight ${cls} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-600 focus-visible:ring-offset-2`}
+    >
       <span className="text-ink-900">Rates</span>
       <span className="text-accent-600">Assist</span>
     </Link>

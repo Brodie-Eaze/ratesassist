@@ -29,6 +29,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import type { z } from "zod";
 
 import { currentCorrelationId } from "./correlation";
+import { captureCrossTenantRefused } from "./sentry";
 
 // ===== Error codes (mirror packages/contract/src/schemas.ts) =====
 
@@ -398,6 +399,63 @@ export function sessionMayAccessTenant(
   if (assetTenant === null) return false;
   if (session.roles.includes("platform_admin")) return true;
   return assetTenant === session.tenantId;
+}
+
+/**
+ * Shared WRITE-side tenant guard for the `/api/councils/[code]/*` mutating
+ * routes (the data-import family). A request authenticated as council A must
+ * never be able to write into council B's books by hand-crafting the `[code]`
+ * path segment — that is a cross-tenant IDOR with integrity impact (it can
+ * forge another council's rate schedule, title data or eligibility records).
+ *
+ * Returns a ready-to-return 403 `NextResponse` when the session is NOT
+ * permitted to write to `code`, or `null` when the write is allowed. The
+ * null-return convention lets callers write:
+ *
+ *   const denied = assertSessionMayWriteCouncil(session, code, log, route);
+ *   if (denied) return denied;
+ *
+ * Allow rules (intentionally stricter than the READ guard):
+ *   - `code === session.tenantId`        → same council, allowed.
+ *   - session has role `platform_admin`  → cross-tenant support/ops, allowed.
+ *   - everything else                    → refused + audit-grade signal.
+ *
+ * Note: unlike `sessionMayAccessTenant` (which masks refusals as 404 to avoid
+ * being an enumeration oracle), a write refusal is an explicit 403 — the
+ * caller already proved the council code exists by reaching this route, so
+ * there is nothing to leak, and an operator hand-fixing a misrouted import
+ * deserves an honest "wrong tenant" error rather than a misleading 404.
+ *
+ * Every refusal emits a `cross_tenant_refused` structured log line AND a
+ * Sentry breadcrumb (no-op when `SENTRY_DSN` is unset) so the SOC has a
+ * durable record of attempted cross-tenant writes.
+ */
+export function assertSessionMayWriteCouncil(
+  session: { userId: string; tenantId: string; roles: ReadonlyArray<string> },
+  code: string,
+  log: { warn: (obj: unknown) => void },
+  route: string,
+): NextResponse | null {
+  if (code === session.tenantId || session.roles.includes("platform_admin")) {
+    return null;
+  }
+  log.warn({
+    event: "cross_tenant_refused",
+    route,
+    userId: session.userId,
+    sessionTenant: session.tenantId,
+    attemptedTenant: code,
+  });
+  captureCrossTenantRefused({
+    actorId: session.userId,
+    sessionTenant: session.tenantId,
+    attemptedTenant: code,
+    route,
+  });
+  return fail(
+    "forbidden",
+    `Cannot write to council ${code} from a session bound to ${session.tenantId}.`,
+  );
 }
 
 /**

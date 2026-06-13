@@ -13,17 +13,22 @@
 
 import { NextResponse } from "next/server";
 import { getMcpClient, listMcpTools } from "@/lib/mcp-client";
+import { getWebDb, isDbWired, pingDb } from "@/lib/db";
 import { scoped } from "@/lib/logger";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const MCP_BUDGET_MS = 2_000;
+// Cold probe may trigger the memoised migrate+seed bootstrap (~700ms observed);
+// give the DB check headroom above that. Warm probes resolve in <5ms.
+const DB_BUDGET_MS = 3_000;
 
 type Checks = {
   mcp: boolean;
   mcp_tools: boolean;
   anthropic_key_present: boolean;
+  db: boolean;
 };
 
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
@@ -54,6 +59,7 @@ export async function GET(): Promise<NextResponse> {
     mcp: false,
     mcp_tools: false,
     anthropic_key_present: false,
+    db: false,
   };
 
   // (a) MCP child can spawn / is connected.
@@ -77,7 +83,26 @@ export async function GET(): Promise<NextResponse> {
   // (c) Anthropic key present + prefix-shaped (no network call).
   checks.anthropic_key_present = looksLikeAnthropicKey(process.env.ANTHROPIC_API_KEY);
 
-  const ok = checks.mcp && checks.mcp_tools && checks.anthropic_key_present;
+  // (d) DB reachable — only gates readiness when the DB is in the serving
+  // path (RA_USE_DB). A cold probe also exercises the migrate+seed bootstrap,
+  // so a DB that cannot migrate (or the production-pglite durability guard)
+  // correctly fails readiness instead of the app serving on a broken store.
+  if (isDbWired()) {
+    try {
+      const db = await withTimeout(getWebDb(), DB_BUDGET_MS, "db.bootstrap");
+      await withTimeout(pingDb(db), DB_BUDGET_MS, "db.ping");
+      checks.db = true;
+    } catch (err) {
+      log.warn({ err: (err as Error).message }, "ready.db.failed");
+    }
+  } else {
+    // DB intentionally out of the serving path (mock-adapter mode) — not a
+    // readiness gate, report healthy so the probe reflects actual topology.
+    checks.db = true;
+  }
+
+  const ok =
+    checks.mcp && checks.mcp_tools && checks.anthropic_key_present && checks.db;
   return NextResponse.json(
     { ok, checks, ts: new Date().toISOString() },
     { status: ok ? 200 : 503 },

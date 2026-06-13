@@ -39,8 +39,14 @@ export default async function Home() {
 
   return (
     <div className="flex h-screen">
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:top-2 focus:left-2 focus:rounded-md focus:bg-accent-600 focus:px-3 focus:py-2 focus:text-sm focus:text-white"
+      >
+        Skip to main content
+      </a>
       <Sidebar />
-      <main className="flex-1 flex flex-col">
+      <main id="main-content" className="flex-1 flex flex-col">
         <Chat initialPrompts={PROMPTS} storageKey="ra-officer-chat" />
       </main>
     </div>

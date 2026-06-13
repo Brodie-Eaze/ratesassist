@@ -42,7 +42,11 @@ export function LoadingState() {
   return (
     <div className="flex h-screen">
       <Sidebar />
-      <main className="flex-1 flex items-center justify-center text-ink-500">
+      <main
+        id="main-content"
+        role="status"
+        className="flex-1 flex items-center justify-center text-ink-500"
+      >
         Loading…
       </main>
     </div>
@@ -53,7 +57,11 @@ export function ErrorState({ message }: { message: string }) {
   return (
     <div className="flex h-screen">
       <Sidebar />
-      <main className="flex-1 flex items-center justify-center">
+      <main
+        id="main-content"
+        role="alert"
+        className="flex-1 flex items-center justify-center"
+      >
         <div className="card p-6 max-w-md text-center">
           <div className="text-critical-700 font-medium mb-1">
             Failed to load

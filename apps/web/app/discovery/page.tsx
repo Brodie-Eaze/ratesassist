@@ -135,9 +135,15 @@ export default function DiscoveryPage() {
           <h1 className="text-xl font-semibold text-ink-900 flex items-center gap-2">
             <Cpu className="w-5 h-5 text-accent-500" />
             Autonomous Discovery Engine
+            <span className="ml-1 rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide text-amber-700">
+              Illustrative
+            </span>
           </h1>
           <div className="text-sm text-ink-500">
-            Continuous detection of mis-rated properties · Multi-source ingestion · Spatial reconciliation · ML-calibrated scoring · AI triage
+            Continuous detection of mis-rated properties · Multi-source ingestion · Spatial reconciliation · Weighted-signal scoring · AI triage
+          </div>
+          <div className="mt-1 text-xs text-ink-400">
+            Projected autonomous operation at scale. Throughput, model-version and outcome figures on this page are synthetic and for illustration — not live production metrics.
           </div>
         </div>
 

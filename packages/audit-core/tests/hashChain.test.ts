@@ -30,6 +30,7 @@ import {
   chainHash,
   computeRowHash,
   genesisHash,
+  orderByChainLinkage,
   verifyChain,
   type AuditRowWithHashes,
   type AuditRowWithoutHash,
@@ -232,5 +233,171 @@ describe("verifyChain", () => {
       beta[2]!,
     ];
     expect(verifyChain(mixed).ok).toBe(true);
+  });
+});
+
+describe("orderByChainLinkage", () => {
+  /**
+   * Build a genuine linked chain where EVERY row shares one occurred_at
+   * millisecond AND the ids DESCEND as the chain advances. A
+   * `(occurred_at ASC, id ASC)` sort — exactly what the DB fetch does —
+   * therefore reverses chain order: the maximal scramble. This reproduces
+   * the production false-break the function exists to defeat.
+   */
+  function buildSameMsChain(
+    tenantId: string,
+    count: number,
+  ): AuditRowWithHashes[] {
+    const out: AuditRowWithHashes[] = [];
+    let prevHash = genesisHash(tenantId);
+    for (let i = 0; i < count; i++) {
+      const body: AuditRowWithoutHash = fixtureRow({
+        tenantId,
+        // ids DESCEND as the chain advances → ascending id-sort reverses it.
+        id: `id-${String(count - i).padStart(3, "0")}`,
+        action: `action-${i}`,
+        targetId: `target-${i}`,
+        occurredAt: "2026-05-26T10:00:00.000Z", // identical millisecond
+      });
+      const rowHash = computeRowHash(prevHash, body);
+      out.push({ ...body, prevHash, rowHash });
+      prevHash = rowHash;
+    }
+    return out;
+  }
+
+  /** Mirror the route's `ORDER BY occurred_at ASC, id ASC` fetch order. */
+  function sortByOccurredThenId(
+    rows: AuditRowWithHashes[],
+  ): AuditRowWithHashes[] {
+    return rows
+      .slice()
+      .sort((a, b) =>
+        a.occurredAt < b.occurredAt
+          ? -1
+          : a.occurredAt > b.occurredAt
+            ? 1
+            : a.id < b.id
+              ? -1
+              : a.id > b.id
+                ? 1
+                : 0,
+      );
+  }
+
+  it("recovers chain order from a wall-clock sort that scrambles same-ms rows", () => {
+    const tenantId = "alpha";
+    const chain = buildSameMsChain(tenantId, 6);
+    const asFetched = sortByOccurredThenId(chain);
+
+    // Precondition: the naive fetch order is NOT chain order, and verifyChain
+    // reports a FALSE break on it — this is the production bug.
+    expect(asFetched.map((r) => r.id)).not.toEqual(chain.map((r) => r.id));
+    expect(verifyChain(asFetched).ok).toBe(false);
+
+    // The fix: reorder by linkage, then verify.
+    const ordered = orderByChainLinkage(asFetched, genesisHash(tenantId));
+    expect(ordered.map((r) => r.rowHash)).toEqual(chain.map((r) => r.rowHash));
+    expect(verifyChain(ordered).ok).toBe(true);
+  });
+
+  it("is permutation-independent — any input order yields the same chain order", () => {
+    const tenantId = "alpha";
+    const chain = buildSameMsChain(tenantId, 5);
+    const a = orderByChainLinkage(chain, genesisHash(tenantId));
+    const b = orderByChainLinkage(chain.slice().reverse(), genesisHash(tenantId));
+    expect(a.map((r) => r.rowHash)).toEqual(b.map((r) => r.rowHash));
+    expect(verifyChain(a).ok).toBe(true);
+  });
+
+  it("linearises an eviction window with no genesis row (head discovered structurally)", () => {
+    const tenantId = "alpha";
+    const full = buildSameMsChain(tenantId, 6);
+    // Eviction snipped the first two rows — the genesis anchor is gone.
+    const window = full.slice(2);
+    const scrambled = sortByOccurredThenId(window);
+
+    // No genesis hint: head must be found via the unanchored-row rule.
+    const ordered = orderByChainLinkage(scrambled);
+    expect(ordered.map((r) => r.rowHash)).toEqual(window.map((r) => r.rowHash));
+
+    // A genesis hint that ISN'T in the set is harmless — same result.
+    const orderedWithHint = orderByChainLinkage(
+      scrambled,
+      genesisHash(tenantId),
+    );
+    expect(orderedWithHint.map((r) => r.rowHash)).toEqual(
+      window.map((r) => r.rowHash),
+    );
+  });
+
+  it("emits sentinel rows FIRST, then the linked chain", () => {
+    const tenantId = "alpha";
+    const chain = buildSameMsChain(tenantId, 3);
+    const legacy: AuditRowWithHashes = {
+      ...fixtureRow({
+        tenantId,
+        id: "id-legacy",
+        occurredAt: "2026-01-01T00:00:00.000Z",
+      }),
+      prevHash: PRE_CHAIN_SENTINEL,
+      rowHash: `${PRE_CHAIN_SENTINEL}-legacy-id`,
+    };
+    const ordered = orderByChainLinkage(
+      [...chain, legacy],
+      genesisHash(tenantId),
+    );
+    expect(ordered[0]!.prevHash).toBe(PRE_CHAIN_SENTINEL);
+    expect(ordered.slice(1).map((r) => r.rowHash)).toEqual(
+      chain.map((r) => r.rowHash),
+    );
+    // Whole thing still verifies (sentinel skipped, chain intact).
+    expect(verifyChain(ordered).ok).toBe(true);
+  });
+
+  it("does NOT mask a deleted middle row — the break still surfaces", () => {
+    const tenantId = "alpha";
+    const chain = buildSameMsChain(tenantId, 6);
+    // Delete row index 3 — the chain can no longer be fully linearised.
+    const withGap = [...chain.slice(0, 3), ...chain.slice(4)];
+    const ordered = orderByChainLinkage(
+      sortByOccurredThenId(withGap),
+      genesisHash(tenantId),
+    );
+
+    // No row is dropped — all 5 survive in the output…
+    expect(ordered).toHaveLength(5);
+    expect(new Set(ordered.map((r) => r.rowHash))).toEqual(
+      new Set(withGap.map((r) => r.rowHash)),
+    );
+    // …and verifyChain still reports a break (the gap is not hidden).
+    expect(verifyChain(ordered).ok).toBe(false);
+  });
+
+  it("does NOT mask a body tamper — recomputed-hash mismatch still breaks", () => {
+    const tenantId = "alpha";
+    const chain = buildSameMsChain(tenantId, 5);
+    // Tamper the stored body of row 2 but leave its prev/row hashes intact,
+    // so linkage still threads it but the recompute must fail.
+    const tampered = chain.map((r, i) =>
+      i === 2 ? { ...r, after: { tampered: true } } : r,
+    );
+    const ordered = orderByChainLinkage(tampered, genesisHash(tenantId));
+
+    // Linkage order is preserved (the stored hashes are unchanged)…
+    expect(ordered.map((r) => r.rowHash)).toEqual(chain.map((r) => r.rowHash));
+    // …but verifyChain recomputes the body and catches the tamper.
+    const v = verifyChain(ordered);
+    expect(v.ok).toBe(false);
+    if (!v.ok) expect(v.firstBreakIndex).toBe(2);
+  });
+
+  it("preserves an already-correct chain (idempotent)", () => {
+    const tenantId = "alpha";
+    const chain = buildSameMsChain(tenantId, 4);
+    const once = orderByChainLinkage(chain, genesisHash(tenantId));
+    const twice = orderByChainLinkage(once, genesisHash(tenantId));
+    expect(once.map((r) => r.rowHash)).toEqual(chain.map((r) => r.rowHash));
+    expect(twice.map((r) => r.rowHash)).toEqual(once.map((r) => r.rowHash));
   });
 });
