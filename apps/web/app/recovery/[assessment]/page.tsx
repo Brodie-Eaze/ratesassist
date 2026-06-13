@@ -15,7 +15,7 @@ import {
   sessionMayAccessTenant,
   tenantFromAssessmentNumber,
 } from "@/lib/api-helpers";
-import { ArrowLeft, AlertTriangle, CheckCircle2, Download } from "lucide-react";
+import { ArrowLeft, AlertTriangle, CheckCircle2, Download, FileSignature } from "lucide-react";
 import { formatAud } from "@/lib/utils";
 
 /**
@@ -222,20 +222,29 @@ export default async function EvidencePackPage({
                 <Download className="w-4 h-4" />
                 View pack
               </a>
-              {/* Statutory-grade PDF — landed for the council pilot's
-                  acceptance criterion #6 (generate at least one statutory
-                  rate certificate through the platform during the 60-day
-                  pilot). Hits /api/evidence/<assessment>/pdf which
-                  enforces tenant scoping + writes a pdf.generated audit
-                  row. The `download` attribute triggers a browser save. */}
+              {/* Statutory-grade evidence PDF — tenant-scoped, audited. */}
               <a
                 href={`/api/evidence/${assessment}/pdf`}
-                className="btn-primary"
+                className="btn-ghost"
                 download
                 data-testid="download-pdf"
               >
                 <Download className="w-4 h-4" />
-                Download PDF
+                Evidence PDF
+              </a>
+              {/* JD-1: one-click DRAFT rate notice. The highest-value action
+                  on this page — collapses a 15-30 min officer task to seconds.
+                  Hits /api/evidence/<assessment>/notice (same tenant scope +
+                  audit as the PDF); the document is stamped DRAFT and is for
+                  officer review before service. Primary CTA. */}
+              <a
+                href={`/api/evidence/${assessment}/notice`}
+                className="btn-primary"
+                download
+                data-testid="draft-notice"
+              >
+                <FileSignature className="w-4 h-4" />
+                Draft notice
               </a>
             </div>
           )}
