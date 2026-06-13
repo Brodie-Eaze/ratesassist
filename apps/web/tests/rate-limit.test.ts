@@ -114,11 +114,25 @@ describe("helpers", () => {
   it("getClientIp trusts X-Forwarded-For only behind a trusted proxy", () => {
     // Untrusted: XFF ignored, falls back to req.ip.
     delete process.env.RA_TRUSTED_PROXY;
+    delete process.env.RA_TRUSTED_PROXY_HOPS;
     expect(getClientIp(fakeReq({ "x-forwarded-for": "9.9.9.9" }, "2.2.2.2"))).toBe("2.2.2.2");
 
-    // Trusted: first XFF hop wins.
+    // RA-L3-02: trusted, single hop → take the RIGHTMOST entry (the IP the
+    // proxy itself observed + appended), NOT the leftmost client-supplied one.
+    // Here 9.9.9.9 is the attacker-forged value; 10.0.0.1 is what the proxy saw.
     process.env.RA_TRUSTED_PROXY = "1";
-    expect(getClientIp(fakeReq({ "x-forwarded-for": "9.9.9.9, 10.0.0.1" }, "2.2.2.2"))).toBe("9.9.9.9");
+    expect(getClientIp(fakeReq({ "x-forwarded-for": "9.9.9.9, 10.0.0.1" }, "2.2.2.2"))).toBe("10.0.0.1");
+  });
+
+  it("getClientIp honours RA_TRUSTED_PROXY_HOPS (Nth-from-right)", () => {
+    process.env.RA_TRUSTED_PROXY = "1";
+    // Two trusted hops (e.g. CDN → ALB): real client is 2nd from the right.
+    // chain: client(8.8.8.8), cdn-observed appended, alb-observed appended.
+    process.env.RA_TRUSTED_PROXY_HOPS = "2";
+    expect(
+      getClientIp(fakeReq({ "x-forwarded-for": "1.1.1.1, 8.8.8.8, 10.0.0.9" }, "2.2.2.2")),
+    ).toBe("8.8.8.8");
+    delete process.env.RA_TRUSTED_PROXY_HOPS;
   });
 
   it("getClientIp returns 'unknown' when nothing is available", () => {

@@ -31,39 +31,47 @@ import {
   verifyPdfIntegrity,
   type PdfIdentity,
 } from "@/lib/pdfIntegrity";
-import { getClientIp, rateLimit, retryAfterSeconds } from "@/lib/rate-limit";
+import { loadPdfReceipt, type LoadedReceipt } from "@/lib/pdfReceiptStore";
+import {
+  getClientIp,
+  globalRateLimit,
+  rateLimit,
+  retryAfterSeconds,
+} from "@/lib/rate-limit";
 import { scoped } from "@/lib/logger";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/** Tight public limit — verification is cheap but must not be a free oracle. */
+/** Tight per-IP public limit — verification is cheap but must not be a free oracle. */
 const VERIFY_RATE_LIMIT = 10;
+/** Process-wide ceiling on total verify work/min (RA-L3-03 DoS backstop). */
+const VERIFY_GLOBAL_LIMIT = 120;
 /** Max PDF the endpoint will hash (our PDFs are tens of KB; 8 MB is generous). */
 const MAX_PDF_BYTES = 8 * 1024 * 1024;
 
 /** EP-<assessment>-<yyyymmdd> or RN-<assessment>-<yyyymmdd>. */
 const DOC_ID_PATTERN = /^(EP|RN)-([A-Z]{2,5})-[A-Z0-9-]{1,40}-\d{8}$/;
 
-type StoredReceipt = {
-  readonly tenantId: string;
-  readonly actorId: string;
-  readonly targetType: string;
-  readonly occurredAt: string;
-  readonly after: {
-    readonly generatedAt?: string;
-    readonly pdfSha256?: string;
-    readonly pdfHmac?: string;
-    readonly assessmentNumber?: string;
-  };
-};
 
 export async function POST(req: NextRequest): Promise<Response> {
   const correlationId = correlationIdFromHeaders(req.headers);
   const log = scoped("api/verify/pack", { correlationId });
 
-  // ---- 1. Rate limit BEFORE any work (public endpoint). ----
+  // ---- 1. Rate limit BEFORE any work (public, unauthenticated endpoint). ----
+  // Two limiters: per-IP fairness AND a process-wide ceiling. RA-L3-03: the
+  // per-IP limiter alone is insufficient on an unauthenticated endpoint that
+  // does an 8 MB SHA-256 + an audit scan per call — a distributed caller (or
+  // anyone who can still rotate IPs) could otherwise saturate the task. The
+  // global limiter caps total verify work per process regardless of source.
   const ip = getClientIp(req);
+  const gl = globalRateLimit(VERIFY_GLOBAL_LIMIT, "verify-pack");
+  if (!gl.ok) {
+    return NextResponse.json(
+      { ok: false, code: "rate_limited", error: "Verification is busy, try again shortly." },
+      { status: 429, headers: { "Retry-After": retryAfterSeconds(gl.resetAt) } },
+    );
+  }
   const rl = rateLimit(`verify-pack|${ip}`, VERIFY_RATE_LIMIT);
   if (!rl.ok) {
     return NextResponse.json(
@@ -123,9 +131,11 @@ export async function POST(req: NextRequest): Promise<Response> {
   }
 
   // ---- 4. Look up the stored receipt by docId within the derived tenant. ----
-  let receipt: StoredReceipt | null;
+  // RA-L3-01: reads the DURABLE shared store when a DB is wired (correct across
+  // ECS tasks + restarts), falling back to the in-memory buffer for no-DB runs.
+  let receipt: LoadedReceipt | null;
   try {
-    receipt = await loadStoredReceipt(tenant, docId);
+    receipt = await loadPdfReceipt(tenant, docId);
   } catch (e) {
     log.error({ msg: "verify.lookup_failed", error: e instanceof Error ? e.message : String(e) });
     return NextResponse.json(
@@ -240,36 +250,3 @@ async function readBodyCapped(
   return Buffer.concat(chunks);
 }
 
-/**
- * Load the generation receipt for `docId` within `tenant`.
- *
- * The generate routes (pdf + notice) record their integrity receipt via the
- * adapter-demo audit store's recordMutation — so verification reads from that
- * exact store, guaranteeing it sees what generation wrote. Returns null when
- * no matching row exists.
- *
- * Durability caveat: the adapter-demo store is in-process (ring-buffered,
- * per-task). For the pilot (single task) this is sufficient and matches the
- * existing pdf.generated rows' durability; a multi-task production deployment
- * would persist these receipts to a shared store — tracked as a follow-up.
- */
-async function loadStoredReceipt(
-  tenant: string,
-  docId: string,
-): Promise<StoredReceipt | null> {
-  const audit = await import("@ratesassist/adapter-demo/audit");
-  const rows = audit.readRecent(tenant, 5000);
-  const row = rows.find(
-    (r) =>
-      r.targetId === docId &&
-      (r.action === "pdf.generated" || r.action === "statutory_notice.drafted"),
-  );
-  if (row === undefined) return null;
-  return {
-    tenantId: row.tenantId,
-    actorId: row.actorId,
-    targetType: row.targetType,
-    occurredAt: row.occurredAt,
-    after: (row.after ?? {}) as StoredReceipt["after"],
-  };
-}

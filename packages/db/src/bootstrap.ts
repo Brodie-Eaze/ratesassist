@@ -92,6 +92,12 @@ const MIGRATIONS_IN_ORDER: ReadonlyArray<string> = [
   // Idempotent (REVOKE no-op when absent; CREATE OR REPLACE + DROP TRIGGER
   // IF EXISTS). No rollback file — drop trigger+function inline if needed.
   "0008_audit_log_truncate_lockdown.sql",
+  // 0009 — durable JD-2 PDF integrity-receipt lookup table (RA-L3-01/04).
+  // Keyed by globally-unique doc_id so /api/verify/pack works across ECS
+  // tasks + restarts instead of a per-task in-memory buffer. Simple lookup
+  // index (no RLS, no hash chain); the audit TRAIL still lives in audit_log.
+  // Idempotent (CREATE TABLE/INDEX IF NOT EXISTS).
+  "0009_pdf_integrity_receipt.sql",
 ];
 
 function stripPgliteIncompatibilities(sqlText: string): string {
