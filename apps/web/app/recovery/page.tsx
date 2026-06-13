@@ -169,6 +169,12 @@ function recoveryTypeCount(
   }
 }
 
+type OvertaxedStats = {
+  count: number;
+  annualOvercharge: number;
+  refundExposure3y: number;
+};
+
 type DataResponse = {
   mismatches: MismatchCandidate[];
   stats: {
@@ -182,6 +188,8 @@ type DataResponse = {
     highUplift: number;
     signalCounts: Record<string, number>;
   };
+  overtaxed: MismatchCandidate[];
+  overtaxedStats: OvertaxedStats;
 };
 
 const SEVERITY_BADGE = {
@@ -212,8 +220,19 @@ export default function RecoveryPage() {
 
 type CandidatesEnvelope = {
   ok: boolean;
-  data: { candidates: MismatchCandidate[]; stats: DataResponse["stats"] };
+  data: {
+    candidates: MismatchCandidate[];
+    stats: DataResponse["stats"];
+    overtaxedCandidates?: MismatchCandidate[];
+    overtaxedStats?: OvertaxedStats;
+  };
   pagination?: { total: number; limit: number; offset: number };
+};
+
+const EMPTY_OVERTAXED_STATS: OvertaxedStats = {
+  count: 0,
+  annualOvercharge: 0,
+  refundExposure3y: 0,
 };
 
 type Fetched =
@@ -233,6 +252,9 @@ function RecoveryPageInner() {
           data: {
             mismatches: envState.data.data.candidates,
             stats: envState.data.data.stats,
+            overtaxed: envState.data.data.overtaxedCandidates ?? [],
+            overtaxedStats:
+              envState.data.data.overtaxedStats ?? EMPTY_OVERTAXED_STATS,
           },
           error: null,
         }
@@ -848,6 +870,17 @@ function RecoveryPageInner() {
               </div>
             )}
           </div>
+
+          {/* Over-rated properties — "review & refund" governance surface.
+              Distinct from the amber/red recovery list: muted accent-blue,
+              framed as a council LIABILITY (money the council may owe back),
+              not an opportunity. Only renders when the engine found any. */}
+          {data.overtaxedStats.count > 0 && (
+            <OvertaxedSection
+              overtaxed={data.overtaxed}
+              stats={data.overtaxedStats}
+            />
+          )}
         </div>
       </main>
     </div>
@@ -878,6 +911,93 @@ function Stat({
       <div className="text-2xl font-semibold text-ink-900 mt-1">{value}</div>
       <div className="text-xs text-ink-500 mt-1">{sub}</div>
     </div>
+  );
+}
+
+/**
+ * Over-rated ("review & refund") section. The recovery list is money the
+ * council can RECOVER (amber/red urgency); this is the inverse — properties
+ * the engine believes are being OVER-rated, i.e. money the council may OWE.
+ * Treated in muted accent-blue (a governance/integrity tone, not an alarm),
+ * framed honestly as exposure to be reviewed, never as guaranteed liability.
+ */
+function OvertaxedSection({
+  overtaxed,
+  stats,
+}: {
+  overtaxed: MismatchCandidate[];
+  stats: OvertaxedStats;
+}) {
+  return (
+    <section
+      className="card p-5 mt-6 bg-accent-50/40 border-accent-300"
+      aria-label="Over-rated properties for refund review"
+      data-testid="overtaxed-section"
+    >
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div className="flex items-center gap-2">
+          <Scale className="w-5 h-5 text-accent-600" />
+          <div>
+            <h2 className="text-base font-semibold text-ink-900">
+              Review &amp; refund — possibly over-rated
+            </h2>
+            <p className="text-xs text-ink-500 mt-0.5">
+              The engine estimates the correct category is{" "}
+              <span className="font-medium">cheaper</span> than the current
+              rate for {stats.count}{" "}
+              {stats.count === 1 ? "property" : "properties"}. Review before any
+              refund — figures are advisory, not a determination.
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-6 shrink-0">
+          <div className="text-right">
+            <div className="label">Annual over-charge</div>
+            <div className="text-xl font-semibold text-ink-900 tabular-nums">
+              {formatAud(stats.annualOvercharge)}
+            </div>
+          </div>
+          <div className="text-right">
+            <div className="label">Refund exposure (3y)</div>
+            <div className="text-xl font-semibold text-ink-900 tabular-nums">
+              {formatAud(stats.refundExposure3y)}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-4 border-t border-accent-200 pt-3 space-y-2">
+        {overtaxed.map((c) => (
+          <Link
+            key={c.assessmentNumber}
+            href={`/recovery/${c.assessmentNumber}`}
+            data-testid="overtaxed-row"
+            className="flex items-center justify-between gap-3 rounded-md px-3 py-2 hover:bg-accent-50 transition-colors"
+          >
+            <span className="flex items-center gap-2 min-w-0">
+              <code className="text-xs text-accent-700 font-mono font-medium shrink-0">
+                {c.assessmentNumber}
+              </code>
+              <span className="text-sm text-ink-700 truncate">
+                {c.property.address}, {c.property.suburb}
+              </span>
+            </span>
+            <span className="flex items-center gap-2 shrink-0">
+              <span className="text-sm font-medium text-ink-900 tabular-nums">
+                −{formatAud(Math.abs(c.estUplift))}/yr
+              </span>
+              <ArrowUpRight className="w-3 h-3 text-ink-400" />
+            </span>
+          </Link>
+        ))}
+        {stats.count > overtaxed.length && (
+          <div className="text-xs text-ink-500 px-3 pt-1">
+            Showing {overtaxed.length} of {stats.count}. The exposure figures
+            above cover all {stats.count}.
+          </div>
+        )}
+      </div>
+    </section>
   );
 }
 

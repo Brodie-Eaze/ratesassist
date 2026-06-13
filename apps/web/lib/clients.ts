@@ -2079,3 +2079,37 @@ function webStatsFromCandidates(
     signalCounts: s.signalCounts,
   };
 }
+
+/**
+ * Roll-up for the OVER-rated ("review & refund") surface. Over-rated
+ * properties carry estUplift < 0 (the correct category is cheaper than the
+ * current one) and estArrears3y < 0 (the magnitude of historical
+ * over-charge). We report these as POSITIVE refund/exposure figures — money
+ * the council may OWE the ratepayer, the inverse of the recovery headline.
+ */
+export type OvertaxedStats = {
+  /** Number of over-rated properties. */
+  readonly count: number;
+  /** Sum of the annual over-charge (positive AUD). */
+  readonly annualOvercharge: number;
+  /** Conservative 3-year refund exposure (positive AUD). */
+  readonly refundExposure3y: number;
+};
+
+export function overtaxedStatsFor(
+  overtaxed: readonly MismatchCandidate[],
+): OvertaxedStats {
+  let annualOvercharge = 0;
+  let refundExposure3y = 0;
+  for (const c of overtaxed) {
+    annualOvercharge += Math.abs(c.estUplift);
+    refundExposure3y += Math.abs(
+      c.backdatedAmountConservative ?? c.estArrears3y,
+    );
+  }
+  return {
+    count: overtaxed.length,
+    annualOvercharge: Math.round(annualOvercharge),
+    refundExposure3y: Math.round(refundExposure3y),
+  };
+}

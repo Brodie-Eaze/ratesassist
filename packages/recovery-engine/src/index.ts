@@ -24,7 +24,7 @@ export type {
 } from "./upliftCalculator.js";
 export type {
   FindMismatchesOptions,
-  FindMismatchesResult,
+  MismatchResult,
 } from "./findMismatches.js";
 export type {
   EvidencePack,
@@ -54,7 +54,7 @@ export {
   BACKDATING_STATUTORY_YEARS,
 } from "./upliftCalculator.js";
 
-export { findMismatches } from "./findMismatches.js";
+export { findMismatches, findMismatchesWithOvertax } from "./findMismatches.js";
 export { buildEvidencePack, sortSignalsByPriority } from "./evidencePack.js";
 export { recoveryStats } from "./stats.js";
 

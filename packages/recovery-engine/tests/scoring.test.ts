@@ -15,7 +15,7 @@ import {
   severityForScore,
   type EvaluationContext,
 } from "../src/scoring.js";
-import { findMismatches } from "../src/findMismatches.js";
+import { findMismatches, findMismatchesWithOvertax } from "../src/findMismatches.js";
 import { SIGNAL_BY_ID, SIGNAL_CATALOGUE, getSignal } from "../src/signals.js";
 
 // ---- Fixture helpers ----
@@ -915,13 +915,15 @@ describe("findMismatches — overtaxedCandidates (C2)", () => {
       ]),
     };
 
-    const out = findMismatches(ctx);
-    expect(out.find((c) => c.assessmentNumber === "OV-1")).toBeUndefined();
+    const out = findMismatchesWithOvertax(ctx);
+    expect(out.candidates.find((c) => c.assessmentNumber === "OV-1")).toBeUndefined();
     expect(out.overtaxedCandidates.length).toBeGreaterThan(0);
     const overtax = out.overtaxedCandidates.find((c) => c.assessmentNumber === "OV-1");
     expect(overtax).toBeDefined();
     expect(overtax!.kind).toBe("overtax_review");
     expect(overtax!.estUplift).toBeLessThan(0);
+    // findMismatches() (headline-only wrapper) must NOT include overtaxed.
+    expect(findMismatches(ctx).find((c) => c.assessmentNumber === "OV-1")).toBeUndefined();
   });
 });
 
