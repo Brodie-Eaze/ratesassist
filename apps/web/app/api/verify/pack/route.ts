@@ -86,9 +86,14 @@ export async function POST(req: NextRequest): Promise<Response> {
   // never from caller-supplied input. m[2] is the 2-5 letter council code.
   const tenant = m[2];
 
-  // ---- 3. Read body (the PDF bytes), size-capped. ----
-  const contentLength = Number(req.headers.get("content-length") ?? "0");
-  if (Number.isFinite(contentLength) && contentLength > MAX_PDF_BYTES) {
+  // ---- 3. Read body (the PDF bytes), size-capped DURING the read. ----
+  // The Content-Length pre-check is a cheap early-out only — it is absent on
+  // chunked transfers and trivially spoofable, so it must NOT be the real
+  // cap. We stream the body and abort the moment the running total crosses
+  // MAX_PDF_BYTES, so an unauthenticated caller cannot OOM the task by
+  // streaming gigabytes (the App Router applies no default body limit).
+  const declaredLen = Number(req.headers.get("content-length"));
+  if (Number.isFinite(declaredLen) && declaredLen > MAX_PDF_BYTES) {
     return NextResponse.json(
       { ok: false, code: "payload_too_large", error: "PDF exceeds the verification size limit." },
       { status: 413 },
@@ -96,14 +101,20 @@ export async function POST(req: NextRequest): Promise<Response> {
   }
   let pdf: Buffer;
   try {
-    const ab = await req.arrayBuffer();
-    if (ab.byteLength === 0 || ab.byteLength > MAX_PDF_BYTES) {
+    const capped = await readBodyCapped(req, MAX_PDF_BYTES);
+    if (capped === "too_large") {
+      return NextResponse.json(
+        { ok: false, code: "payload_too_large", error: "PDF exceeds the verification size limit." },
+        { status: 413 },
+      );
+    }
+    if (capped.length === 0) {
       return NextResponse.json(
         { ok: false, code: "invalid_input", error: "Request body must be the PDF bytes." },
         { status: 400 },
       );
     }
-    pdf = Buffer.from(ab);
+    pdf = capped;
   } catch {
     return NextResponse.json(
       { ok: false, code: "invalid_input", error: "Could not read the request body." },
@@ -130,10 +141,13 @@ export async function POST(req: NextRequest): Promise<Response> {
     receipt.after.generatedAt === undefined
   ) {
     log.info({ msg: "verify.no_record", docId });
+    // Same opaque shape as a byte-mismatch — an unauthenticated caller must
+    // not be able to tell "never generated" from "generated but altered".
     return ok({
       verified: false,
-      result: "no_record",
-      message: "No matching generation record was found for this document reference.",
+      result: "not_verified",
+      message:
+        "This document could not be verified against the record at generation time.",
       document: { ref: docId, type: docType },
     });
   }
@@ -155,12 +169,26 @@ export async function POST(req: NextRequest): Promise<Response> {
 
   log.info({ msg: "verify.result", docId, verified, bytesMatch, authentic });
 
+  if (!verified) {
+    // Do NOT distinguish "modified" from "no_record" to an unauthenticated
+    // caller, and do NOT leak generatedAt/assessmentNumber — only a caller
+    // who actually holds the genuine bytes (verified=true) learns those.
+    return ok({
+      verified: false,
+      result: "not_verified",
+      message:
+        "This document could not be verified against the record at generation time.",
+      document: { ref: docId, type: docType },
+    });
+  }
+
   return ok({
-    verified,
-    result: verified ? "verified" : "modified",
-    message: verified
-      ? "This document is byte-for-byte the one RatesAssist generated and has not been modified since."
-      : "This document does not match the record at generation time — it may have been modified.",
+    verified: true,
+    result: "verified",
+    // Integrity / tamper-evidence claim only — NOT a legal attestation of
+    // authorship (a symmetric HMAC under our own key cannot prove that).
+    message:
+      "These bytes match the SHA-256 RatesAssist recorded for this document at generation time, indicating it has not been altered since. This confirms document integrity; it is not a legal attestation of authorship.",
     document: {
       ref: docId,
       type: docType,
@@ -170,6 +198,46 @@ export async function POST(req: NextRequest): Promise<Response> {
         : {}),
     },
   });
+}
+
+/**
+ * Read the request body into a Buffer, aborting as soon as the cumulative
+ * size exceeds `max`. Returns "too_large" rather than buffering the rest, so
+ * an oversized (or unbounded chunked) upload can never be fully materialised
+ * in memory. Empty/absent body yields a zero-length Buffer.
+ */
+async function readBodyCapped(
+  req: NextRequest,
+  max: number,
+): Promise<Buffer | "too_large"> {
+  const body = req.body;
+  if (body === null) {
+    // No stream — fall back to the (already-cheap) arrayBuffer path; the
+    // Content-Length guard above bounded it, and a null body is empty.
+    const ab = await req.arrayBuffer();
+    if (ab.byteLength > max) return "too_large";
+    return Buffer.from(ab);
+  }
+  const reader = body.getReader();
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value) {
+      total += value.byteLength;
+      if (total > max) {
+        try {
+          await reader.cancel();
+        } catch {
+          /* best-effort */
+        }
+        return "too_large";
+      }
+      chunks.push(Buffer.from(value));
+    }
+  }
+  return Buffer.concat(chunks);
 }
 
 /**

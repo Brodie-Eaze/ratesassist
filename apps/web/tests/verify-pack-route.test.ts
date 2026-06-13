@@ -111,19 +111,24 @@ describe("POST /api/verify/pack", () => {
     tampered[mid] = tampered[mid]! ^ 0xff;
     const res = await verifyPOST(verifyReq(docId, tampered));
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { data: { verified: boolean; result: string } };
+    const body = (await res.json()) as {
+      data: { verified: boolean; result: string; document: { generatedAt?: string } };
+    };
     expect(body.data.verified).toBe(false);
-    expect(body.data.result).toBe("modified");
+    // Collapsed result — a tampered doc is indistinguishable from no-record to
+    // an unauthenticated caller, and leaks no generatedAt.
+    expect(body.data.result).toBe("not_verified");
+    expect(body.data.document.generatedAt).toBeUndefined();
   });
 
-  it("returns no_record for an unknown (but well-formed) docId", async () => {
+  it("returns not_verified (no oracle) for an unknown well-formed docId", async () => {
     const res = await verifyPOST(
       verifyReq("EP-TPS-9999-99-20260101", Buffer.from("%PDF-1.4 fake")),
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { data: { verified: boolean; result: string } };
     expect(body.data.verified).toBe(false);
-    expect(body.data.result).toBe("no_record");
+    expect(body.data.result).toBe("not_verified");
   });
 
   it("400s on a malformed docId", async () => {

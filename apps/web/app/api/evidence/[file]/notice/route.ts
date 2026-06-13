@@ -134,9 +134,13 @@ export async function GET(
   const issuedDate = generatedAtFull.slice(0, 10);
   const noticeRef = `RN-${assessmentNumber}-${issuedDate.replace(/-/g, "")}`;
 
+  // Receipt is bound to + stored under the ASSET tenant (see the pdf route for
+  // rationale) so a platform_admin-drafted notice still verifies publicly.
+  const receiptTenant = assetTenant ?? session.tenantId;
+
   // Integrity identity — computed before render so the footer carries the ref.
   const identity: PdfIdentity = {
-    tenantId: session.tenantId,
+    tenantId: receiptTenant,
     docId: noticeRef,
     userId: session.userId,
     timestamp: generatedAtFull,
@@ -166,9 +170,9 @@ export async function GET(
 
   const receipt = pdfIntegrityReceipt(identity, pdf);
 
-  // ---- 7. Audit — best-effort. ----
+  // ---- 7. Audit — best-effort (recorded under the asset tenant). ----
   await writeNoticeAudit({
-    tenantId: session.tenantId,
+    tenantId: receiptTenant,
     actorId: session.userId,
     correlationId,
     ip,

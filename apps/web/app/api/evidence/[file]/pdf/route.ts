@@ -149,9 +149,18 @@ export async function GET(
   // The identity HMAC + footer ref are computed BEFORE render so the ref can
   // be drawn into the document; the full byte-hash receipt is computed AFTER
   // render and stored in the audit log for /api/verify/pack to confirm.
+  //
+  // Tenant binding uses the ASSET tenant (the council whose document this is),
+  // not the actor's session tenant. For a normal officer these are identical;
+  // for a platform_admin generating a doc for another council they differ, and
+  // the public verify endpoint can only derive the tenant from the docId's
+  // council prefix — so the receipt MUST live under that tenant or an
+  // admin-generated document would fail verification. assetTenant is
+  // guaranteed non-null here (the tenant gate above rejects a null prefix).
+  const receiptTenant = assetTenant ?? session.tenantId;
   const generatedAt = new Date().toISOString();
   const identity: PdfIdentity = {
-    tenantId: session.tenantId,
+    tenantId: receiptTenant,
     docId: pack.packId,
     userId: session.userId,
     timestamp: generatedAt,
@@ -179,8 +188,11 @@ export async function GET(
   const receipt = pdfIntegrityReceipt(identity, pdf);
 
   // ---- 7. Audit — best-effort, logged on failure. ----
+  // Recorded under the ASSET tenant (see receiptTenant above) so the receipt
+  // is collocated with the council whose document it is and is findable by
+  // the public verify endpoint. actorId still attributes the real operator.
   await writeAuditAsync({
-    tenantId: session.tenantId,
+    tenantId: receiptTenant,
     actorId: session.userId,
     correlationId,
     ip: getClientIp(req),

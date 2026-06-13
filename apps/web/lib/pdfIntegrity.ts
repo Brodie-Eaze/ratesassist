@@ -2,9 +2,16 @@
  * Cryptographic integrity layer for generated PDFs (JD-2).
  *
  * Every evidence pack and draft notice PDF gets a tamper-evident integrity
- * receipt so a council's legal team can later prove a downloaded document is
- * unmodified since generation — the "statutory-grade evidentiary integrity
- * that survives a rates-tribunal challenge" no other AU rates tool provides.
+ * receipt so a council can later confirm a downloaded document is unmodified
+ * since generation.
+ *
+ * Scope of the claim — this is TAMPER-EVIDENCE (integrity), NOT legal
+ * non-repudiation. A symmetric HMAC under a key the server itself holds proves
+ * "these bytes match what we recorded at generation time"; it cannot prove
+ * authorship to an adverse third party (the same party mints and verifies).
+ * Durable, third-party-provable authorship would need an asymmetric signature
+ * + a durable append-only receipt store — see the verify route's follow-up
+ * note. Do not market this as non-repudiation or as tribunal-proof.
  *
  * Two cryptographic facts are produced and stored:
  *
