@@ -193,8 +193,22 @@ function errorSerializer(value: unknown): Record<string, unknown> {
   return { message: String(value) };
 }
 
+/**
+ * True when this module is loaded inside the Next.js server runtime (route
+ * handlers / server components). Next sets NEXT_RUNTIME to "nodejs" | "edge".
+ * pino's worker-thread transports (pino-pretty via thread-stream) CANNOT run
+ * here: Next's server bundler fails to resolve `thread-stream/lib/worker.js`,
+ * the worker thread dies, and the resulting `uncaughtException` destabilises
+ * the dev server (every page logs via `scoped()`, so it cascades). Inside
+ * Next we therefore always emit plain JSON to stdout — no worker. Vitest +
+ * standalone scripts (NEXT_RUNTIME unset) keep pretty dev logs.
+ */
+const isNextServerRuntime = typeof process.env.NEXT_RUNTIME === "string";
+
 function shouldUsePretty(): boolean {
   if (transportPreference === "json") return false;
+  // The worker transport is unsafe inside Next even if explicitly requested.
+  if (isNextServerRuntime) return false;
   if (transportPreference === "pretty") return true;
   if (shipToCollector) return false;
   return isDev;
@@ -206,6 +220,7 @@ function makeLogger(): Logger {
   // stdout. Useful in environments (e.g. some CloudWatch agent setups)
   // where stdout capture is unreliable.
   if (
+    !isNextServerRuntime &&
     transportPreference !== "" &&
     transportPreference !== "json" &&
     transportPreference !== "pretty"
