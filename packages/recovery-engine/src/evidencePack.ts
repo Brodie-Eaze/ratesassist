@@ -625,10 +625,15 @@ function proposedCategory(
  * provision without leaving the file.
  */
 const TEMPLATE_BY_STATE: Partial<Record<Property["state"], string>> = {
-  // WA — backdating limit: 3 years (s.6.81 LGA 1995).
+  // WA — rate-record amendment + recovery under Part 6 of the LGA 1995. We do
+  // NOT cite a specific backdating-limit section: the precise provision and
+  // period must be confirmed by the responsible officer against the current
+  // consolidated Act before any notice is served (s.6.81 is "Objection not to
+  // affect liability", not a backdating-limit authority — citing it as one was
+  // a factual error).
   WA: [
     "- *Local Government Act 1995* (WA), **s.6.16** — power of a local government to differentiate general rates by land-use category.",
-    "- *Local Government Act 1995* (WA), **s.6.81** — backdating limit on rate adjustments (3 years rolled forward from current rating year, with strict notice requirements; this pack uses a 3-year conservative arrears estimate within that limit).",
+    "- *Local Government Act 1995* (WA), **Part 6 (Rates and Service Charges)** — governs the rate record, imposition, and recovery of rates that ought to have been imposed. This pack uses a conservative 3-year backdating convention; the period over which an adjustment may lawfully be backdated must be confirmed by the responsible officer against the current Act.",
     "- The council's adopted differential rates schedule for the relevant rating year.",
   ].join("\n"),
   // NSW — backdating limit: 5 years (s.514 LGA 1993, subject to council's

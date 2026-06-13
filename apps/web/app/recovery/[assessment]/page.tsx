@@ -321,7 +321,7 @@ export default async function EvidencePackPage({
                         {typeof pack.candidate.backdatedAmountStatutory === "number" && (
                           <div>
                             <span className="text-ink-500">
-                              Backdated 5y statutory (LGA s.6.81):
+                              Backdated 5y (statutory ceiling, LGA 1995 Part 6 — confirm provision):
                             </span>{" "}
                             {formatAud(pack.candidate.backdatedAmountStatutory)}
                           </div>
