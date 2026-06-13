@@ -114,8 +114,14 @@ export async function GET(
   const pack = result.pack;
 
   // ---- 5. Resolve recipient of record (owner) + council name. ----
-  const council = COUNCILS.find((c) => c.code === session.tenantId);
-  const councilName = council?.name ?? session.tenantId;
+  // F-001: bind the letterhead council to the ASSET's tenant, not the actor's
+  // session tenant. A platform_admin in council A drafting a notice for
+  // council B's assessment must render B's letterhead — using session.tenantId
+  // would stamp A's council name onto B's statutory document. Matches the
+  // evidence-pdf sibling and the integrity receipt (both asset-tenant bound).
+  const noticeTenant = assetTenant ?? session.tenantId;
+  const council = COUNCILS.find((c) => c.code === noticeTenant);
+  const councilName = council?.name ?? noticeTenant;
 
   const property = pack.candidate.property;
   const ownerId = property.ownerIds[0];

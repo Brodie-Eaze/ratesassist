@@ -24,12 +24,38 @@ function trustsForwardedFor(): boolean {
   return false;
 }
 
+/**
+ * Number of TRUSTED reverse-proxy hops in front of the app, counted from the
+ * right of X-Forwarded-For. The trusted proxy APPENDS the IP it observed, so
+ * the real client IP is the entry the *nearest trusted proxy* added — i.e.
+ * `RA_TRUSTED_PROXY_HOPS` from the right. Default 1 (a single ALB / Vercel
+ * edge). RA-L3-02: taking the LEFTMOST entry trusts an attacker-supplied
+ * value (anyone can send `X-Forwarded-For: 1.2.3.4`), letting a caller mint a
+ * fresh rate-limit bucket per request and defeat every per-IP limiter.
+ */
+function trustedProxyHops(): number {
+  const raw = Number(process.env.RA_TRUSTED_PROXY_HOPS);
+  return Number.isInteger(raw) && raw >= 1 ? raw : 1;
+}
+
 export function getClientIp(req: NextRequest): string {
   if (trustsForwardedFor()) {
     const fwd = req.headers.get("x-forwarded-for");
-    if (fwd) return fwd.split(",")[0]!.trim();
+    if (fwd) {
+      // Take the Nth-from-right entry, where N = trusted hops. With a single
+      // trusted proxy (the default), this is the rightmost entry — the IP the
+      // proxy itself observed and appended, which the client cannot forge.
+      // Everything to the LEFT of the trusted hops is client-supplied and
+      // therefore untrusted.
+      const parts = fwd.split(",").map((p) => p.trim()).filter((p) => p.length > 0);
+      const hops = trustedProxyHops();
+      const idx = parts.length - hops;
+      if (idx >= 0 && parts[idx]) return parts[idx]!;
+      // Fewer entries than expected hops → fall through (don't trust a
+      // leftmost/partial value as the client IP).
+    }
     const realIp = req.headers.get("x-real-ip");
-    if (realIp) return realIp;
+    if (realIp) return realIp.trim();
   }
   // NextRequest exposes `ip` on Vercel and some adapters.
   const reqIp = (req as unknown as { ip?: string }).ip;

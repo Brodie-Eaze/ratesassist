@@ -31,14 +31,21 @@ import {
   verifyPdfIntegrity,
   type PdfIdentity,
 } from "@/lib/pdfIntegrity";
-import { getClientIp, rateLimit, retryAfterSeconds } from "@/lib/rate-limit";
+import {
+  getClientIp,
+  globalRateLimit,
+  rateLimit,
+  retryAfterSeconds,
+} from "@/lib/rate-limit";
 import { scoped } from "@/lib/logger";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/** Tight public limit — verification is cheap but must not be a free oracle. */
+/** Tight per-IP public limit — verification is cheap but must not be a free oracle. */
 const VERIFY_RATE_LIMIT = 10;
+/** Process-wide ceiling on total verify work/min (RA-L3-03 DoS backstop). */
+const VERIFY_GLOBAL_LIMIT = 120;
 /** Max PDF the endpoint will hash (our PDFs are tens of KB; 8 MB is generous). */
 const MAX_PDF_BYTES = 8 * 1024 * 1024;
 
@@ -62,8 +69,20 @@ export async function POST(req: NextRequest): Promise<Response> {
   const correlationId = correlationIdFromHeaders(req.headers);
   const log = scoped("api/verify/pack", { correlationId });
 
-  // ---- 1. Rate limit BEFORE any work (public endpoint). ----
+  // ---- 1. Rate limit BEFORE any work (public, unauthenticated endpoint). ----
+  // Two limiters: per-IP fairness AND a process-wide ceiling. RA-L3-03: the
+  // per-IP limiter alone is insufficient on an unauthenticated endpoint that
+  // does an 8 MB SHA-256 + an audit scan per call — a distributed caller (or
+  // anyone who can still rotate IPs) could otherwise saturate the task. The
+  // global limiter caps total verify work per process regardless of source.
   const ip = getClientIp(req);
+  const gl = globalRateLimit(VERIFY_GLOBAL_LIMIT, "verify-pack");
+  if (!gl.ok) {
+    return NextResponse.json(
+      { ok: false, code: "rate_limited", error: "Verification is busy, try again shortly." },
+      { status: 429, headers: { "Retry-After": retryAfterSeconds(gl.resetAt) } },
+    );
+  }
   const rl = rateLimit(`verify-pack|${ip}`, VERIFY_RATE_LIMIT);
   if (!rl.ok) {
     return NextResponse.json(

@@ -140,8 +140,12 @@ export async function GET(
   const pack = result.pack;
 
   // ---- 5. Resolve council display name + build the live evidence URL. ----
-  const council = COUNCILS.find((c) => c.code === session.tenantId);
-  const councilName = council?.name ?? session.tenantId;
+  // F-001 (also applies here): bind the letterhead to the ASSET's tenant, not
+  // the actor's session tenant, so a platform_admin reading another council's
+  // asset renders that council's letterhead — matching the receipt binding.
+  const pdfTenant = assetTenant ?? session.tenantId;
+  const council = COUNCILS.find((c) => c.code === pdfTenant);
+  const councilName = council?.name ?? pdfTenant;
 
   // Live evidence URL is the .html download served by the sibling route.
   // We build an absolute URL so the QR can be scanned from a printed
