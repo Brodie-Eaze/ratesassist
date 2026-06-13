@@ -5,10 +5,17 @@ import { PropertyMapClientShell } from "./_PropertyMapShell";
 import { SignalAccordion } from "@/components/recovery/SignalAccordion";
 import { TitleStateSection } from "@/components/recovery/TitleStateSection";
 import { ConcessionAuditSection } from "@/components/recovery/ConcessionAuditSection";
+import { headers } from "next/headers";
+import { redirect } from "next/navigation";
 import { buildEvidencePack } from "@ratesassist/recovery-engine";
-import { getProperty } from "@/lib/data";
-import { getEvaluationContext } from "@/lib/clients";
-import { ArrowLeft, AlertTriangle, CheckCircle2, Download } from "lucide-react";
+import type { EvidencePackResult } from "@ratesassist/recovery-engine";
+import { getEvaluationContextForTenant } from "@/lib/clients";
+import { SESSION_HEADER } from "@/lib/auth";
+import {
+  sessionMayAccessTenant,
+  tenantFromAssessmentNumber,
+} from "@/lib/api-helpers";
+import { ArrowLeft, AlertTriangle, CheckCircle2, Download, FileSignature } from "lucide-react";
 import { formatAud } from "@/lib/utils";
 
 /**
@@ -36,15 +43,145 @@ function safeRateSourceUrl(url: string | undefined | null): string | null {
   }
 }
 
+/**
+ * Discriminated non-ok render — one accurate UI state per
+ * {@link EvidencePackResult} variant. The previous binary `!pack` branch
+ * collapsed `no_owner` (a data-integrity defect that blocks notice
+ * drafting) and `no_state_template` (an unsupported jurisdiction) into
+ * the same "all signals clean" reassurance as `no_signals` — factually
+ * wrong copy on both. The exhaustive switch also makes any future
+ * variant a TypeScript error here instead of a silent fall-through.
+ */
+function NonOkPackState({
+  result,
+  assessment,
+}: {
+  result: Exclude<EvidencePackResult, { kind: "ok" }>;
+  assessment: string;
+}) {
+  switch (result.kind) {
+    case "no_property":
+      return (
+        <div className="card p-8 text-center" data-testid="pack-state-no-property">
+          <div className="text-ink-700">
+            Assessment <code className="text-accent-700">{assessment}</code> not
+            found in the rating register.
+          </div>
+          <div className="text-sm text-ink-500 mt-2">
+            Check the assessment number, or browse{" "}
+            <Link href="/properties" className="text-accent-700 hover:underline">
+              all properties
+            </Link>
+            .
+          </div>
+        </div>
+      );
+    case "no_signals":
+      return (
+        <div className="card p-8 text-center" data-testid="pack-state-no-signals">
+          <div className="flex justify-center mb-3">
+            <CheckCircle2 className="w-8 h-8 text-success-500" />
+          </div>
+          <div className="text-ink-700">
+            Property{" "}
+            <span className="font-medium">{result.property.address}</span>{" "}
+            (<code className="text-accent-700">{assessment}</code>) has no
+            detection signals firing.
+          </div>
+          <div className="text-sm text-ink-500 mt-2">
+            Nothing to recover — the rating register, DMIRS, ABN/ASIC and
+            aerial signals are all clean for this assessment.
+          </div>
+        </div>
+      );
+    case "no_owner":
+      return (
+        <div
+          className="card p-8 text-center border-warn-500 bg-warn-50/40"
+          data-testid="pack-state-no-owner"
+        >
+          <div className="flex justify-center mb-3">
+            <AlertTriangle className="w-8 h-8 text-warn-600" />
+          </div>
+          <div className="font-medium text-ink-900">Data integrity alert</div>
+          <div className="text-ink-700 mt-2">
+            Detection signals are firing on{" "}
+            <span className="font-medium">{result.property.address}</span>{" "}
+            (<code className="text-accent-700">{assessment}</code>), but the
+            property has <span className="font-medium">no linked owner record</span>.
+          </div>
+          <div className="text-sm text-ink-500 mt-2">
+            An evidence pack cannot be generated without a rated owner.
+            Reconcile the owner record in the rating system, then return
+            to this page.
+          </div>
+        </div>
+      );
+    case "no_state_template":
+      return (
+        <div className="card p-8 text-center" data-testid="pack-state-no-state-template">
+          <div className="text-ink-700">
+            Evidence packs are not yet supported for properties in{" "}
+            <span className="font-medium">{result.state}</span>.
+          </div>
+          <div className="text-sm text-ink-500 mt-2">
+            Signals fired on <code className="text-accent-700">{assessment}</code>,
+            but the statutory template for this jurisdiction has not been
+            built. Currently supported: WA. Contact support to register
+            interest in your state.
+          </div>
+        </div>
+      );
+  }
+}
+
 export default async function EvidencePackPage({
   params,
 }: {
   params: Promise<{ assessment: string }>;
 }) {
   const { assessment } = await params;
-  const result = buildEvidencePack(assessment, getEvaluationContext());
+
+  // Session + tenant gate — same model as the evidence API routes. The
+  // middleware injects the pre-validated session into the x-session
+  // header; missing session redirects to /login (defensive — middleware
+  // normally redirects before we render). Cross-tenant renders the same
+  // "not found" state as a nonexistent assessment so this page is not an
+  // enumeration oracle, and the evaluation context is scoped to the
+  // ASSET's tenant — never the global cross-tenant snapshot.
+  const h = await headers();
+  const rawSession = h.get(SESSION_HEADER);
+  let session: { tenantId: string; roles: ReadonlyArray<string> } | null = null;
+  if (rawSession) {
+    try {
+      const parsed = JSON.parse(rawSession) as {
+        tenantId?: unknown;
+        roles?: unknown;
+      };
+      if (typeof parsed.tenantId === "string" && Array.isArray(parsed.roles)) {
+        session = {
+          tenantId: parsed.tenantId,
+          roles: parsed.roles.filter((r): r is string => typeof r === "string"),
+        };
+      }
+    } catch {
+      session = null;
+    }
+  }
+  if (!session) {
+    redirect("/login");
+  }
+
+  const assetTenant = tenantFromAssessmentNumber(assessment);
+  const crossTenantBlocked = !sessionMayAccessTenant(session, assetTenant);
+
+  const result: EvidencePackResult = crossTenantBlocked
+    ? { kind: "no_property" }
+    : buildEvidencePack(
+        assessment,
+        await getEvaluationContextForTenant(assetTenant ?? session.tenantId),
+      );
   const pack = result.kind === "ok" ? result.pack : null;
-  const property = pack ? null : getProperty(assessment);
 
   return (
     <div className="flex h-screen">
@@ -85,20 +222,29 @@ export default async function EvidencePackPage({
                 <Download className="w-4 h-4" />
                 View pack
               </a>
-              {/* Statutory-grade PDF — landed for the council pilot's
-                  acceptance criterion #6 (generate at least one statutory
-                  rate certificate through the platform during the 60-day
-                  pilot). Hits /api/evidence/<assessment>/pdf which
-                  enforces tenant scoping + writes a pdf.generated audit
-                  row. The `download` attribute triggers a browser save. */}
+              {/* Statutory-grade evidence PDF — tenant-scoped, audited. */}
               <a
                 href={`/api/evidence/${assessment}/pdf`}
-                className="btn-primary"
+                className="btn-ghost"
                 download
                 data-testid="download-pdf"
               >
                 <Download className="w-4 h-4" />
-                Download PDF
+                Evidence PDF
+              </a>
+              {/* JD-1: one-click DRAFT rate notice. The highest-value action
+                  on this page — collapses a 15-30 min officer task to seconds.
+                  Hits /api/evidence/<assessment>/notice (same tenant scope +
+                  audit as the PDF); the document is stamped DRAFT and is for
+                  officer review before service. Primary CTA. */}
+              <a
+                href={`/api/evidence/${assessment}/notice`}
+                className="btn-primary"
+                download
+                data-testid="draft-notice"
+              >
+                <FileSignature className="w-4 h-4" />
+                Draft notice
               </a>
             </div>
           )}
@@ -106,39 +252,9 @@ export default async function EvidencePackPage({
 
         <div className="flex-1 overflow-y-auto bg-ink-50 p-6">
           <div className="max-w-3xl mx-auto">
-            {!pack ? (
-              <div className="card p-8 text-center">
-                {property ? (
-                  <>
-                    <div className="text-ink-700">
-                      Property{" "}
-                      <span className="font-medium">{property.address}</span>{" "}
-                      (<code className="text-accent-700">{assessment}</code>) has
-                      no detection signals firing.
-                    </div>
-                    <div className="text-sm text-ink-500 mt-2">
-                      Nothing to recover — the rating register, DMIRS, ABN/ASIC
-                      and aerial signals are all clean for this assessment.
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div className="text-ink-700">
-                      Assessment{" "}
-                      <code className="text-accent-700">{assessment}</code> not
-                      found in the rating register.
-                    </div>
-                    <div className="text-sm text-ink-500 mt-2">
-                      Check the assessment number, or browse{" "}
-                      <Link href="/properties" className="text-accent-700 hover:underline">
-                        all properties
-                      </Link>
-                      .
-                    </div>
-                  </>
-                )}
-              </div>
-            ) : (
+            {result.kind !== "ok" ? (
+              <NonOkPackState result={result} assessment={assessment} />
+            ) : !pack ? null : (
               <>
                 <div className="card p-4 mb-4 bg-accent-50/40 border-accent-300">
                   <div className="grid grid-cols-3 gap-4">

@@ -28,11 +28,12 @@
 | | |
 |---|---|
 | **Document** | RatesAssist Master Specification |
-| **Version** | 0.1 — Foundational |
-| **Status** | Pre-pilot. Internal working document. |
+| **Version** | 1.0 — Pilot-ready |
+| **Status** | Engineering pilot-ready; go-live gated on human approvals (deploy, legal, data). Internal working document. |
 | **Owner** | Brodie |
 | **Domain co-founder** | Pending — see [`ENTITY-OPTIONS.md`](ENTITY-OPTIONS.md) |
-| **Last updated** | 2026-05-08 |
+| **Last updated** | 2026-06-07 |
+| **Companion docs** | [`RatesAssist-PRD.md`](RatesAssist-PRD.md) (product requirements) · [`README.md`](README.md) (engineering overview) |
 | **Confidentiality** | Confidential — not for external distribution |
 | **Distribution** | Founders, designated advisors |
 | **Supersedes** | None |
@@ -133,6 +134,22 @@ Five compounding moats: multi-source integration complexity, calibration-data fl
 ### Strategic posture
 
 **Build for AU public sector from day one.** Every architectural decision (data residency, audit, accessibility, statutory compliance) is taken as if a NSW Auditor-General is reviewing it next week. This is slower than consumer SaaS but materially derisks the path to $50k+ contract values and panel placements.
+
+### What's new — 2026 build status & the edge
+
+> Added 2026-06-07. The platform has moved from concept to a tested, pilot-ready build. This subsection is the current-state delta; the sections below remain the canonical detail. Full product requirements: [`RatesAssist-PRD.md`](RatesAssist-PRD.md).
+
+**Build status (engineering).** Monorepo of **7 packages + 1 web app** (`contract`, `recovery-engine`, `spatial`, `identity`, `db`, `adapter-demo`, `audit-core`), **350+ TypeScript files**, **29 app pages**, **41 API routes**, **1,034 tests green**, typecheck clean. Multi-tenant by council with Postgres RLS (`NOBYPASSRLS` app role); tamper-evident hash-linked audit chain; HMAC sessions; rate limiting + 429 backpressure. Local dev on pglite; **production target AWS Sydney (`ap-southeast-2`)** — RDS Multi-AZ + RDS Proxy, ECS autoscaled behind ALB + ACM — Terraform **authored + `validate`-green; apply is human-gated** (no public URL until then). Right-sized for **5,000 concurrent officers** (load-test bar 15,000 burst), not 50k.
+
+**Detection engine.** Now evaluates **33+ weighted, sourced signals** (up from the original 22) with exclusive-group constraints and severity bands.
+
+**The edge (the 2026 thrust — see [`internal/EDGE-SHARPENING-WA.md`](internal/EDGE-SHARPENING-WA.md)):**
+- **Live register data** — DMIRS tenement geometry fetched live (SLIP/ArcGIS) and intersected against parcels (ray-cast point-in-polygon) to populate the recovery context — flag-gated (`RA_LIVE_TENEMENTS`, default off, DB fallback on any failure).
+- **IAAO assessment-quality science** — a ratio-study engine (Coefficient of Dispersion / Price-Related Differential / Price-Related Bias, hand-verified against worked examples) that finds **systemic, category-level** under-assessment across the whole roll, surfaced as a tenant-scoped **Assessment Roll Quality** report (`/roll-quality`) — a governance artifact no WA council currently receives. Market-calibrated COD/PRD/PRB light up when Landgate sale data lands; until then a peer-dispersion proxy runs on current valuations.
+- **Legal-risk guards** — contested-law recoveries (e.g. miscellaneous licences under *Shire of Mount Magnet v Atlantic Vanadium* [2025] WASC 274 and the LG Amendment (Rating of Certain Mining Licences) Bill 2025) render a warning at the top of the evidence pack — pursued blind they could become a refund liability. **Warn, don't suppress.**
+- **Deep edge research** — legal levers, alternative WA data sources, the competitive white-space, and 12+ recoverable categories beyond mining (supplementary-valuation gaps plausibly the largest single source) — captured in `internal/EDGE-SHARPENING-WA.md`.
+
+**Honesty note — back-rating citation.** The uplift calculator caps recoverable arrears at a conservative 3-year and a statutory 5-year ceiling and surfaces **both**. The exact WA LGA 1995 section is **pending legal confirmation**: the code currently cites **s.6.81**; the edge research indicates **s.6.39(2)** ("the 5 preceding years") is the rate-record amendment power. The figures are surfaced; the section is not over-claimed until counsel confirms.
 
 ---
 

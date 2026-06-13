@@ -16,11 +16,25 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { runTool } from "@/lib/tools";
+import { fail, resolveRouteSession } from "@/lib/api-helpers";
+import { getClientIp, rateLimitComposite, retryAfterSeconds } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
+  const session = await resolveRouteSession(req);
+  if (session === null) return fail("unauthorized", "Authentication required.");
+
+  const ip = getClientIp(req);
+  const rl = rateLimitComposite({ scope: "grants", ip, tenantId: session.tenantId, max: 30 });
+  if (!rl.ok) {
+    return NextResponse.json(
+      { ok: false, code: "rate_limited", error: "Too many requests" },
+      { status: 429, headers: { "Retry-After": retryAfterSeconds(rl.resetAt) } }
+    );
+  }
+
   const { searchParams } = req.nextUrl;
   const sinceDaysRaw = searchParams.get("sinceDays");
   const sinceDays = sinceDaysRaw === null ? 30 : Number(sinceDaysRaw);

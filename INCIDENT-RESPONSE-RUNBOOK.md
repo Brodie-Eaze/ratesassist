@@ -91,6 +91,14 @@ Standard containment actions: revoke tokens, rotate credentials, isolate the aff
 
 Patch, rotate, restore from a clean backup (subject to §6 forensic preservation), confirm SLA restored, confirm controls hold under stress.
 
+For the **tamper-evident audit chain** specifically, follow the drilled
+restore-and-verify procedure in `internal/DR-RESTORE-DRILL-2026-05-29.md` §5:
+restore the snapshot/PITR, then run `/api/audit/verify-chain` for **every**
+active tenant and confirm `ok:true` before declaring the audit store
+recovered. A genuine post-restore chain break is itself a SEV1 — do not resume
+writes on that tenant. RPO/RTO targets and the verification gate are in that
+doc and in `internal/SLO-SLI.md` §4.
+
 ### 4.5 Review
 
 See §7.

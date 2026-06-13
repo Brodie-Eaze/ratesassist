@@ -59,19 +59,40 @@ export async function getWebDb(): Promise<Db> {
 async function bootstrapOnce(): Promise<Db> {
   const log = scoped("apps/web/db");
   const start = Date.now();
-  const { ensureSchema, ensureSeeded, getDb, getDriverKind } = await import(
-    "@ratesassist/db"
-  );
+  const {
+    ensureSchema,
+    ensureSeeded,
+    assertNonBypassRlsRole,
+    getDb,
+    getDriverKind,
+  } = await import("@ratesassist/db");
   const db = getDb();
   try {
-    await ensureSchema(db);
-    const seeded = await ensureSeeded(db);
+    // Apply migrations + seed on boot UNLESS the operator runs migrations out
+    // of band (RA_MIGRATE_ON_BOOT=false). Default preserves current behaviour.
+    // A real production deploy should run migrations via a provisioned task as
+    // an admin role and serve as a separate NOBYPASSRLS app role — see
+    // infra/terraform + AUDIT.md. In that split, ensureSchema/ensureSeeded
+    // would fail (the app role lacks DDL grants), so this gate lets the app
+    // boot read/write-only against an already-migrated schema.
+    const migrateOnBoot = process.env["RA_MIGRATE_ON_BOOT"] !== "false";
+    let seeded = false;
+    if (migrateOnBoot) {
+      await ensureSchema(db);
+      seeded = await ensureSeeded(db);
+    }
+    // Seatbelt: refuse to serve if the production role can bypass RLS, which
+    // would render every tenant-isolation policy inert. No-op for pglite /
+    // non-production / RA_ALLOW_BYPASSRLS_DB=1. Runs AFTER migration so the
+    // role check reflects the role that will actually serve traffic.
+    await assertNonBypassRlsRole(db);
     bootstrapComplete = true;
     const duration = Date.now() - start;
     log.info({
       msg: "db.bootstrap",
       durationMs: duration,
       driver: getDriverKind() ?? "unknown",
+      migrateOnBoot,
       seeded,
     });
     return db;
@@ -87,6 +108,21 @@ async function bootstrapOnce(): Promise<Db> {
 /** True when {@link getWebDb} has completed at least one bootstrap pass. */
 export function isDbBootstrapped(): boolean {
   return bootstrapComplete;
+}
+
+/**
+ * Lightweight liveness ping — runs `select 1` against an already-bootstrapped
+ * Drizzle instance. The `sql` tag is dynamically imported from
+ * `@ratesassist/db` (which re-exports it from drizzle-orm) so the persistence
+ * package — and its pglite/pg WASM payload — stays OUT of the caller's static
+ * module graph, consistent with {@link getWebDb}'s lazy-import discipline. The
+ * package is already in the module cache after bootstrap, so this import is
+ * free. Throws if the query fails.
+ */
+export async function pingDb(db: Db): Promise<void> {
+  const { sql } = await import("@ratesassist/db");
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await (db as any).execute(sql`select 1`);
 }
 
 /** Test hook: discard the cached bootstrap promise. */

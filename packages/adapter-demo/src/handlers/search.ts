@@ -31,7 +31,7 @@ export async function searchPropertyHandler(
   input: schemas.ToolInputs["search_property"],
   ctx: RequestContext,
 ): Promise<schemas.ToolResult> {
-  const matches = ctx.store.searchProperties(input.query);
+  const matches = ctx.store.searchProperties(input.query, input.council);
   if (matches.length === 0) {
     return {
       ok: true,
@@ -58,7 +58,7 @@ export async function searchByOwnerHandler(
   input: schemas.ToolInputs["search_by_owner"],
   ctx: RequestContext,
 ): Promise<schemas.ToolResult> {
-  const matches = ctx.store.searchByOwner(input.name, input.suburb);
+  const matches = ctx.store.searchByOwner(input.name, input.suburb, input.council);
   if (matches.length === 0) {
     return {
       ok: true,

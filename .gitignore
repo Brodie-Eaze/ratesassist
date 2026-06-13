@@ -47,3 +47,27 @@ tmp/
 
 # DMIRS pull cache (regeneratable; large)
 .dmirs-cache/
+
+# DR drill backup artefacts (regeneratable; one JSON per drill run).
+# The dated drill RESULT lives in internal/DR-RESTORE-DRILL-*.md (committed);
+# the raw row dumps here are ephemeral evidence, recreated by `npm run dr:audit-drill`.
+reports/dr-drills/
+
+# Terraform — NEVER commit the provider cache or state.
+#   .terraform/      — downloaded provider plugins + module cache (100s of MB).
+#   *.tfstate*       — STATE: contains secrets (DB password, generated RA_AUTH_SECRET)
+#                      in PLAINTEXT; lives in the remote S3+KMS backend, never in git.
+#   *.tfvars         — real values incl. domain/zone/secrets. The committed template is
+#                      terraform.tfvars.example (NOT matched by *.tfvars, so it stays).
+# DO commit: .terraform.lock.hcl (pins provider versions/hashes for reproducibility).
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.auto.tfvars
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json

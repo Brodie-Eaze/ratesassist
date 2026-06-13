@@ -69,7 +69,44 @@ export function Chat({ initialPrompts = [], storageKey = "ra-officer-chat", citi
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ history: messages, message: text }),
       });
-      const data = await res.json();
+      // Parse defensively: an error response may not be JSON, and a blank
+      // body must never surface as a silent "(no response)" bubble. A non-2xx
+      // status (rate limit, kill switch, validation, server error) is turned
+      // into a visible, screen-reader-announced message that carries the
+      // correlationId so an officer can quote it to support.
+      const data: {
+        content?: string;
+        toolCalls?: ToolCall[];
+        modelUsed?: ModelUsed;
+        code?: string;
+        message?: string;
+        correlationId?: string;
+      } = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        const code = typeof data.code === "string" ? data.code : `http_${res.status}`;
+        const friendly =
+          code === "chat_disabled"
+            ? "The AI assistant is temporarily disabled. The rest of RatesAssist is unaffected."
+            : code === "rate_limited"
+              ? "You're sending messages too quickly — please wait a moment and try again."
+              : typeof data.message === "string" && data.message.length > 0
+                ? data.message
+                : `The assistant couldn't complete that request (error ${res.status}).`;
+        setMessages([
+          ...history,
+          {
+            id: `e_${Date.now()}`,
+            role: "assistant",
+            content: data.correlationId
+              ? `${friendly}\n\n_Reference: ${data.correlationId}_`
+              : friendly,
+            timestamp: new Date().toISOString(),
+          },
+        ]);
+        return;
+      }
+
       const reply: ChatMessageWithMeta = {
         id: `a_${Date.now()}`,
         role: "assistant",
@@ -122,7 +159,14 @@ export function Chat({ initialPrompts = [], storageKey = "ra-officer-chat", citi
         </button>
       </div>
 
-      <div ref={scrollRef} className="flex-1 overflow-y-auto chat-scroll bg-ink-50 px-6 py-4">
+      <div
+        ref={scrollRef}
+        role="log"
+        aria-live="polite"
+        aria-label="Conversation"
+        aria-busy={busy}
+        className="flex-1 overflow-y-auto chat-scroll bg-ink-50 px-6 py-4"
+      >
         <div className="max-w-3xl mx-auto space-y-4">
           {messages.length === 0 && initialPrompts.length > 0 && (
             <div className="text-center pt-12 pb-4">
@@ -254,7 +298,7 @@ function ToolCallsBadge({ toolCalls }: { toolCalls: ToolCall[] }) {
 
 function BusyIndicator() {
   return (
-    <div className="flex">
+    <div className="flex" role="status" aria-label="Assistant is working">
       <div className="bg-white border border-ink-200 rounded-lg rounded-bl-sm px-4 py-3 text-sm text-ink-500">
         <div className="flex items-center gap-2">
           <div className="flex gap-1">

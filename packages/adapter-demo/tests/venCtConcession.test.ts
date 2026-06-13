@@ -686,6 +686,19 @@ describe("request_strata_conversion", () => {
     expect(cm.ok).toBe(true);
     const lc = c.store.strataLifecycleByAssessment(parent);
     expect(lc?.state).toBe("withdrawn");
+    // The free-text reason survives in the RTBF-erasable lifecycle history…
+    expect(lc?.history.at(-1)?.reason).toBe("Subdivision plan rejected by Landgate");
+    // …but must NEVER reach the append-only, RTBF-exempt audit chain (RA-01).
+    // The audit row records only the shape: reasonProvided + reasonChars.
+    const audit = readRecent("T-test", 10);
+    const row = audit.find((e) => e.action === "state.strata_conversion.withdrawn");
+    expect(row).toBeDefined();
+    const after = row!.after as { reasonProvided?: boolean; reasonChars?: number };
+    expect(after.reasonProvided).toBe(true);
+    expect(after.reasonChars).toBe("Subdivision plan rejected by Landgate".length);
+    expect(JSON.stringify({ before: row!.before, after: row!.after })).not.toContain(
+      "Subdivision plan rejected by Landgate",
+    );
   });
 
   it("withdraw without reason returns invalid_input", async () => {

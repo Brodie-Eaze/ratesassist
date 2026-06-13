@@ -234,7 +234,7 @@ export default function PropertyMap({
         evidenceHref={evidenceHref}
       />
 
-      <MapChrome statsOpen={statsOpen} overlap={overlap} isPrint={isPrint} />
+      <MapChrome statsOpen={statsOpen} isPrint={isPrint} />
     </div>
   );
 }

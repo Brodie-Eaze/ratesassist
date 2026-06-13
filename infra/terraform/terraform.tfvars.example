@@ -1,0 +1,43 @@
+# Copy to terraform.tfvars and fill in. Do NOT commit terraform.tfvars.
+# (Real secrets should be set via aws secretsmanager put-secret-value, not here.)
+
+# --- Required ---------------------------------------------------------------
+domain_name    = "app.ratesassist.com.au"
+hosted_zone_id = "Z0123456789ABCDEFGHIJ" # the delegated Route53 zone for the domain
+
+# --- Image to deploy — REQUIRED, no default. Must be an immutable tag that
+#     already exists in ECR (the repo is created with IMMUTABLE tags). CI sets
+#     this to the pushed git SHA; for a manual apply, paste the SHA you pushed.
+#     'latest' and "" are rejected by a variable validation. -------------------
+image_tag = "sha-REPLACE_WITH_PUSHED_GIT_SHA" # e.g. sha-1a2b3c4d
+
+# --- Sensible-default overrides (optional) ----------------------------------
+# Defaults below are PRE-PILOT (synthetic data, no signed council) and tuned
+# for low burn. The variable defaults already apply these — listed here only
+# so you can see/override them.
+# region              = "ap-southeast-2"   # locked; do not change
+# environment         = "prod"
+# desired_count       = 1                  # pre-pilot: single task
+# task_cpu            = 1024
+# task_memory         = 2048
+# autoscale_min       = 1                  # pre-pilot: scale up from 1
+# autoscale_max       = 8
+# db_instance_class   = "db.t4g.small"     # pre-pilot size
+# db_multi_az         = false              # pre-pilot: single-AZ DB
+# enable_execute_command = false           # ECS Exec off unless break-glass
+# single_nat_gateway  = true               # set false for one NAT per AZ in prod
+# alarm_email         = "oncall@ratesassist.com.au"
+
+# --- PROD-GRADE FLIP (do this BEFORE the first real council PII lands) -------
+# Uncomment as a block — this is the difference between "pilot demo" and
+# "production with HA + automatic failover":
+# desired_count     = 2
+# autoscale_min     = 2
+# db_multi_az       = true
+# db_instance_class = "db.t4g.medium"
+# single_nat_gateway = false
+
+# --- Secrets: PREFER leaving these unset and using the AWS CLI (see README).
+#     If set, the values land in Terraform state. ----------------------------
+# anthropic_api_key = ""   # leave empty -> set out-of-band
+# ra_auth_secret    = ""   # leave empty -> Terraform generates a 48-char value

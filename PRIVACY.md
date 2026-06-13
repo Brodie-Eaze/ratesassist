@@ -6,8 +6,8 @@
 | **Audience** | Council privacy officers, legal counsel, OAIC where relevant |
 | **Status** | Pre-pilot. Active development. |
 | **Owner** | Brodie · `privacy@ratesassist.com.au` |
-| **Version** | 0.1 |
-| **Last updated** | 2026-05-08 |
+| **Version** | 0.2 |
+| **Last updated** | 2026-05-31 |
 
 ---
 
@@ -75,16 +75,23 @@ We do **not** use this data:
 
 ## How we protect it
 
-- **All hosting in Australia** (AWS Sydney `ap-southeast-2`)
-- **Encryption** at rest (KMS) and in transit (TLS 1.3)
-- **Field-level encryption** of highly-sensitive fields (pensioner status, hardship grounds)
-- **Tenant isolation** via row-level security in shared database (logical) or separate database (premium tier)
-- **Per-tenant credential vaulting** — TechOne tokens, Nearmap keys held in AWS Secrets Manager, never logged
-- **Audit log** captures every data read and write, immutable, tamper-evident
-- **Access control** — role-based permissions, MFA mandatory, step-up auth for high-risk operations
-- **PII minimisation in AI** — sensitive fields redacted before any data reaches Anthropic's API
+Controls are summarised here and specified in full — with per-control implementation status — in [`SECURITY.md`](SECURITY.md), which is the authoritative source. We use the same status labels and **never represent more than is true**: **in place** (deployed today), **partial** (gaps called out), **planned (Phase X)** (committed, not yet built), **aspirational** (no committed date).
 
-See [`SECURITY.md`](SECURITY.md) for the full security posture.
+| Control | Status |
+|---|---|
+| Encryption in transit (TLS 1.3) | **In place** |
+| Hosting in Australia — web tier on Vercel Sydney (`syd1`) edge | **In place** for the public web tier |
+| Production hosting on AWS Sydney (`ap-southeast-2`) — compute, RDS Postgres, S3, KMS | **Planned (Phase 6)** |
+| Encryption at rest | **Partial** — provider-managed keys on Vercel storage today; AWS KMS with customer-managed keys is **planned (Phase 6)**. We do not currently operate KMS and do not represent that we do. |
+| Field-level encryption of highly-sensitive fields (pensioner status, hardship grounds) | **Planned (Phase 3)** |
+| Tenant isolation | **In place** — every tool call is tenant-scoped and RBAC-gated in application code; database row-level security arrives with the **Phase 6** Postgres model |
+| Per-tenant credential vaulting (TechOne / Nearmap keys in AWS Secrets Manager) | **Planned (Phase 6)** with the AWS migration; no production third-party credentials are held in the pilot |
+| Append-only audit log of mutating actions (tenant, actor, action, before/after, correlation ID), hash-chained for tamper-evidence | **In place**; durable 7-year Postgres retention is **planned (Phase 2)**. The demo adapter's in-memory log is intentionally bounded — not represented as durable. |
+| Role-based access control (per-tool permissions) | **In place** in application code |
+| SSO-backed identity, MFA enforcement, and step-up authentication | **Planned (Phase 4)** — there is **no application-level MFA today**; the pilot relies on hosting-provider MFA for administrative access |
+| PII minimisation before LLM inference | **Partial** — pilot data is public DMIRS / SLIP / ABR; redaction logic for PROTECTED-class ratepayer data is **planned (Phase 3)** when first ingested |
+
+See [`SECURITY.md`](SECURITY.md) for the authoritative, continuously-updated control status.
 
 ---
 
@@ -152,7 +159,7 @@ A standard PIA template is available, completed jointly with each council custom
 
 If a breach occurs:
 
-1. We notify the affected council within 24 hours of discovery
+1. We notify the affected council without undue delay — a **72-hour internal target** from discovery, well inside the NDB scheme's 30-day statutory maximum (consistent with the `INCIDENT-RESPONSE-RUNBOOK.md` SLA)
 2. We assist the council in determining whether the breach is "eligible" under the NDB scheme
 3. We support OAIC notification within the 30-day statutory window
 4. We support council notification of affected individuals

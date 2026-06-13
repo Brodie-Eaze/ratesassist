@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   MessageSquare,
   Search,
@@ -70,8 +70,10 @@ function useOnboardingNeeded(): { code: string | null; needed: boolean } {
       try {
         const r = await fetch("/api/me");
         if (!r.ok) return;
-        const me = (await r.json()) as { tenantId?: string };
-        const code = me.tenantId ?? null;
+        // /api/me returns { ok, session: { tenantId, ... }, permissions } —
+        // the tenant id lives on session, not the envelope.
+        const me = (await r.json()) as { session?: { tenantId?: string } };
+        const code = me.session?.tenantId ?? null;
         if (!code) return;
         // Use the tools route to ask `list_properties` how many rows the
         // active council has. A 0-result response → onboarding is incomplete.
@@ -100,9 +102,25 @@ function useOnboardingNeeded(): { code: string | null; needed: boolean } {
   return state;
 }
 
+type MeSession = { displayName: string; email: string; roles: string[] };
+function useMe(): MeSession | null {
+  const [me, setMe] = useState<MeSession | null>(null);
+  useEffect(() => {
+    fetch("/api/me")
+      .then(r => r.ok ? r.json() : null)
+      .then((body: { ok?: boolean; session?: MeSession } | null) => {
+        if (body?.ok && body.session) setMe(body.session);
+      })
+      .catch(() => {});
+  }, []);
+  return me;
+}
+
 export function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
   const onboarding = useOnboardingNeeded();
+  const me = useMe();
 
   return (
     <aside className="w-64 bg-white border-r border-ink-200 flex flex-col">
@@ -177,18 +195,25 @@ export function Sidebar() {
           <Settings className="w-4 h-4 shrink-0" />
           <span>Settings</span>
         </button>
-        <button className="w-full flex items-center gap-3 px-3 py-1.5 rounded-md text-sm text-ink-700 hover:bg-ink-100">
+        <button
+          onClick={() => {
+            fetch("/api/auth/logout", { method: "POST" })
+              .then(() => router.push("/login"))
+              .catch(() => router.push("/login"));
+          }}
+          className="w-full flex items-center gap-3 px-3 py-1.5 rounded-md text-sm text-ink-700 hover:bg-ink-100"
+        >
           <LogOut className="w-4 h-4 shrink-0" />
           <span>Sign out</span>
         </button>
         <div className="px-3 pt-3 border-t border-ink-200">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-full bg-accent-100 text-accent-700 flex items-center justify-center text-xs font-semibold">
-              D
+              {me?.displayName?.[0]?.toUpperCase() ?? "?"}
             </div>
             <div className="text-xs">
-              <div className="font-medium text-ink-900">Demo Officer</div>
-              <div className="text-ink-500">Senior Rates Officer (demo)</div>
+              <div className="font-medium text-ink-900">{me?.displayName ?? "Loading…"}</div>
+              <div className="text-ink-500 truncate max-w-[120px]">{me?.email ?? ""}</div>
             </div>
           </div>
         </div>

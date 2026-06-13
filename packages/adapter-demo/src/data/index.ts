@@ -128,6 +128,17 @@ export { TENEMENTS } from "./tenements.js";
 export { TRANSACTIONS } from "./transactions.js";
 
 /**
+ * Tombstone written into the required-string PII fields of an owner record by
+ * {@link DataStore.eraseOwner} during a right-to-be-forgotten action. A
+ * distinctive sentinel (not an empty string) so it is unambiguous in the UI,
+ * in exports, and in tests that assert the original value is gone. Shared with
+ * the DB-side erasure (`apps/web/lib/privacy-erasure.ts`) so both stores
+ * de-identify to byte-identical values.
+ */
+export const ERASURE_NAME_TOMBSTONE = "[erased]";
+export const ERASURE_ADDRESS_TOMBSTONE = "[erased]";
+
+/**
  * In-memory store. The store starts from the frozen seeds but allows
  * controlled mutations through {@link replaceOwner} and {@link addNoteToProperty}
  * — the only two mutations any handler in this adapter is permitted to make.
@@ -226,25 +237,39 @@ export class DataStore {
    * Free-text search across address, suburb, postcode and assessment number.
    * Case-insensitive substring match. Empty queries are caller-responsibility
    * (the schema validates non-empty input upstream).
+   *
+   * `councilCode` restricts results to one tenant — the web layer injects the
+   * caller's tenant for non-admins so a council clerk can't enumerate another
+   * council's portfolio via search. Omitted → all councils (admin path).
    */
-  public searchProperties(query: string): readonly Property[] {
+  public searchProperties(
+    query: string,
+    councilCode?: string,
+  ): readonly Property[] {
     const q = query.toLowerCase();
     return this.properties.filter(
       (p) =>
-        p.assessmentNumber.toLowerCase().includes(q) ||
-        p.address.toLowerCase().includes(q) ||
-        p.suburb.toLowerCase().includes(q) ||
-        p.postcode.includes(q),
+        (councilCode === undefined || p.council === councilCode) &&
+        (p.assessmentNumber.toLowerCase().includes(q) ||
+          p.address.toLowerCase().includes(q) ||
+          p.suburb.toLowerCase().includes(q) ||
+          p.postcode.includes(q)),
     );
   }
 
   /**
    * Search by owner name (partial, case-insensitive), optionally restricted
    * to a single suburb (exact match, case-insensitive).
+   *
+   * `councilCode` restricts results to one tenant — see `searchProperties`.
+   * Note this scopes the returned PROPERTIES, not the owner-name match: a
+   * shared owner is still found, but only their parcels in the caller's
+   * council are returned.
    */
   public searchByOwner(
     name: string,
     suburb?: string,
+    councilCode?: string,
   ): readonly Property[] {
     const q = name.toLowerCase();
     const matchedIds = new Set(
@@ -254,6 +279,7 @@ export class DataStore {
     );
     if (matchedIds.size === 0) return [];
     return this.properties.filter((p) => {
+      if (councilCode !== undefined && p.council !== councilCode) return false;
       if (!p.ownerIds.some((id) => matchedIds.has(id))) return false;
       if (suburb === undefined) return true;
       return p.suburb.toLowerCase() === suburb.toLowerCase();
@@ -338,6 +364,72 @@ export class DataStore {
     next[idx] = updated;
     this.owners = next;
     return updated;
+  }
+
+  /**
+   * Crypto-shred / tombstone the personal information on one owner record in
+   * place, preserving the non-PII structural linkage (`ownerId`, `ownerSince`,
+   * and — implicitly — every property's `ownerIds` reference into this owner).
+   *
+   * This is the in-memory half of the right-to-be-forgotten (RTBF) flow under
+   * the *Privacy Act 1988 (Cth)* APP 11.2 (destroy or de-identify personal
+   * information no longer needed). The DB half lives in
+   * `apps/web/lib/privacy-erasure.ts`.
+   *
+   * Fields cleared:
+   *   - `name`            → {@link ERASURE_NAME_TOMBSTONE} (the field is a
+   *                         required string and is a join/identity surface, so
+   *                         we de-identify rather than drop it).
+   *   - `email`           → null
+   *   - `phone`           → null
+   *   - `postalAddress`   → {@link ERASURE_ADDRESS_TOMBSTONE} (required string).
+   *   - `previousOwners`  → [] (prior-proprietor names are themselves PII).
+   *
+   * Deliberately PRESERVED: `ownerId` (structural key — zeroing it would orphan
+   * every property), `ownerSince` (a non-identifying tenure date the rates roll
+   * needs), and `abn` / `abnCheck` (an ABN is a public business identifier, not
+   * personal information about a natural person; callers that also need the ABN
+   * shredded — e.g. a sole-trader subject — pass a wider field set at the
+   * service layer, this store applies the contact-PII minimum).
+   *
+   * IDEMPOTENT: re-erasing an already-tombstoned owner produces the identical
+   * record and reports `changed: false`, so a retried RTBF request is a clean
+   * no-op (and the service can suppress a duplicate audit row).
+   *
+   * Returns `{ before, after, changed }`, or `undefined` when the ownerId is
+   * unknown so the caller can decide whether that is a 404 or a benign skip.
+   */
+  public eraseOwner(
+    ownerId: string,
+  ):
+    | { readonly before: Owner; readonly after: Owner; readonly changed: boolean }
+    | undefined {
+    const idx = this.owners.findIndex((o) => o.ownerId === ownerId);
+    if (idx === -1) return undefined;
+    const before = this.owners[idx];
+    if (before === undefined) return undefined;
+    const after: Owner = {
+      ...before,
+      name: ERASURE_NAME_TOMBSTONE,
+      email: null,
+      phone: null,
+      postalAddress: ERASURE_ADDRESS_TOMBSTONE,
+      previousOwners: [],
+    };
+    const changed =
+      before.name !== after.name ||
+      before.email !== after.email ||
+      before.phone !== after.phone ||
+      before.postalAddress !== after.postalAddress ||
+      before.previousOwners.length !== 0;
+    if (!changed) {
+      // Already a tombstone — leave the array reference untouched.
+      return { before, after: before, changed: false };
+    }
+    const next: Owner[] = [...this.owners];
+    next[idx] = after;
+    this.owners = next;
+    return { before, after, changed: true };
   }
 
   /**

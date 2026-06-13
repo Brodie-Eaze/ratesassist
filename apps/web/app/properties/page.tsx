@@ -85,6 +85,12 @@ export default function PropertiesPage() {
               </select>
             </div>
             <div className="flex-1 overflow-y-auto">
+              {filtered.length === 0 && (
+                <div className="flex flex-col items-center justify-center py-16 text-center text-ink-500">
+                  <div className="text-sm font-medium">No properties found</div>
+                  <div className="text-xs mt-1">Try adjusting your search or filters</div>
+                </div>
+              )}
               {filtered.map((p) => {
                 const isMining = data.tenements.some((t) =>
                   t.intersectsAssessmentNumbers.includes(p.assessmentNumber),

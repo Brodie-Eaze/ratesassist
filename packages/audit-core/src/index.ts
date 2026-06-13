@@ -189,3 +189,107 @@ export function verifyChain(
   }
   return { ok: true, verified: rows.length };
 }
+
+/**
+ * Deterministic `(occurredAt, id)` comparator. Used ONLY as a tiebreak for
+ * sentinel rows and for any unlinked remainder — never as the primary chain
+ * order. Wall-clock cannot recover chain order under same-instant ties.
+ */
+function byOccurredThenId(
+  a: AuditRowWithHashes,
+  b: AuditRowWithHashes,
+): number {
+  if (a.occurredAt < b.occurredAt) return -1;
+  if (a.occurredAt > b.occurredAt) return 1;
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
+
+/**
+ * Reconstruct ONE tenant's audit rows into genuine CHAIN order by following
+ * `prevHash → rowHash` linkage, so {@link verifyChain} never raises a FALSE
+ * break when two chain-adjacent rows share an `occurredAt` millisecond.
+ *
+ * Why this exists: callers fetch audit rows with `ORDER BY occurred_at, id`.
+ * `occurredAt` comes from `new Date()`, so a burst of writes collides on the
+ * same millisecond; the wall-clock sort then interleaves chain-adjacent rows
+ * out of linked order and `verifyChain` — which walks position-by-position —
+ * reports a break on a perfectly intact chain. The hash linkage is the only
+ * authority on order; this function recovers it before verification.
+ *
+ * Handles the three real shapes:
+ *   1. Full chain — the head is the row anchored at `genesis` (its `prevHash`
+ *      is produced by no other in-set row).
+ *   2. Eviction-truncated window (`since=` queries) — the genesis-anchored row
+ *      is NOT present; the head is instead the earliest row whose `prevHash`
+ *      is produced by no in-set row. Linearises correctly from there.
+ *   3. Genuine fork / deleted row / tamper — cannot be fully linearised; the
+ *      unreachable rows are appended in `(occurredAt, id)` order so the break
+ *      still surfaces deterministically rather than being masked.
+ *
+ * Sentinel rows (`prevHash === PRE_CHAIN_SENTINEL`) are legacy, unverifiable
+ * history; emitted FIRST (verifyChain skips them) in `(occurredAt, id)` order.
+ *
+ * Pure; single-tenant input — group by tenantId before calling.
+ *
+ * @param rows    one tenant's rows, in any order
+ * @param genesis optional `genesisHash(tenantId)`; when supplied AND present in
+ *                the set it is preferred as the walk anchor (the common full-
+ *                chain case). Omit (or absent) → head is discovered structurally.
+ */
+export function orderByChainLinkage(
+  rows: ReadonlyArray<AuditRowWithHashes>,
+  genesis?: string,
+): AuditRowWithHashes[] {
+  const sentinels = rows
+    .filter((r) => r.prevHash === PRE_CHAIN_SENTINEL)
+    .slice()
+    .sort(byOccurredThenId);
+  const real = rows.filter((r) => r.prevHash !== PRE_CHAIN_SENTINEL);
+
+  // Index real rows by the prevHash they extend so we can walk the chain. A
+  // linear chain extends each prevHash exactly once; on a fork keep the first
+  // and let the remainder logic surface the rest deterministically.
+  const byPrev = new Map<string, AuditRowWithHashes>();
+  const producedHashes = new Set<string>();
+  for (const r of real) {
+    if (!byPrev.has(r.prevHash)) byPrev.set(r.prevHash, r);
+    producedHashes.add(r.rowHash);
+  }
+
+  // Pick the walk anchor. Prefer the genesis-anchored head (full chain). If
+  // genesis isn't present (eviction window), the head is the row whose prevHash
+  // no in-set row produced — i.e. the earliest unanchored row. A well-formed
+  // window has exactly one such head.
+  let start: string | undefined;
+  if (genesis !== undefined && byPrev.has(genesis)) {
+    start = genesis;
+  } else {
+    const heads = real
+      .filter((r) => !producedHashes.has(r.prevHash))
+      .slice()
+      .sort(byOccurredThenId);
+    start = heads.length > 0 ? heads[0]!.prevHash : undefined;
+  }
+
+  const ordered: AuditRowWithHashes[] = [];
+  const used = new Set<string>();
+  if (start !== undefined) {
+    let cursor = start;
+    for (;;) {
+      const next = byPrev.get(cursor);
+      if (next === undefined || used.has(next.rowHash)) break;
+      ordered.push(next);
+      used.add(next.rowHash);
+      cursor = next.rowHash;
+    }
+  }
+
+  // Anything the walk did not reach (only on a genuine fork / deletion) is
+  // appended deterministically so verifyChain still reports the break.
+  const remainder = real
+    .filter((r) => !used.has(r.rowHash))
+    .slice()
+    .sort(byOccurredThenId);
+
+  return [...sentinels, ...ordered, ...remainder];
+}

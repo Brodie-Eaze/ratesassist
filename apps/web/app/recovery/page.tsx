@@ -5,7 +5,7 @@ import { useState, useEffect, useMemo, useRef, Suspense } from "react";
 // envelope — candidates + stats only) instead of /api/data which also
 // shipped properties/owners/tenements arrays.
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Sidebar } from "@/components/Sidebar";
 import { LiveGrantsWidget } from "@/components/LiveGrantsWidget";
 import { formatAud } from "@/lib/utils";
@@ -169,6 +169,12 @@ function recoveryTypeCount(
   }
 }
 
+type OvertaxedStats = {
+  count: number;
+  annualOvercharge: number;
+  refundExposure3y: number;
+};
+
 type DataResponse = {
   mismatches: MismatchCandidate[];
   stats: {
@@ -182,6 +188,8 @@ type DataResponse = {
     highUplift: number;
     signalCounts: Record<string, number>;
   };
+  overtaxed: MismatchCandidate[];
+  overtaxedStats: OvertaxedStats;
 };
 
 const SEVERITY_BADGE = {
@@ -212,8 +220,19 @@ export default function RecoveryPage() {
 
 type CandidatesEnvelope = {
   ok: boolean;
-  data: { candidates: MismatchCandidate[]; stats: DataResponse["stats"] };
+  data: {
+    candidates: MismatchCandidate[];
+    stats: DataResponse["stats"];
+    overtaxedCandidates?: MismatchCandidate[];
+    overtaxedStats?: OvertaxedStats;
+  };
   pagination?: { total: number; limit: number; offset: number };
+};
+
+const EMPTY_OVERTAXED_STATS: OvertaxedStats = {
+  count: 0,
+  annualOvercharge: 0,
+  refundExposure3y: 0,
 };
 
 type Fetched =
@@ -233,32 +252,50 @@ function RecoveryPageInner() {
           data: {
             mismatches: envState.data.data.candidates,
             stats: envState.data.data.stats,
+            overtaxed: envState.data.data.overtaxedCandidates ?? [],
+            overtaxedStats:
+              envState.data.data.overtaxedStats ?? EMPTY_OVERTAXED_STATS,
           },
           error: null,
         }
       : envState.status === "error"
         ? { status: "error", data: null, error: envState.error }
         : { status: "loading", data: null, error: null };
-  const [filter, setFilter] = useState<"all" | "high" | "medium" | "low">("all");
-  const [signalFilter, setSignalFilter] = useState<string | "all">("all");
   /**
    * Single recovery-type filter replaces the 6 boolean toggle pills the page
    * used to show (Newly granted, Cadastre lag, Address mismatch, Title
    * mismatch, Concession review, Strata conversion). One dropdown carries
-   * the same intent without crowding the filter row. URL deep-link param
-   * stays as `?signal=<family>` for backwards compatibility with /alerts
-   * and the older links the clerks may have bookmarked.
+   * the same intent without crowding the filter row. The legacy
+   * `?signal=<family>` deep-link from /alerts and older bookmarks is
+   * still DECODED on mount (so old links keep working), but the URL is
+   * normalised to the canonical `?recoveryType=` form on first render —
+   * the legacy param shape is read-compatible, not write-preserved.
    */
   const searchParams = useSearchParams();
-  // Pre-apply the dropdown filter from `?signal=<family>` ONCE, at
-  // mount. Earlier this lived in a `useEffect([searchParams])`, which
-  // silently overrode a user's dropdown choice every time the URL
-  // changed (e.g. when a child component pushed a new query param).
-  // The initial-value form keeps deep-link compatibility for /alerts
-  // and older bookmarks but is mount-only — clicking the dropdown
-  // afterwards stays sticky.
+  const router = useRouter();
+  // Filter state is initialised from the URL ONCE at mount, then written
+  // back to the URL on every change (router.replace, no history spam).
+  // This makes Back from /recovery/[assessment] land on the SAME filtered
+  // view (a 40-candidate triage session no longer resets 39 times), and
+  // makes every filtered view bookmarkable/shareable — a manager can send
+  // `?recoveryType=cadastre_lag&severity=high` and the clerk lands in
+  // exactly the right queue. Mount-only initialisation (not a
+  // useEffect([searchParams])) so the user's dropdown click stays sticky.
+  const initialSeverity: "all" | "high" | "medium" | "low" = (() => {
+    const sev = searchParams?.get("severity");
+    return sev === "high" || sev === "medium" || sev === "low" ? sev : "all";
+  })();
+  const [filter, setFilter] = useState<"all" | "high" | "medium" | "low">(
+    initialSeverity,
+  );
+  const [signalFilter, setSignalFilter] = useState<string | "all">(
+    searchParams?.get("signalId") ?? "all",
+  );
   const initialRecoveryType: "all" | RecoveryTypeValue = (() => {
-    const sig = searchParams?.get("signal");
+    // `?recoveryType=` is the canonical param; `?signal=` is the legacy
+    // deep-link from /alerts and older bookmarks.
+    const sig =
+      searchParams?.get("recoveryType") ?? searchParams?.get("signal");
     if (
       sig === "recently_granted" ||
       sig === "cadastre_lag" ||
@@ -274,6 +311,17 @@ function RecoveryPageInner() {
   const [recoveryType, setRecoveryType] = useState<"all" | RecoveryTypeValue>(
     initialRecoveryType,
   );
+
+  // Write filter state back to the URL. replace (not push) so each filter
+  // click doesn't pollute history; scroll: false so the page doesn't jump.
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (filter !== "all") params.set("severity", filter);
+    if (recoveryType !== "all") params.set("recoveryType", recoveryType);
+    if (signalFilter !== "all") params.set("signalId", signalFilter);
+    const qs = params.toString();
+    router.replace(qs ? `/recovery?${qs}` : "/recovery", { scroll: false });
+  }, [filter, recoveryType, signalFilter, router]);
   const [recoveryDropdownOpen, setRecoveryDropdownOpen] = useState<boolean>(false);
   const [signalDropdownOpen, setSignalDropdownOpen] = useState<boolean>(false);
   const recoveryDropdownRef = useRef<HTMLDivElement | null>(null);
@@ -541,6 +589,7 @@ function RecoveryPageInner() {
                     onClick={() => setSignalDropdownOpen((v) => !v)}
                     aria-haspopup="listbox"
                     aria-expanded={signalDropdownOpen}
+                    aria-controls="signal-filter-listbox"
                     data-testid="signal-filter-trigger"
                     className={`btn ${
                       signalFilter === "all"
@@ -554,14 +603,17 @@ function RecoveryPageInner() {
                       ? "Filter by signal"
                       : signalSamples.get(signalFilter)?.short ?? "Filter by signal"}
                     <span className="text-[10px] opacity-70 ml-1">
+                      {/* Candidates, not signal firings — summing firings
+                          double-counts every candidate with >1 signal. */}
                       {signalFilter === "all"
-                        ? Object.values(data.stats.signalCounts).reduce((s, n) => s + n, 0)
+                        ? data.mismatches.length
                         : data.stats.signalCounts[signalFilter] ?? 0}
                     </span>
                     <ChevronDown className="w-3 h-3" />
                   </button>
                   {signalDropdownOpen && (
                     <div
+                      id="signal-filter-listbox"
                       role="listbox"
                       aria-label="Filter by detection signal"
                       data-testid="signal-filter-options"
@@ -570,6 +622,8 @@ function RecoveryPageInner() {
                       <button
                         role="option"
                         type="button"
+                        // eslint-disable-next-line jsx-a11y/no-autofocus
+                        autoFocus
                         onClick={() => {
                           setSignalFilter("all");
                           setSignalDropdownOpen(false);
@@ -591,10 +645,7 @@ function RecoveryPageInner() {
                           All signals
                         </span>
                         <span className="text-[10px] text-ink-500">
-                          {Object.values(data.stats.signalCounts).reduce(
-                            (s, n) => s + n,
-                            0,
-                          )}
+                          {data.mismatches.length}
                         </span>
                       </button>
                       <div className="border-t border-ink-100" />
@@ -698,6 +749,7 @@ function RecoveryPageInner() {
                 onClick={() => setRecoveryDropdownOpen((v) => !v)}
                 aria-haspopup="listbox"
                 aria-expanded={recoveryDropdownOpen}
+                aria-controls="recovery-type-listbox"
                 data-testid="recovery-type-trigger"
                 className={`btn ${
                   recoveryType === "all"
@@ -727,6 +779,7 @@ function RecoveryPageInner() {
               </button>
               {recoveryDropdownOpen && (
                 <div
+                  id="recovery-type-listbox"
                   role="listbox"
                   aria-label="Recovery type filter"
                   data-testid="recovery-type-options"
@@ -735,6 +788,8 @@ function RecoveryPageInner() {
                   <button
                     role="option"
                     type="button"
+                    // eslint-disable-next-line jsx-a11y/no-autofocus
+                    autoFocus
                     onClick={() => {
                       setRecoveryType("all");
                       setRecoveryDropdownOpen(false);
@@ -807,7 +862,6 @@ function RecoveryPageInner() {
                 key={c.assessmentNumber}
                 candidate={c}
                 rank={i + 1}
-                showStrataConvert={recoveryType === "strata_conversion"}
               />
             ))}
             {filtered.length === 0 && (
@@ -816,6 +870,17 @@ function RecoveryPageInner() {
               </div>
             )}
           </div>
+
+          {/* Over-rated properties — "review & refund" governance surface.
+              Distinct from the amber/red recovery list: muted accent-blue,
+              framed as a council LIABILITY (money the council may owe back),
+              not an opportunity. Only renders when the engine found any. */}
+          {data.overtaxedStats.count > 0 && (
+            <OvertaxedSection
+              overtaxed={data.overtaxed}
+              stats={data.overtaxedStats}
+            />
+          )}
         </div>
       </main>
     </div>
@@ -849,14 +914,99 @@ function Stat({
   );
 }
 
+/**
+ * Over-rated ("review & refund") section. The recovery list is money the
+ * council can RECOVER (amber/red urgency); this is the inverse — properties
+ * the engine believes are being OVER-rated, i.e. money the council may OWE.
+ * Treated in muted accent-blue (a governance/integrity tone, not an alarm),
+ * framed honestly as exposure to be reviewed, never as guaranteed liability.
+ */
+function OvertaxedSection({
+  overtaxed,
+  stats,
+}: {
+  overtaxed: MismatchCandidate[];
+  stats: OvertaxedStats;
+}) {
+  return (
+    <section
+      className="card p-5 mt-6 bg-accent-50/40 border-accent-300"
+      aria-label="Over-rated properties for refund review"
+      data-testid="overtaxed-section"
+    >
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div className="flex items-center gap-2">
+          <Scale className="w-5 h-5 text-accent-600" />
+          <div>
+            <h2 className="text-base font-semibold text-ink-900">
+              Review &amp; refund — possibly over-rated
+            </h2>
+            <p className="text-xs text-ink-500 mt-0.5">
+              The engine estimates the correct category is{" "}
+              <span className="font-medium">cheaper</span> than the current
+              rate for {stats.count}{" "}
+              {stats.count === 1 ? "property" : "properties"}. Review before any
+              refund — figures are advisory, not a determination.
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-6 shrink-0">
+          <div className="text-right">
+            <div className="label">Annual over-charge</div>
+            <div className="text-xl font-semibold text-ink-900 tabular-nums">
+              {formatAud(stats.annualOvercharge)}
+            </div>
+          </div>
+          <div className="text-right">
+            <div className="label">Refund exposure (3y)</div>
+            <div className="text-xl font-semibold text-ink-900 tabular-nums">
+              {formatAud(stats.refundExposure3y)}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-4 border-t border-accent-200 pt-3 space-y-2">
+        {overtaxed.map((c) => (
+          <Link
+            key={c.assessmentNumber}
+            href={`/recovery/${c.assessmentNumber}`}
+            data-testid="overtaxed-row"
+            className="flex items-center justify-between gap-3 rounded-md px-3 py-2 hover:bg-accent-50 transition-colors"
+          >
+            <span className="flex items-center gap-2 min-w-0">
+              <code className="text-xs text-accent-700 font-mono font-medium shrink-0">
+                {c.assessmentNumber}
+              </code>
+              <span className="text-sm text-ink-700 truncate">
+                {c.property.address}, {c.property.suburb}
+              </span>
+            </span>
+            <span className="flex items-center gap-2 shrink-0">
+              <span className="text-sm font-medium text-ink-900 tabular-nums">
+                −{formatAud(Math.abs(c.estUplift))}/yr
+              </span>
+              <ArrowUpRight className="w-3 h-3 text-ink-400" />
+            </span>
+          </Link>
+        ))}
+        {stats.count > overtaxed.length && (
+          <div className="text-xs text-ink-500 px-3 pt-1">
+            Showing {overtaxed.length} of {stats.count}. The exposure figures
+            above cover all {stats.count}.
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
 function CandidateCard({
   candidate: c,
   rank,
-  showStrataConvert,
 }: {
   candidate: MismatchCandidate;
   rank: number;
-  showStrataConvert: boolean;
 }) {
   const isRecentlyGranted = c.signals.some(
     (s) => s.id === RECENTLY_GRANTED_SIGNAL_ID,
@@ -871,8 +1021,10 @@ function CandidateCard({
   // Parse the lag-days figure out of the evidence string for a quick badge.
   const lagDaysMatch = cadastreLagSignal?.evidence.match(/Cadastre lag: (\d+) days?/);
   const lagDays = lagDaysMatch ? Number(lagDaysMatch[1]) : null;
-  const hasStrataParent = strataConversionSignal !== undefined;
-  const exposeConvertButton = showStrataConvert && hasStrataParent;
+  // Actions surface from DATA, not filter modes. The Convert button used to
+  // be gated behind the strata_conversion filter being active — the
+  // highest-value action in the product was invisible in the default view.
+  const exposeConvertButton = strataConversionSignal !== undefined;
   return (
     <div
       className="card p-5 hover:border-accent-400 transition-colors relative"
@@ -945,7 +1097,7 @@ function CandidateCard({
             {c.property.address}, {c.property.suburb}
           </div>
           <div className="text-sm text-ink-600 mt-1">
-            Headline: {c.kind}
+            {c.kind}
           </div>
           {/* Signal trail */}
           <SignalRow signals={c.signals} />
@@ -956,7 +1108,7 @@ function CandidateCard({
             {formatAud(c.estUplift)}
           </div>
           <div className="text-xs text-ink-500">
-            {formatAud(c.property.annualRates)} → {formatAud(c.estAnnualRatesNew)}
+            {c.property.annualRates ? formatAud(c.property.annualRates) : "—"} → {formatAud(c.estAnnualRatesNew)}
           </div>
           <ScoreBar score={c.compositeScore} />
           <div className="text-xs text-success-700 mt-1 flex items-center justify-end gap-1">

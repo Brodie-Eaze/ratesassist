@@ -9,7 +9,7 @@
 
 [![CI](https://img.shields.io/badge/CI-passing-brightgreen.svg)](./.github/workflows/ci.yml)
 [![Node](https://img.shields.io/badge/node-%3E%3D20-blue.svg)](./.nvmrc)
-[![Tests](https://img.shields.io/badge/tests-86-brightgreen.svg)](./TESTING.md)
+[![Tests](https://img.shields.io/badge/tests-1034-brightgreen.svg)](./TESTING.md)
 [![Region](https://img.shields.io/badge/region-AU%20Sydney-blue.svg)](./SECURITY.md)
 [![Status](https://img.shields.io/badge/status-pilot--ready-success.svg)](./internal/PROGRESS-SCORECARD.md)
 [![Perf](https://img.shields.io/badge/5%2C000%20properties-%3C20ms-success.svg)](./reports)
@@ -27,7 +27,7 @@
 | **Stack** | TypeScript, MCP, Anthropic Claude, AWS Sydney (Phase 6) |
 | **Data residency** | All application data + audit logs in Australia |
 | **Audit posture** | Tamper-evident chain, 7-year retention (LGA 1995 / State Records Act 2000) |
-| **Test count** | 86 tests, all green |
+| **Test count** | 1,034 tests, all green |
 | **Perf** | 5,000-property council sweep in < 20 ms ([reports/](./reports)) |
 
 ---
@@ -45,7 +45,7 @@
  ┌──────────────┐            ┌──────────────┐            ┌──────────────┐
  │  DETECTION   │            │  EVIDENCE    │            │  RECOVERY    │
  ├──────────────┤            ├──────────────┤            ├──────────────┤
- │ 22 signals   │  ───────►  │ Audit-grade  │  ───────►  │ Accurate     │
+ │ 33+ signals  │  ───────►  │ Audit-grade  │  ───────►  │ Accurate     │
  │ DMIRS ×      │            │ pack per     │            │ uplift +     │
  │ Landgate ×   │            │ candidate    │            │ backdated    │
  │ ABR × EMITS  │            │ formula +    │            │ arrears with │
@@ -55,7 +55,7 @@
  └──────────────┘            └──────────────┘            └──────────────┘
 ```
 
-1. **Detection.** The recovery engine evaluates 22 calibrated signals
+1. **Detection.** The recovery engine evaluates 33+ calibrated signals
    per property — producing tenements on rural-rated land, DMIRS records
    ahead of the Landgate cadastre (the headline edge), cancelled ABNs,
    recent grants inside the 30-day appeal window, subdivisions, EMITS
@@ -74,8 +74,18 @@
    council's published differential-rate table when one is available
    and falls back to a heuristic ratio (8× / 4× / 1.5×) only when no
    table is on file — explicitly marked. Backdating is bracketed at
-   both the conservative 3-year practical cap and the WA LGA 1995
-   s.6.81 5-year statutory ceiling.
+   both the conservative 3-year practical cap and the **5-year statutory
+   ceiling** (WA LGA 1995 — the exact section, s.6.39 vs s.6.81, is pending
+   legal confirmation, so both figures are surfaced and never over-claimed).
+
+**The edge (2026).** Beyond per-parcel detection: live DMIRS tenement
+geometry is fetched and intersected against parcels in real time
+(`RA_LIVE_TENEMENTS`, flag-gated, DB fallback); an **IAAO ratio-study
+engine** (Coefficient of Dispersion / PRD / PRB) surfaces *systemic,
+category-level* under-assessment across the whole roll as an **Assessment
+Roll Quality** report (`/roll-quality`); and contested-law recoveries
+(e.g. miscellaneous licences under the 2025 Bill) carry a **legal-risk
+callout** at the top of the evidence pack. See [`RatesAssist-PRD.md`](./RatesAssist-PRD.md).
 
 ---
 
@@ -95,7 +105,7 @@ open http://localhost:3000/landing
 Other useful commands:
 
 ```bash
-npm test                # 86 tests across all workspaces
+npm test                # 1,034 tests across all workspaces
 npm run typecheck       # tsc --noEmit, all workspaces
 npm run ship-check      # typecheck + tests + build + audit + wiring guard
 npm run perf            # 5,000-property recovery sweep benchmark
@@ -121,7 +131,7 @@ npm run dmirs-pull      # live DMIRS tenement pull for a council
 ┌────────────────────────┐    ┌────────────────────────────────┐
 │ packages/recovery-     │    │ packages/spatial                │
 │ engine                 │    │ - SLIP / ArcGIS REST            │
-│ - 22-signal catalogue  │    │ - DMIRS WFS probes              │
+│ - 33+ signal catalogue │    │ - DMIRS WFS probes              │
 │ - composite scoring    │    │ - Landgate cadastre reads       │
 │ - exclusive groups     │    │ - EMITS environmental approvals │
 │ - accurate uplift      │    │ - Lag-window cross-register     │
@@ -208,6 +218,7 @@ council ICT reviewer can see the status without reading code.
 |---|---|
 | **Council ICT / audit / procurement** | [`SECURITY.md`](./SECURITY.md), [`PRIVACY.md`](./PRIVACY.md), [`DATA-CLASSIFICATION-MATRIX.md`](./DATA-CLASSIFICATION-MATRIX.md), [`PRIVACY-IMPACT-ASSESSMENT.md`](./PRIVACY-IMPACT-ASSESSMENT.md) |
 | **Deploying** | [`DEPLOY.md`](./DEPLOY.md), [`internal/PRODUCTION-CHECKLIST.md`](./internal/PRODUCTION-CHECKLIST.md) (when present), [`internal/OBSERVABILITY.md`](./internal/OBSERVABILITY.md) |
+| **Product / requirements** | [`RatesAssist-PRD.md`](./RatesAssist-PRD.md) (the PRD), [`internal/EDGE-SHARPENING-WA.md`](./internal/EDGE-SHARPENING-WA.md) (edge strategy + deep research) |
 | **Engineers extending the platform** | [`RatesAssist.md`](./RatesAssist.md) (master spec), [`PRODUCTION-PLAN.md`](./PRODUCTION-PLAN.md), [`internal/UPLIFT-FORMULA.md`](./internal/UPLIFT-FORMULA.md), [`packages/contract/src/index.ts`](./packages/contract/src/index.ts) |
 | **Investors / board members** | [`internal/PROGRESS-SCORECARD.md`](./internal/PROGRESS-SCORECARD.md), [`internal/PILOT-PITCH.md`](./internal/PILOT-PITCH.md) |
 | **On-call** | [`ON-CALL.md`](./ON-CALL.md), [`INCIDENT-RESPONSE-RUNBOOK.md`](./INCIDENT-RESPONSE-RUNBOOK.md), [`SLA.md`](./SLA.md) |

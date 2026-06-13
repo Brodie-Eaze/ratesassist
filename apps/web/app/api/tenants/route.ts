@@ -21,14 +21,29 @@ import {
   listTenants,
 } from "@/lib/tenants";
 import { getSessionFromRequest, hasPermission } from "@/lib/auth";
+import { fail, resolveRouteSession } from "@/lib/api-helpers";
 import { runTool } from "@/lib/tools";
 import { scoped } from "@/lib/logger";
 
 export const runtime = "nodejs";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  // Tenant registrations carry per-council confidential data (legal name,
+  // ABN, contract type, isolation model, uplift-pipeline $). Require a
+  // session and scope the list to the caller's own council unless they are
+  // platform_admin (cross-tenant ops/support). The adapter catalogue is a
+  // static product catalogue and the benchmarks are k-anonymous anonymised
+  // aggregates — both safe for any authenticated session.
+  const session = await resolveRouteSession(req);
+  if (session === null) {
+    return fail("unauthorized", "Authentication required.");
+  }
+  const isAdmin = session.roles.includes("platform_admin");
+  const tenants = isAdmin
+    ? listTenants()
+    : listTenants().filter((t) => t.council.code === session.tenantId);
   return NextResponse.json({
-    tenants: listTenants(),
+    tenants,
     catalogue: ADAPTER_CATALOGUE,
     benchmarks: crossCouncilBenchmarks(),
   });

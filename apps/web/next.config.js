@@ -21,6 +21,8 @@
  * the prod build serves traffic, both locally via `next start` and on
  * Vercel.
  */
+const path = require("path");
+
 const isProd = process.env.NODE_ENV === "production";
 
 // Next.js 14 App Router bootstraps every page with 5+ inline <script> tags
@@ -86,6 +88,14 @@ const SECURITY_HEADERS = [
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  // Emit a self-contained server bundle (.next/standalone) for the Docker
+  // runtime stage — no need to ship node_modules or run `next start`.
+  output: "standalone",
+  // This app lives in apps/web inside an npm-workspaces monorepo. Point the
+  // standalone file tracer at the REPO ROOT (two levels up) so it follows and
+  // includes the linked @ratesassist/* workspace packages; without this Next
+  // infers the root from the lockfile and can miss hoisted workspace deps.
+  outputFileTracingRoot: path.join(__dirname, "../../"),
   async headers() {
     return [
       {

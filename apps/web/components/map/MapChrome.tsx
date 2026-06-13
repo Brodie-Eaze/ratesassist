@@ -3,29 +3,26 @@
 /**
  * MapChrome — the static, presentational decorations layered over the map.
  *
- * Single responsibility: render the north arrow, overlap badge, legend, and
- * print watermark. Stateless — the parent decides what's shown via props.
+ * Single responsibility: render the north arrow, legend, and print watermark.
+ * Stateless — the parent decides what's shown via props.
+ *
+ * The overlap tooltip was moved to PolygonLayers (fires on hover, not page-load).
  *
  * Pulled out of the orchestrator so PropertyMap stays close to pure
  * composition.
  */
 
 import { Compass } from "lucide-react";
-import { m2ToHa } from "@/lib/polygonClip";
-import type { OverlapStats } from "./types";
 
 export type MapChromeProps = {
   /** True if the stats card is currently open — shifts the north arrow left. */
   statsOpen: boolean;
-  /** Pre-computed overlap stats, if any. Drives the centred overlap badge. */
-  overlap: OverlapStats | null;
   /** When true, show the bottom "confidential" print watermark. */
   isPrint: boolean;
 };
 
 export default function MapChrome({
   statsOpen,
-  overlap,
   isPrint,
 }: MapChromeProps): JSX.Element {
   return (
@@ -52,29 +49,8 @@ export default function MapChrome({
         <Compass size={22} color="#1a52d4" />
       </div>
 
-      {/* Overlap badge (always visible if overlap exists) */}
-      {overlap && (
-        <div
-          style={{
-            position: "absolute",
-            top: 12,
-            left: "50%",
-            transform: "translateX(-50%)",
-            zIndex: 1000,
-            background: "rgba(202, 138, 4, 0.95)",
-            color: "white",
-            padding: "5px 12px",
-            borderRadius: 4,
-            fontSize: 12,
-            fontWeight: 700,
-            boxShadow: "0 2px 8px rgba(0,0,0,0.25)",
-            letterSpacing: 0.5,
-          }}
-        >
-          OVERLAP: {m2ToHa(overlap.areaM2).toFixed(1)} ha (
-          {overlap.percentOfParcel.toFixed(0)}% of parcel)
-        </div>
-      )}
+      {/* Overlap badge removed — tooltip now lives on the overlap polygon in
+          PolygonLayers.tsx and fires on hover only (not page-load). */}
 
       {/* Legend (bottom-left, above scale) */}
       <div

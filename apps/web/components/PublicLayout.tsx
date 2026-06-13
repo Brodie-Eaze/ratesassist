@@ -14,6 +14,14 @@ import Link from "next/link";
 
 import { Wordmark } from "./Brand";
 
+/* Keyboard-focus treatment (WCAG 2.4.7). The design system is hover-only;
+ * these append a visible focus-visible ring so keyboard users can see where
+ * they are. Shared across every public page that renders this chrome. */
+const FOCUS_LINK =
+  "rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-600 focus-visible:ring-offset-2";
+const FOCUS_BTN =
+  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-600 focus-visible:ring-offset-2";
+
 const TRUST_FOOTER_LINKS: ReadonlyArray<{ href: string; label: string }> = [
   { href: "/trust", label: "Trust centre" },
   { href: "/security", label: "Security" },
@@ -26,29 +34,44 @@ const TRUST_FOOTER_LINKS: ReadonlyArray<{ href: string; label: string }> = [
 export function PublicLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-screen flex-col bg-white text-ink-900 font-sans">
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-accent-600 focus:px-4 focus:py-2 focus:text-sm focus:text-white"
+      >
+        Skip to content
+      </a>
       <header className="border-b border-ink-100">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
           <Wordmark size="md" />
           <nav className="flex items-center gap-4 text-sm">
-            <Link href="/trust" className="text-ink-600 hover:text-ink-900">
+            <Link
+              href="/how-it-works"
+              className={`text-ink-600 hover:text-ink-900 ${FOCUS_LINK}`}
+            >
+              How it works
+            </Link>
+            <Link
+              href="/trust"
+              className={`text-ink-600 hover:text-ink-900 ${FOCUS_LINK}`}
+            >
               Trust
             </Link>
             <a
               href="mailto:brodie@amalafinance.com.au"
-              className="text-ink-600 hover:text-ink-900"
+              className={`text-ink-600 hover:text-ink-900 ${FOCUS_LINK}`}
             >
               Contact
             </a>
             <Link
               href="/login"
-              className="rounded-md bg-accent-600 px-3 py-1.5 text-white hover:bg-accent-700"
+              className={`rounded-md bg-accent-600 px-3 py-1.5 text-white hover:bg-accent-700 ${FOCUS_BTN}`}
             >
               Sign in
             </Link>
           </nav>
         </div>
       </header>
-      <main className="flex-1">{children}</main>
+      <main id="main-content" className="flex-1">{children}</main>
       <footer className="border-t border-ink-100 bg-ink-50">
         <div className="mx-auto flex max-w-6xl flex-col gap-4 px-6 py-8 text-sm text-ink-600 md:flex-row md:items-start md:justify-between">
           <p className="max-w-md">
@@ -59,7 +82,10 @@ export function PublicLayout({ children }: { children: React.ReactNode }) {
             <ul className="grid grid-cols-2 gap-x-6 gap-y-1 md:grid-cols-3">
               {TRUST_FOOTER_LINKS.map((l) => (
                 <li key={l.href}>
-                  <Link href={l.href} className="hover:text-ink-900">
+                  <Link
+                    href={l.href}
+                    className={`hover:text-ink-900 ${FOCUS_LINK}`}
+                  >
                     {l.label}
                   </Link>
                 </li>
@@ -96,9 +122,9 @@ export function TrustPageShell({
         <div className="mb-8">
           <Link
             href="/"
-            className="text-sm text-ink-500 hover:text-ink-900"
+            className={`text-sm text-ink-500 hover:text-ink-900 ${FOCUS_LINK}`}
           >
-            ← Back to product
+            <span aria-hidden="true">←</span> Back to product
           </Link>
         </div>
         {eyebrow ? (

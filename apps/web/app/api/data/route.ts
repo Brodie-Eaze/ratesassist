@@ -18,12 +18,13 @@
 import { NextResponse } from "next/server";
 import { findMismatches } from "@ratesassist/recovery-engine";
 import { COUNCILS, OWNERS, PROPERTIES, TENEMENTS } from "@/lib/data";
-import { getEvaluationContext, recoveryStatsFor } from "@/lib/clients";
+import { getEvaluationContextForTenant, recoveryStatsFor } from "@/lib/clients";
 import {
   resolveRouteSession,
   sessionMayAccessTenant,
   tenantFromAssessmentNumber,
 } from "@/lib/api-helpers";
+import { getClientIp, rateLimitComposite, retryAfterSeconds } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 
@@ -60,9 +61,18 @@ export async function GET(req: Request) {
       { status: 401 },
     );
   }
+  const ip = getClientIp(req as import("next/server").NextRequest);
+  const rl = rateLimitComposite({ scope: "data", ip, tenantId: session.tenantId, max: 30 });
+  if (!rl.ok) {
+    return NextResponse.json(
+      { ok: false, code: "rate_limited", error: "Too many requests" },
+      { status: 429, headers: { "Retry-After": retryAfterSeconds(rl.resetAt) } }
+    );
+  }
   const isPlatformAdmin = session.roles.includes("platform_admin");
 
-  const ctx = getEvaluationContext();
+  // E3: per-tenant SQL-scoped context.
+  const ctx = await getEvaluationContextForTenant(session.tenantId);
   const mismatches = findMismatches(ctx);
 
   // Scope mismatches by the tenant prefix on the candidate's

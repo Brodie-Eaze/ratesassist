@@ -36,10 +36,11 @@
  *     the REVOKE in 0001_init.sql refuses the same UPDATE.
  */
 
-import { sql, eq, asc } from "drizzle-orm";
+import { sql, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
 import {
+  PRE_CHAIN_SENTINEL,
   chainHash,
   genesisHash,
   verifyChain,
@@ -76,37 +77,123 @@ async function seedTenant(
   return { id: row.id, code };
 }
 
+/**
+ * Reconstruct the tenant's audit rows in TRUE CHAIN ORDER (the precondition
+ * `verifyChain` documents: rows must arrive in chain order, not merely time
+ * order).
+ *
+ * Why not `ORDER BY occurred_at ASC, id ASC` (the old implementation):
+ * `occurred_at` is stamped from `new Date()` in the writer, so a tight burst
+ * of appends collides on the same millisecond. Sorting by `(occurred_at, id)`
+ * then interleaves rows that are *adjacent in the chain* out of their linked
+ * order — and `verifyChain`, which walks the array position-by-position, sees
+ * a `prev_hash` that doesn't match the previous element and reports a FALSE
+ * break on a perfectly intact chain. A wall-clock column can never recover
+ * chain order under ties; the linkage is the only authority.
+ *
+ * Reconstruction:
+ *   1. Sentinel rows (`prev_hash = __PRE_CHAIN__`, stamped by the 0002
+ *      backfill) are unverifiable legacy history and do not link into the
+ *      real chain. We emit them FIRST, ordered by `(occurred_at, id)` — this
+ *      matches how the migration-replay test expects them (sentinels first,
+ *      modern chain last) and `verifyChain` skips them anyway.
+ *   2. Real rows are walked by following `prev_hash → row_hash` edges starting
+ *      from the genesis-anchored head (the row whose `prev_hash =
+ *      genesisHash(tenantId)`), producing the genuine linear order.
+ *   3. Any real row not reachable by linkage (cannot happen on an intact
+ *      chain — defence-in-depth) is appended in `(occurred_at, id)` order so
+ *      a genuine fork still surfaces deterministically rather than hanging.
+ *
+ * The DB read itself is unordered; ordering is reconstructed in memory.
+ */
 async function loadChainOrdered(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   db: any,
   tenantId: string,
 ): Promise<AuditRowWithHashes[]> {
-  const rows = await db
+  const raw = await db
     .select()
     .from(auditLog)
-    .where(eq(auditLog.tenantId, tenantId))
-    .orderBy(asc(auditLog.occurredAt), asc(auditLog.id));
-  return rows.map((r: typeof auditLog.$inferSelect): AuditRowWithHashes => ({
-    id: r.id,
-    tenantId: r.tenantId,
-    actorId: r.actorId,
-    actorKind: r.actorKind,
-    action: r.action,
-    targetType: r.targetType,
-    targetId: r.targetId,
-    before: r.before ?? null,
-    after: r.after ?? null,
-    correlationId: r.correlationId ?? null,
-    ip: r.ip ?? null,
-    userAgent: r.userAgent ?? null,
-    // The chain hashes `occurredAt` as the row's ISO string. The DB
-    // round-trips it as a Date; serialise back consistently.
-    occurredAt: r.occurredAt instanceof Date
-      ? r.occurredAt.toISOString()
-      : String(r.occurredAt),
-    prevHash: r.prevHash ?? "",
-    rowHash: r.rowHash ?? "",
-  }));
+    .where(eq(auditLog.tenantId, tenantId));
+  const all: AuditRowWithHashes[] = raw.map(
+    (r: typeof auditLog.$inferSelect): AuditRowWithHashes => ({
+      id: r.id,
+      tenantId: r.tenantId,
+      actorId: r.actorId,
+      actorKind: r.actorKind,
+      action: r.action,
+      targetType: r.targetType,
+      targetId: r.targetId,
+      before: r.before ?? null,
+      after: r.after ?? null,
+      correlationId: r.correlationId ?? null,
+      ip: r.ip ?? null,
+      userAgent: r.userAgent ?? null,
+      // The chain hashes `occurredAt` as the row's ISO string. The DB
+      // round-trips it as a Date; serialise back consistently.
+      occurredAt:
+        r.occurredAt instanceof Date
+          ? r.occurredAt.toISOString()
+          : String(r.occurredAt),
+      prevHash: r.prevHash ?? "",
+      rowHash: r.rowHash ?? "",
+    }),
+  );
+  return orderByChainLinkage(all, genesisHash(tenantId));
+}
+
+/**
+ * Deterministic `(occurredAt, id)` comparator — used only for sentinel rows
+ * and for any unlinked remainder (a genuine fork).
+ */
+function byTimeThenId(a: AuditRowWithHashes, b: AuditRowWithHashes): number {
+  if (a.occurredAt < b.occurredAt) return -1;
+  if (a.occurredAt > b.occurredAt) return 1;
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
+
+/**
+ * Order a single tenant's rows by genuine chain linkage. See
+ * {@link loadChainOrdered} for the rationale. Pure; no I/O.
+ */
+function orderByChainLinkage(
+  rows: ReadonlyArray<AuditRowWithHashes>,
+  genesis: string,
+): AuditRowWithHashes[] {
+  const sentinels = rows
+    .filter((r) => r.prevHash === PRE_CHAIN_SENTINEL)
+    .slice()
+    .sort(byTimeThenId);
+  const real = rows.filter((r) => r.prevHash !== PRE_CHAIN_SENTINEL);
+
+  // Index real rows by the prev_hash they extend, so we can walk the chain.
+  const byPrev = new Map<string, AuditRowWithHashes>();
+  for (const r of real) {
+    // A linear chain extends each prev_hash exactly once. If we ever see a
+    // duplicate prev_hash that's a genuine fork — keep the first and let the
+    // unlinked remainder logic surface the rest deterministically.
+    if (!byPrev.has(r.prevHash)) byPrev.set(r.prevHash, r);
+  }
+
+  const ordered: AuditRowWithHashes[] = [];
+  const used = new Set<string>();
+  let cursor = genesis;
+  // Follow genesis → head → … → tail.
+  for (;;) {
+    const next = byPrev.get(cursor);
+    if (next === undefined || used.has(next.rowHash)) break;
+    ordered.push(next);
+    used.add(next.rowHash);
+    cursor = next.rowHash;
+  }
+
+  // Append any real rows the walk did not reach (only on a genuine fork).
+  const remainder = real
+    .filter((r) => !used.has(r.rowHash))
+    .slice()
+    .sort(byTimeThenId);
+
+  return [...sentinels, ...ordered, ...remainder];
 }
 
 describe("audit chain — single-writer correctness", () => {

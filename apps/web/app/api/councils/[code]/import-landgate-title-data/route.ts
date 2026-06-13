@@ -16,6 +16,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 
+import { assertSessionMayWriteCouncil } from "@/lib/api-helpers";
 import { getSessionFromRequest, hasPermission } from "@/lib/auth";
 import { invalidateEvaluationContext } from "@/lib/clients";
 import { scoped } from "@/lib/logger";
@@ -23,7 +24,7 @@ import {
   correlationIdFromHeaders,
   runWithCorrelation,
 } from "@/lib/correlation";
-import { getClientIp } from "@/lib/rate-limit";
+import { getClientIp, rateLimitComposite, retryAfterSeconds } from "@/lib/rate-limit";
 import { runTool } from "@/lib/tools";
 
 export const runtime = "nodejs";
@@ -175,6 +176,23 @@ export async function POST(
         );
       }
 
+      // A6-NEW-02: bulk imports are expensive two-phase-commit mutations —
+      // tight per-(tenant, ip) limit so a wedged retry loop or scripted
+      // caller can't hammer the ingest path.
+      const rlImport = rateLimitComposite({
+        scope: "council-import-landgate",
+        ip,
+        tenantId: session.tenantId,
+        max: 3,
+      });
+      if (!rlImport.ok) {
+        log.warn({ event: "rate_limited" });
+        return NextResponse.json(
+          { ok: false, code: "rate_limited", message: "Too many requests" },
+          { status: 429, headers: { "Retry-After": retryAfterSeconds(rlImport.resetAt) } },
+        );
+      }
+
       if (!/^[A-Z]{2,5}$/.test(code)) {
         return NextResponse.json(
           {
@@ -185,6 +203,18 @@ export async function POST(
           { status: 400 },
         );
       }
+
+      // F-004 mitigation — a session bound to council A must not write
+      // into council B by hand-crafting the [code] path segment.
+      // platform_admin bypasses for cross-tenant ops/support; every
+      // refusal emits a cross_tenant_refused audit signal.
+      const crossTenant = assertSessionMayWriteCouncil(
+        session,
+        code,
+        log,
+        `/api/councils/${code}/import-landgate-title-data`,
+      );
+      if (crossTenant) return crossTenant;
 
       const parsed = await readImportInput(req);
       if (!parsed.ok) {

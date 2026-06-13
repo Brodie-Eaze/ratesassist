@@ -53,6 +53,20 @@ const REDACT_PATHS: readonly string[] = [
   "*.phone",
   "abn",
   "*.abn",
+  // Ratepayer/owner PII fields. Defence-in-depth: the primary control is
+  // never logging owner objects, but a stray `logger.info({ owner })` must
+  // not spill a name or address into a log sink. Shallow-path coverage
+  // mirrors the email/phone entries above (pino `*` matches one level).
+  // `error.name` is unaffected — the error serialiser emits the type under
+  // `error.type`, not `.name`.
+  "name",
+  "*.name",
+  "displayName",
+  "*.displayName",
+  "postalAddress",
+  "*.postalAddress",
+  "address",
+  "*.address",
   "headers.authorization",
   "headers.Authorization",
   "headers.cookie",

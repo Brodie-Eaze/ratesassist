@@ -89,3 +89,48 @@ export {
   type DpirdLanduseFailure,
   type FetchDpirdLanduseOpts,
 } from "./dpird.js";
+export {
+  fetchSarigTenementsForRegion,
+  parseSarigFeatureCollection,
+  isAllowedSarigBase,
+  type FetchSarigOptions,
+  type SarigFetchResult,
+  type SarigErrorCode,
+} from "./sarig.js";
+export {
+  fetchQldTenementsForRegion,
+  parseQldFeatureCollection,
+  isAllowedQldBase,
+  type FetchQldOptions,
+  type QldFetchResult,
+  type QldErrorCode,
+} from "./qld.js";
+export {
+  DATA_SOURCES,
+  listDataSources,
+  getDataSource,
+  freeDataSources,
+  type DataSourceDescriptor,
+  type DataSourceKind,
+  type DataSourceStatus,
+  type DataSourceCost,
+  type Jurisdiction,
+  type DataCategory,
+} from "./dataSources.js";
+export {
+  mapSlipFeatureToTenement,
+  mapSlipFeaturesToTenements,
+  fetchLiveTenementsForBbox,
+} from "./tenementMapping.js";
+export {
+  pointInPolygon,
+  assignTenementIntersections,
+  groupTenementsByAssessment,
+  type IntersectableParcel,
+} from "./intersection.js";
+export {
+  boundingBoxForPoints,
+  buildLiveTenementsByAssessment,
+  type LiveTenementContextResult,
+  type BuildLiveTenementsOptions,
+} from "./liveContext.js";

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { buildEvidencePack } from "@ratesassist/recovery-engine";
-import { getEvaluationContext } from "@/lib/clients";
+import { getEvaluationContextForTenant } from "@/lib/clients";
 import {
   resolveRouteSession,
   sessionMayAccessTenant,
@@ -51,8 +51,44 @@ export async function GET(
     );
   }
 
-  const result = buildEvidencePack(assessment, getEvaluationContext());
+  // E3: per-tenant SQL-scoped context. Scoped to the ASSET's tenant (not
+  // the session's) so platform_admin cross-tenant reads — already
+  // authorised by sessionMayAccessTenant above — resolve the right
+  // council's data. The context still only ever contains one tenant.
+  const evalCtx = await getEvaluationContextForTenant(
+    assetTenant ?? session.tenantId,
+  );
+  const result = buildEvidencePack(assessment, evalCtx);
   if (result.kind !== "ok") {
+    // Discriminated failure surface — `no_owner` and `no_state_template`
+    // are NOT "asset doesn't exist": they are data-integrity / coverage
+    // states the caller can act on. Collapsing them into a 404 sends a
+    // clerk off verifying the assessment number when the real fix is
+    // reconciling the owner table (no_owner) or contacting support
+    // (no_state_template).
+    if (result.kind === "no_owner") {
+      return NextResponse.json(
+        {
+          error: "no pack",
+          reason: result.kind,
+          code: "owner_missing",
+          actionRequired:
+            "No owner record is linked to this property. Reconcile the owner table in the rating system before generating this pack.",
+        },
+        { status: 422 },
+      );
+    }
+    if (result.kind === "no_state_template") {
+      return NextResponse.json(
+        {
+          error: "no pack",
+          reason: result.kind,
+          code: "jurisdiction_unsupported",
+          supportedStates: ["WA"],
+        },
+        { status: 501 },
+      );
+    }
     return NextResponse.json(
       { error: "no pack", reason: result.kind },
       { status: 404 },

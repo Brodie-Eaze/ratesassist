@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { runChat, isLive } from "@/lib/llm";
+import { resolveRouteSession } from "@/lib/api-helpers";
 import {
   exceedsBodyCap,
   getClientIp,
-  rateLimit,
+  rateLimitComposite,
   retryAfterSeconds,
 } from "@/lib/rate-limit";
 import { scoped } from "@/lib/logger";
@@ -28,6 +29,18 @@ const ChatRequestSchema = z.object({
   message: z.string().min(1).max(8000),
 });
 
+/**
+ * AI-safety kill switch. Setting `RA_CHAT_KILL=1` disables the LLM/agent chat
+ * surface instantly — no redeploy — returning 503 to callers. This is the
+ * break-glass control for a prompt-injection incident, a runaway tool loop, a
+ * model-provider outage, or a cost spike. The deterministic product surface
+ * (properties, recovery audit, evidence packs, exports) is unaffected, so an
+ * operator can pull the AI without taking the platform down.
+ */
+function isChatKilled(): boolean {
+  return process.env["RA_CHAT_KILL"] === "1";
+}
+
 export async function POST(req: NextRequest): Promise<NextResponse> {
   const correlationId = correlationIdFromHeaders(req.headers);
   const log = scoped("api/chat", { correlationId });
@@ -45,7 +58,44 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       const start = Date.now();
       log.info({ msg: "chat.request.start" });
 
-      const rl = rateLimit(ip, RATE_LIMIT_MAX);
+      // AI-safety kill switch (break-glass). Checked BEFORE any work so a
+      // runaway loop, prompt-injection incident, provider outage, or cost
+      // spike can be stopped instantly via env without a redeploy. The
+      // deterministic product surface keeps serving — only the AI is pulled.
+      if (isChatKilled()) {
+        log.warn({ msg: "chat.kill_switch_active" });
+        return NextResponse.json(
+          {
+            error: "chat_disabled",
+            code: "chat_disabled",
+            message:
+              "The AI assistant is temporarily disabled. The rest of RatesAssist is unaffected.",
+            correlationId,
+          },
+          { status: 503, headers: { "Retry-After": "120" } },
+        );
+      }
+
+      // A6-NEW-04: session resolves BEFORE the limiter so the bucket keys on
+      // (scope, tenantId, ip) — one council's burst can't starve another
+      // tenant's chat on the same instance, and a single officer rotating
+      // IPs still shares the tenant dimension. Sessionless requests are
+      // rejected here (they would have been at the later check anyway).
+      const session = await resolveRouteSession(req);
+      if (session === null) {
+        log.warn({ msg: "chat.no_session" });
+        return NextResponse.json(
+          { error: "unauthorized", code: "unauthorized", correlationId },
+          { status: 401 },
+        );
+      }
+
+      const rl = rateLimitComposite({
+        scope: "chat",
+        ip,
+        tenantId: session.tenantId,
+        max: RATE_LIMIT_MAX,
+      });
       if (!rl.ok) {
         log.warn({ msg: "chat.rate_limited" });
         return NextResponse.json(
@@ -83,6 +133,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         );
       }
 
+      // Tenant + RBAC scope for the tool-dispatch loop — session was already
+      // resolved (fail-closed) before the rate limiter above. Chat must never
+      // dispatch tools without a scope (an unscoped session reads every
+      // council's data).
+      const scope = { tenantId: session.tenantId, roles: session.roles };
+
       const safeHistory = parse.data.history
         .filter((m) => m.role === "user")
         .map((m, i) => ({
@@ -93,7 +149,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         }));
 
       try {
-        const result = await runChat(safeHistory, parse.data.message, correlationId);
+        const result = await runChat(safeHistory, parse.data.message, correlationId, scope);
         const durationMs = Date.now() - start;
         log.info({
           msg: "chat.request.ok",
@@ -124,5 +180,5 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 }
 
 export async function GET(): Promise<NextResponse> {
-  return NextResponse.json({ live: isLive() });
+  return NextResponse.json({ live: isLive(), enabled: !isChatKilled() });
 }

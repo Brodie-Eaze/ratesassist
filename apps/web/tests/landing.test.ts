@@ -67,6 +67,15 @@ describe("public landing routes", () => {
     expect(res.status).toBeLessThan(300);
   });
 
+  it("unauthenticated GET /how-it-works is NOT redirected (public explainer)", async () => {
+    // Regression: /how-it-works is the public marketing explainer linked from
+    // the nav + landing teaser. It MUST bypass the auth gate or its intended
+    // audience (an unauthenticated council CFO) is bounced to /login.
+    const res = await middleware(makeReq("/how-it-works"));
+    expect(res.headers.get("location")).toBeNull();
+    expect(res.status).toBeLessThan(300);
+  });
+
   it("authenticated GET / forwards x-session to the route", async () => {
     const session = freshSession(["rates_officer"]);
     const token = await signSessionToken(session);
@@ -95,6 +104,6 @@ describe("public landing routes", () => {
     expect(src).toContain("Multi-signal detection");
     expect(src).toContain("Audit-grade evidence packs");
     expect(src).toContain("Pay only on recovery");
-    expect(src).toContain("WA-data resident");
+    expect(src).toContain("AU-data resident");
   });
 });

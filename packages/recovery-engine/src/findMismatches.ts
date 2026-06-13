@@ -41,14 +41,25 @@ export type FindMismatchesOptions = {
 };
 
 /**
- * findMismatches returns an array of headline (positive-uplift) candidates
- * with a non-enumerable `overtaxedCandidates` property carrying the separate
- * overtaxation-review list. Consumers can use `.overtaxedCandidates` to
- * surface "this council is overtaxing these properties" without polluting
- * the recovery-headline sort.
+ * The full result of a mismatch sweep — two disjoint buckets:
+ *
+ *  - `candidates`      — headline (positive-uplift) recovery candidates,
+ *                        sorted by estimated uplift desc. The money the
+ *                        council can RECOVER.
+ *  - `overtaxedCandidates` — properties whose correct category yields a
+ *                        LOWER rate (negative uplift): the council is
+ *                        OVER-rating them. A liability / refund-review list,
+ *                        kept out of the recovery sort.
+ *
+ * Returned as a plain object (not an Array with a hidden non-enumerable
+ * property — that earlier shape silently dropped the overtaxed list through
+ * JSON.stringify / spread / map, which is exactly why the over-rating
+ * surface was invisible to every UI). Use {@link findMismatchesWithOvertax}
+ * when you need both buckets; {@link findMismatches} returns just the
+ * recovery candidates for the common case.
  */
-export interface FindMismatchesResult
-  extends ReadonlyArray<MismatchCandidate> {
+export interface MismatchResult {
+  readonly candidates: readonly MismatchCandidate[];
   readonly overtaxedCandidates: readonly MismatchCandidate[];
 }
 
@@ -94,10 +105,14 @@ function pickChangeForUplift(
   return entries.find((e) => e.correctLandUse !== undefined) ?? entries[0];
 }
 
-export function findMismatches(
+/**
+ * Full sweep returning BOTH buckets. The recovery candidates and the
+ * overtaxed (over-rating) review list come from one pass over the context.
+ */
+export function findMismatchesWithOvertax(
   ctx: EvaluationContext,
   options: FindMismatchesOptions = {},
-): FindMismatchesResult {
+): MismatchResult {
   const { council, minSeverity, evaluationDate } = options;
   const minRank = SEVERITY_RANK[minSeverity ?? "low"];
 
@@ -252,14 +267,25 @@ export function findMismatches(
   }
 
   out.sort((a, b) => b.estUplift - a.estUplift);
-  // Attach overtaxed list as a non-enumerable property so existing
-  // array-spread / JSON consumers don't accidentally pick it up, while typed
-  // callers using FindMismatchesResult can read it directly.
-  Object.defineProperty(out, "overtaxedCandidates", {
-    value: Object.freeze(overtaxed) as readonly MismatchCandidate[],
-    enumerable: false,
-    writable: false,
-    configurable: false,
-  });
-  return out as unknown as FindMismatchesResult;
+  // Overtaxed list sorted by magnitude of over-charge (most over-rated
+  // first) — estUplift is negative here, so ascending puts the biggest
+  // over-charge at the top.
+  overtaxed.sort((a, b) => a.estUplift - b.estUplift);
+  return {
+    candidates: out,
+    overtaxedCandidates: overtaxed,
+  };
+}
+
+/**
+ * Recovery-headline candidates only (the common case). Thin wrapper over
+ * {@link findMismatchesWithOvertax} that drops the overtaxed bucket — every
+ * existing call site that only cares about recoverable candidates uses this
+ * and is unaffected by the over-rating surface.
+ */
+export function findMismatches(
+  ctx: EvaluationContext,
+  options: FindMismatchesOptions = {},
+): readonly MismatchCandidate[] {
+  return findMismatchesWithOvertax(ctx, options).candidates;
 }

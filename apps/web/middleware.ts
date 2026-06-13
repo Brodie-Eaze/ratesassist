@@ -38,12 +38,24 @@ const PUBLIC_API_PREFIXES: readonly string[] = [
   "/api/ready",
   "/api/version",
   "/api/auth/",
+  // JD-2: public document-integrity verification. A council's legal team or
+  // a tribunal posts a downloaded PDF to confirm it is unmodified. No session
+  // — the cryptographic check (HMAC + stored byte-hash) IS the trust anchor,
+  // and the handler rate-limits + returns no PII.
+  "/api/verify/",
 ];
 
 /**
  * HTML routes that bypass the auth gate. The root "/" is public so unauth
  * visitors can land on the marketing page; page.tsx itself decides whether
  * to render the dashboard (authed) or the landing surface (unauthed).
+ *
+ * The marketing surface (/landing and /how-it-works) is public for the same
+ * reason — /how-it-works is the full explainer a council CFO reads before
+ * requesting a pilot. It is linked directly from the public nav and the
+ * landing teaser, and renders first-party content only, so gating it behind
+ * /login would make the page unreachable by the very audience it is written
+ * for.
  *
  * Trust-signal pages (/status, /security, /changelog, /privacy, /trust
  * and /trust/sub-processors) are public by design — they are pre-demo
@@ -55,6 +67,7 @@ const PUBLIC_API_PREFIXES: readonly string[] = [
 const PUBLIC_HTML_PATHS: readonly string[] = [
   "/login",
   "/landing",
+  "/how-it-works",
   "/",
   "/status",
   "/security",
@@ -122,6 +135,12 @@ const HARDCODED_CSRF_EXEMPT_PATHS: ReadonlyArray<string> = [
   // and we cannot constrain its Origin header. The OAuth state-token
   // check inside the callback handler is the actual CSRF defense.
   "/api/auth/sso/callback",
+  // JD-2 public document verification — called programmatically (a council
+  // solicitor / tribunal posting a downloaded PDF), so it carries no
+  // first-party Origin. It is unauthenticated and read-only with respect to
+  // server state (it only HASHES the upload + reads the audit log), so CSRF
+  // — which protects a victim's authenticated session — does not apply.
+  "/api/verify/pack",
 ] as const;
 
 let warnedCsrfEnvDeprecated = false;
@@ -312,6 +331,15 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
 
   const requestHeaders = new Headers(req.headers);
   requestHeaders.set(CORRELATION_HEADER, correlationId);
+  // SEC-003: middleware is the SOLE writer of x-session. Route handlers trust
+  // it precisely because a client cannot set it — but `new Headers(req.headers)`
+  // copies an inbound one verbatim, and on a public route `session` may be
+  // null (so the conditional set below wouldn't overwrite it). Strip any
+  // client-supplied value UNCONDITIONALLY first, then set it only from the
+  // verified session. Without this, a forged `x-session` on a public route
+  // would reach any handler that reads it via getSessionFromRequest — an
+  // auth bypass / cross-tenant impersonation.
+  requestHeaders.delete(SESSION_HEADER);
   if (session) {
     requestHeaders.set(SESSION_HEADER, JSON.stringify(session));
   }

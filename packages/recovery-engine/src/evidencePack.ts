@@ -36,9 +36,11 @@ import {
   computeComposite,
   estimateUplift,
   evaluateSignals,
+  normaliseAddress,
   severityForScore,
   type EvaluationContext,
 } from "./scoring.js";
+import { miscLicenceLegalRisk } from "./legalRisk.js";
 
 /**
  * The terminal value of a successful pack build.
@@ -510,11 +512,15 @@ function renderConcessionAuditSection(property: Property): string {
   lines.push(
     `| Proprietor postal | ${property.proprietorPostalAddress ?? "(not on file)"} |`,
   );
+  // Use the SAME comparison the `id.pensioner_not_at_property` signal uses
+  // to fire (normaliseAddress equality). The previous `.includes()` check
+  // could disagree with the signal trail on abbreviated street suffixes or
+  // transposed unit/street order — an internally contradictory pack in
+  // front of a council legal reviewer.
   const addressMatches =
-    property.proprietorPostalAddress &&
-    property.proprietorPostalAddress
-      .toLowerCase()
-      .includes(property.address.toLowerCase());
+    property.proprietorPostalAddress !== undefined &&
+    normaliseAddress(property.proprietorPostalAddress) ===
+      normaliseAddress(property.address);
   lines.push(`| Match | ${addressMatches ? "yes" : "MISMATCH"} |`);
   lines.push("");
 
@@ -711,6 +717,16 @@ function renderMarkdown(input: RenderInput): string {
   const titleStateBlock = renderTitleStateSection(property);
   const concessionAuditBlock = renderConcessionAuditSection(property);
 
+  // Legal-risk guard: surface contested-law recoveries (e.g. miscellaneous
+  // licences) as a prominent callout BEFORE the evidence, so an officer confirms
+  // the position before acting rather than pursuing a recovery that could be
+  // reversed + refunded.
+  const legalRisk = miscLicenceLegalRisk(tenements);
+  const legalRiskCallout =
+    legalRisk !== null
+      ? `> ⚠️ **Legal risk — confirm before pursuing.** ${legalRisk.note} Affected tenement(s): ${legalRisk.affectedTenementIds.join(", ")}.`
+      : null;
+
   return [
     `# Reclassification Evidence Pack`,
     ``,
@@ -723,6 +739,7 @@ function renderMarkdown(input: RenderInput): string {
     `| **Signals fired** | ${signals.length} |`,
     ``,
     ...(headlinePanel ? [headlinePanel, ``] : []),
+    ...(legalRiskCallout ? [legalRiskCallout, ``] : []),
     `## 1. Property identification`,
     ``,
     `| Field | Value |`,

@@ -24,10 +24,11 @@
  * Cache-Control: private, max-age=60. Weak ETag from canonical JSON.
  */
 
-import type { NextRequest } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import {
-  findMismatches,
+  findMismatchesWithOvertax,
   type EvaluationContext,
+  type MismatchResult,
 } from "@ratesassist/recovery-engine";
 import type { MismatchCandidate } from "@ratesassist/contract";
 
@@ -49,13 +50,14 @@ import type { MismatchCandidate } from "@ratesassist/contract";
  * `Map<tenantId, result>` would be the right upgrade at that point.
  */
 let _lastCtx: EvaluationContext | null = null;
-let _lastResult: readonly MismatchCandidate[] | null = null;
+let _lastResult: MismatchResult | null = null;
 
-function findMismatchesCached(
-  ctx: EvaluationContext,
-): readonly MismatchCandidate[] {
+function findMismatchesCached(ctx: EvaluationContext): MismatchResult {
   if (ctx === _lastCtx && _lastResult !== null) return _lastResult;
-  const fresh = findMismatches(ctx);
+  // Single sweep yields both the recovery headline AND the over-rated
+  // (review-and-refund) bucket — cache the whole object so the overtaxed
+  // surface never triggers a second pass.
+  const fresh = findMismatchesWithOvertax(ctx);
   _lastCtx = ctx;
   _lastResult = fresh;
   return fresh;
@@ -72,7 +74,13 @@ import {
   tenantFromAssessmentNumber,
   weakEtag,
 } from "@/lib/api-helpers";
-import { getEvaluationContext, getEvaluationContextForTenant, recoveryStatsFor } from "@/lib/clients";
+import {
+  getEvaluationContext,
+  getEvaluationContextForTenant,
+  overtaxedStatsFor,
+  recoveryStatsFor,
+} from "@/lib/clients";
+import { getClientIp, rateLimitComposite, retryAfterSeconds } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -82,6 +90,11 @@ type SortKey = "score" | "uplift" | "granted";
 
 const VALID_SEVERITY: ReadonlySet<string> = new Set(["high", "medium", "low"]);
 const VALID_SORT: ReadonlySet<string> = new Set(["score", "uplift", "granted"]);
+
+// Cap the over-rated list shipped in the envelope. The full count + refund
+// exposure is always reported via overtaxedStats; the list itself is a
+// triage starting point, not an exhaustive export.
+const OVERTAXED_CAP = 50;
 
 function parseSortBy(raw: string | null): SortKey {
   if (raw !== null && (VALID_SORT as ReadonlySet<string>).has(raw)) {
@@ -136,6 +149,14 @@ export async function GET(req: NextRequest): Promise<Response> {
   if (!session) {
     return fail("unauthorized", "Authentication required.");
   }
+  const ip = getClientIp(req);
+  const rl = rateLimitComposite({ scope: "recovery-candidates", ip, tenantId: session.tenantId, max: 20 });
+  if (!rl.ok) {
+    return NextResponse.json(
+      { ok: false, code: "rate_limited", error: "Too many requests" },
+      { status: 429, headers: { "Retry-After": retryAfterSeconds(rl.resetAt) } }
+    );
+  }
   const isPlatformAdmin = session.roles.includes("platform_admin");
 
   const url = req.nextUrl;
@@ -157,20 +178,20 @@ export async function GET(req: NextRequest): Promise<Response> {
   const evalCtx = isPlatformAdmin
     ? getEvaluationContext()
     : await getEvaluationContextForTenant(session.tenantId);
-  const all = findMismatchesCached(evalCtx);
+  const swept = findMismatchesCached(evalCtx);
 
-  // ship-ready iter3: scope the candidate list to the session's
-  // tenant before any other filter. Same derivation model as the
-  // [assessmentNumber] routes — the assessment-number prefix carries
+  // ship-ready iter3: scope BOTH the recovery list and the over-rated list
+  // to the session's tenant before any other filter. Same derivation model
+  // as the [assessmentNumber] routes — the assessment-number prefix carries
   // the owning tenant. platform_admin bypasses the scope.
-  let filtered: readonly MismatchCandidate[] = isPlatformAdmin
-    ? all
-    : all.filter((c) =>
-        sessionMayAccessTenant(
-          session,
-          tenantFromAssessmentNumber(c.property.assessmentNumber),
-        ),
-      );
+  const inTenant = (c: MismatchCandidate): boolean =>
+    isPlatformAdmin ||
+    sessionMayAccessTenant(
+      session,
+      tenantFromAssessmentNumber(c.property.assessmentNumber),
+    );
+
+  let filtered: readonly MismatchCandidate[] = swept.candidates.filter(inTenant);
   if (severity !== null) {
     filtered = filtered.filter((c) => c.severity === severity);
   }
@@ -185,9 +206,19 @@ export async function GET(req: NextRequest): Promise<Response> {
   // "X candidates match these filters", not "X on this page".
   const stats = recoveryStatsFor(filtered);
 
+  // Over-rated ("review & refund") surface — tenant-scoped, NOT subject to
+  // the severity/signal filters (it is a separate governance list), capped
+  // so a large over-rating set can't bloat the envelope. The full count +
+  // refund exposure is reported via overtaxedStats regardless of the cap.
+  const overtaxedAll = swept.overtaxedCandidates.filter(inTenant);
+  const overtaxedStats = overtaxedStatsFor(overtaxedAll);
+  const overtaxedCandidates = overtaxedAll.slice(0, OVERTAXED_CAP);
+
   const payload = {
     candidates: slice,
     stats,
+    overtaxedCandidates,
+    overtaxedStats,
   };
 
   const etag = weakEtag({ payload, total, limit, offset });

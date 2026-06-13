@@ -28,10 +28,14 @@ export {
   ensureSeeded,
   loadMigrationSql,
   loadMigrationSqlByName,
+  assertNonBypassRlsRole,
+  shouldRefuseServingRole,
+  type ServingRoleInputs,
+  type ServingRoleVerdict,
 } from "./bootstrap.js";
 
 // Re-export a thin set of drizzle-orm helpers so workspace consumers
 // (`apps/web`) can build queries without a direct dep on drizzle-orm. The
 // import surface is intentionally narrow — anything not exported here
 // should not be reached from outside the persistence package.
-export { eq, and, or, sql, desc, asc } from "drizzle-orm";
+export { eq, and, or, inArray, sql, desc, asc } from "drizzle-orm";

@@ -6,6 +6,11 @@ import { buildToolCatalogue } from "@ratesassist/contract";
 import type { schemas } from "@ratesassist/contract";
 
 import { runMcpTool } from "./mcp-client";
+import {
+  applyToolScope,
+  type ScopedResultView,
+  type ToolScope,
+} from "./tool-tenant-scope";
 
 export type JsonSchemaProperty = {
   type: string;
@@ -86,6 +91,7 @@ export async function runTool(
   input: Record<string, unknown>,
   correlationId?: string,
   attribution?: RunToolAttribution,
+  scope?: ToolScope,
 ): Promise<RunToolResult> {
   if (!isKnownTool(name)) {
     return {
@@ -97,7 +103,30 @@ export async function runTool(
     };
   }
 
-  const { result, durationMs } = await runMcpTool(name, input ?? {}, {
+  // Tenant + RBAC scoping. When a scope is supplied (chat surface), the policy
+  // either rewrites the input to the caller's tenant, refuses the call, or —
+  // for shared-owner reads — schedules a post-dispatch redaction. When no
+  // scope is supplied (direct/REST callers that already scoped upstream), the
+  // call passes through unchanged for backward compatibility.
+  let effectiveInput = input ?? {};
+  let transformResult: ((r: ScopedResultView) => ScopedResultView) | undefined;
+  if (scope !== undefined) {
+    const outcome = applyToolScope(name, effectiveInput, scope);
+    if (outcome.action === "deny") {
+      const safeMessage = outcome.message.replace(/[\x00-\x1f\x7f]/g, " ");
+      return {
+        output: `Tool error (${outcome.code}): ${safeMessage}`,
+        durationMs: 0,
+        ok: false,
+        code: outcome.code,
+        error: safeMessage,
+      };
+    }
+    effectiveInput = outcome.input;
+    transformResult = outcome.transformResult;
+  }
+
+  const { result, durationMs } = await runMcpTool(name, effectiveInput, {
     ...(correlationId !== undefined ? { correlationId } : {}),
     ...(attribution?.tenantId !== undefined ? { tenantId: attribution.tenantId } : {}),
     ...(attribution?.actorId !== undefined ? { actorId: attribution.actorId } : {}),
@@ -107,12 +136,24 @@ export async function runTool(
   });
 
   if (result.ok) {
+    // Apply any scope-mandated post-dispatch transform (e.g. shared-owner
+    // contact redaction) to BOTH the narration and the structured data.
+    const view: ScopedResultView =
+      transformResult !== undefined
+        ? transformResult(
+            result.data !== undefined
+              ? { output: result.output, data: result.data }
+              : { output: result.output },
+          )
+        : result.data !== undefined
+          ? { output: result.output, data: result.data }
+          : { output: result.output };
     return {
-      output: result.output,
+      output: view.output,
       durationMs,
       ok: true,
       mutated: result.mutated,
-      ...(result.data !== undefined ? { data: result.data } : {}),
+      ...(view.data !== undefined ? { data: view.data } : {}),
       ...(result.commitToken !== undefined ? { commitToken: result.commitToken } : {}),
     };
   }

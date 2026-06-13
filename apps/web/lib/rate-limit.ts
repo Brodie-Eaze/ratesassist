@@ -3,6 +3,14 @@ import type { NextRequest } from "next/server";
 export const MAX_BODY_BYTES = 64 * 1024;
 export const RATE_LIMIT_WINDOW_MS = 60_000;
 
+// In-memory token buckets. NOTE: this state is PER PROCESS (per ECS task), not
+// shared across the fleet. With N autoscaled tasks the effective ceiling for a
+// given key is N × max — intentional COARSE backpressure: every instance
+// protects itself from a flood without a network round-trip on the hot path.
+// EXACT cross-fleet limits (one global counter) require a shared store
+// (Redis/ElastiCache) — tracked in the M2b caching/throughput design. For
+// per-instance backpressure under officer-scale burst, in-memory is the right
+// default: fast, dependency-free, fail-open if the map is cold.
 const buckets = new Map<string, { count: number; resetAt: number }>();
 
 // SEC-008: only trust X-Forwarded-For when running behind a known proxy.
@@ -29,19 +37,57 @@ export function getClientIp(req: NextRequest): string {
   return "unknown";
 }
 
-export function rateLimit(
-  ip: string,
-  max: number,
-): { ok: true } | { ok: false; resetAt: number } {
+export type RateLimitResult = { ok: true } | { ok: false; resetAt: number };
+
+// Shared fixed-window bucket logic. All three public limiters key into the same
+// Map through this, so they share the window + reset semantics and the test
+// reset helper clears every variant at once.
+function consume(key: string, max: number): RateLimitResult {
   const now = Date.now();
-  const bucket = buckets.get(ip);
+  const bucket = buckets.get(key);
   if (!bucket || bucket.resetAt < now) {
-    buckets.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
+    buckets.set(key, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
     return { ok: true };
   }
   if (bucket.count >= max) return { ok: false, resetAt: bucket.resetAt };
   bucket.count++;
   return { ok: true };
+}
+
+/** Per-IP limiter (unchanged signature/behaviour — used by existing routes). */
+export function rateLimit(ip: string, max: number): RateLimitResult {
+  return consume(ip, max);
+}
+
+/**
+ * Composite limiter — one bucket per (scope, tenant, ip). Enforces a PER-ROUTE
+ * + PER-TENANT + PER-IP limit in a single call, so one council's (or one
+ * officer's) burst can't starve another tenant on the same instance — the
+ * fairness dimension the raw per-IP limiter misses. Keys are namespaced (`c|`)
+ * so they never collide with raw-IP `rateLimit` buckets or `globalRateLimit`.
+ */
+export function rateLimitComposite(parts: {
+  scope: string;
+  ip: string;
+  tenantId?: string;
+  max: number;
+}): RateLimitResult {
+  const key = `c|${parts.scope}|${parts.tenantId ?? "-"}|${parts.ip}`;
+  return consume(key, parts.max);
+}
+
+/**
+ * Process-wide backpressure ceiling: a single shared bucket per `scope` that
+ * sheds load with 429 once THIS instance is over `max` requests/min, regardless
+ * of caller. Coarse by design (per-instance — see the buckets note above); the
+ * point is to keep one wedged dependency (e.g. the LLM) from taking the whole
+ * task down under a burst.
+ */
+export function globalRateLimit(
+  max: number,
+  scope = "__global__",
+): RateLimitResult {
+  return consume(`g|${scope}`, max);
 }
 
 export function exceedsBodyCap(req: NextRequest): boolean {

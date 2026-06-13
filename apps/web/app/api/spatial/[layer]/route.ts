@@ -4,6 +4,12 @@ import {
   type SlipLayerKey,
 } from "@ratesassist/spatial";
 import type { BoundingBox } from "@ratesassist/contract";
+// A6-NEW-01: this route previously carried its OWN getClientIp that trusted
+// x-forwarded-for unconditionally — an attacker could rotate the header to
+// dodge the limiter (XFF spoofing). The shared helper only trusts XFF behind
+// a known proxy (VERCEL=1 / RA_TRUSTED_PROXY=1), and the shared limiter
+// keys per (scope, ip) in the common bucket map.
+import { getClientIp, rateLimit, retryAfterSeconds } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -11,26 +17,6 @@ export const dynamic = "force-dynamic";
 const ALLOWED: readonly SlipLayerKey[] = ["miningTenements", "cadastre"];
 
 const RATE_LIMIT_MAX = 120;
-const RATE_LIMIT_WINDOW_MS = 60_000;
-const rateBuckets = new Map<string, { count: number; resetAt: number }>();
-
-function getClientIp(req: NextRequest): string {
-  const fwd = req.headers.get("x-forwarded-for");
-  if (fwd) return fwd.split(",")[0]!.trim();
-  return req.headers.get("x-real-ip") ?? "unknown";
-}
-
-function rateLimit(ip: string): { ok: true } | { ok: false; resetAt: number } {
-  const now = Date.now();
-  const b = rateBuckets.get(ip);
-  if (!b || b.resetAt < now) {
-    rateBuckets.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
-    return { ok: true };
-  }
-  if (b.count >= RATE_LIMIT_MAX) return { ok: false, resetAt: b.resetAt };
-  b.count++;
-  return { ok: true };
-}
 
 // Allow-list of fields per layer that the UI (MapInner.tsx) actually consumes.
 // Anything else is stripped before returning to the client to reduce surface
@@ -47,6 +33,16 @@ const ALLOWED_FIELDS: Record<SlipLayerKey, readonly string[]> = {
     "grantdate", "enddate",
     "survstatus",
     "gid",
+  ],
+  // MINEDEX (DMIRS-001) mine/site points — operating/production status is the
+  // edge field. TODO(MINEDEX): confirm exact field names against the live layer
+  // schema; unlisted fields are simply stripped (safe — strip-by-default).
+  minedexSites: [
+    "short_name", "SHORT_NAME", "name", "NAME", "site_name", "SITE_NAME",
+    "status", "STATUS", "oper_status", "OPER_STATUS", "operational_status",
+    "commodity", "COMMODITY", "target_commodity", "primary_commodity",
+    "mineral_field", "MINERAL_FIELD",
+    "gid", "OBJECTID",
   ],
   cadastre: [
     "polygon_number", "POLY_ID", "gid", "OBJECTID",
@@ -84,11 +80,11 @@ export async function GET(
   ctx: { params: Promise<{ layer: string }> },
 ) {
   const ip = getClientIp(req);
-  const rl = rateLimit(ip);
+  const rl = rateLimit(`spatial|${ip}`, RATE_LIMIT_MAX);
   if (!rl.ok) {
     return NextResponse.json(
       { ok: false, error: "rate_limited" },
-      { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } },
+      { status: 429, headers: { "Retry-After": retryAfterSeconds(rl.resetAt) } },
     );
   }
 

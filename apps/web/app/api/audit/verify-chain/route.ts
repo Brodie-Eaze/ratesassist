@@ -32,6 +32,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   PRE_CHAIN_SENTINEL,
   genesisHash,
+  orderByChainLinkage,
   verifyChain,
   type AuditRowWithHashes,
 } from "@ratesassist/audit-core";
@@ -293,23 +294,41 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
   const hydrated = rows.map(hydrate);
   const totalRows = hydrated.length;
+
+  // The SQL above orders by (occurred_at ASC, id ASC) — a STABLE fetch order,
+  // but NOT necessarily chain order. `occurred_at` comes from `new Date()`, so
+  // a burst of writes collides on the same millisecond and the wall-clock sort
+  // interleaves chain-adjacent rows out of linked order. `verifyChain` walks
+  // position-by-position and would then report a FALSE break (SEV1 + Sentry)
+  // on a perfectly intact chain. The hash linkage is the only authority on
+  // order, so reconstruct true chain order before verifying. Seed with the
+  // tenant genesis so the common full-chain case anchors deterministically;
+  // `orderByChainLinkage` discovers the head structurally for `since=`
+  // eviction windows where the genesis row isn't in the set.
+  const orderedRows = orderByChainLinkage(hydrated, genesisHash(tenantId));
+
+  // latestTs is the chain TAIL's timestamp — the most recent row that is part
+  // of the verified chain (orderedRows ends at the tail for an intact chain).
   const latestTs =
-    totalRows > 0 ? hydrated[totalRows - 1]!.occurredAt : null;
+    totalRows > 0 ? orderedRows[totalRows - 1]!.occurredAt : null;
 
   // Detect eviction-truncated windows: if the caller passed `since=` AND
-  // the first non-sentinel row's prev_hash is not genesisHash(tenantId),
-  // the chain anchor was outside the window. The verifier still runs but
-  // the caller MUST NOT alert on a row-0 prev_hash mismatch — the chain
-  // is intact, just not visible from this window.
+  // the chain HEAD's prev_hash is not genesisHash(tenantId), the chain anchor
+  // was outside the window. The verifier still runs but the caller MUST NOT
+  // alert on a row-0 prev_hash mismatch — the chain is intact, just not
+  // visible from this window. We read the head from orderedRows (the true
+  // chain head), not the wall-clock-first row.
   let evictionTruncated = false;
   if (since !== undefined && totalRows > 0) {
-    const firstReal = hydrated.find((r) => r.prevHash !== PRE_CHAIN_SENTINEL);
+    const firstReal = orderedRows.find(
+      (r) => r.prevHash !== PRE_CHAIN_SENTINEL,
+    );
     if (firstReal && firstReal.prevHash !== genesisHash(tenantId)) {
       evictionTruncated = true;
     }
   }
 
-  const verdict = verifyChain(hydrated);
+  const verdict = verifyChain(orderedRows);
 
   if (verdict.ok) {
     log.info({

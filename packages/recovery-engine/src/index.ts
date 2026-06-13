@@ -24,7 +24,7 @@ export type {
 } from "./upliftCalculator.js";
 export type {
   FindMismatchesOptions,
-  FindMismatchesResult,
+  MismatchResult,
 } from "./findMismatches.js";
 export type {
   EvidencePack,
@@ -54,6 +54,30 @@ export {
   BACKDATING_STATUTORY_YEARS,
 } from "./upliftCalculator.js";
 
-export { findMismatches } from "./findMismatches.js";
+export { findMismatches, findMismatchesWithOvertax } from "./findMismatches.js";
 export { buildEvidencePack, sortSignalsByPriority } from "./evidencePack.js";
 export { recoveryStats } from "./stats.js";
+
+export {
+  computeRatioStats,
+  assessUniformity,
+  peerDispersion,
+  rollQuality,
+  IAAO_MEDIAN_ASR_RANGE,
+  IAAO_PRD_RANGE,
+  IAAO_PRB_RANGE,
+  IAAO_COD_UPPER,
+  IAAO_MIN_SAMPLE,
+  type RatioStats,
+  type UniformityVerdict,
+  type PeerDispersion,
+  type StratumQuality,
+  type RollQualityReport,
+} from "./ratioStudy.js";
+
+export {
+  miscLicenceLegalRisk,
+  legalRiskNotes,
+  type LegalRiskNote,
+  type LegalRiskCategory,
+} from "./legalRisk.js";

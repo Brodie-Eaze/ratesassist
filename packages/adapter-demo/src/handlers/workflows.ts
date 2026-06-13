@@ -28,12 +28,21 @@ import {
 import { aud, isoDate } from "./format.js";
 
 /**
- * Snapshot helper — strips internals (none, today) and produces a structurally
- * stable copy for the audit log. Returning the live object would risk leaking
- * later mutations through reference identity.
+ * The owner fields a confirmed `update_owner_contact` will change, as field
+ * NAMES only. Used for the PII-clean audit projection (RA-01): the audit log
+ * is append-only and — in production — 7-year-retained and exempt from
+ * erasure, so it records *which* fields changed, never the values. The values
+ * live in the erasable owner store. Mirrors the PII-clean projection in
+ * `apps/web/lib/privacy-erasure.ts`.
  */
-function snapshotOwner(o: Owner): Owner {
-  return { ...o };
+function auditableChangedFields(mut: {
+  readonly newPhone?: string;
+  readonly newEmail?: string;
+}): readonly string[] {
+  const fields: string[] = [];
+  if (mut.newPhone !== undefined) fields.push("phone");
+  if (mut.newEmail !== undefined) fields.push("email");
+  return fields;
 }
 
 // ===========================================================================
@@ -114,7 +123,6 @@ export async function updateOwnerContactHandler(
         ctx.correlationId,
       );
     }
-    const before = snapshotOwner(owner);
     const updated: Owner = {
       ...owner,
       ...(mut.newPhone !== undefined ? { phone: mut.newPhone } : {}),
@@ -128,6 +136,12 @@ export async function updateOwnerContactHandler(
         ctx.correlationId,
       );
     }
+    // Audit the CHANGE, not the PII (RA-01). before/after record only the
+    // changed field NAMES — never the name/email/phone/address values —
+    // because the audit log is append-only and RTBF-exempt; lodging PII
+    // here would defeat erasure (APP 11.2). The values live in the erasable
+    // owner store. Mirrors apps/web/lib/privacy-erasure.ts.
+    const changedFields = auditableChangedFields(mut);
     // Best-effort audit. Non-fail-closed: a failed audit write must NOT
     // discard the user's mutation; the helper logs and synthesises ok=true.
     recordMutation({
@@ -136,8 +150,8 @@ export async function updateOwnerContactHandler(
       actorKind: ctx.actorKind,
       action: "update_owner_contact",
       target: { type: "owner", id: stored.ownerId },
-      before,
-      after: snapshotOwner(stored),
+      before: { redacted: true, changedFields },
+      after: { redacted: true, changedFields, ownerId: stored.ownerId },
       correlationId: ctx.correlationId,
       ...(ctx.ip !== undefined ? { ip: ctx.ip } : {}),
       ...(ctx.userAgent !== undefined ? { userAgent: ctx.userAgent } : {}),
@@ -250,8 +264,20 @@ export async function addPropertyNoteHandler(
       actorKind: ctx.actorKind,
       action: "add_property_note",
       target: { type: "property", id: stored.assessmentNumber },
-      before: { notes: beforeNotes },
-      after: { notes: stored.notes.slice(), addedNote: mut.note },
+      // PII-clean audit projection (RA-01): the audit log is append-only
+      // and RTBF-exempt, so free-text notes — which may carry ratepayer
+      // PII or sensitive case detail — must never be lodged here; doing so
+      // would defeat APP 11.2 erasure. Record the SHAPE of the change (note
+      // count before/after, characters appended), not the body. The note
+      // text is still returned to the caller in `data` (ephemeral) and
+      // persisted in the property record (RTBF-erasable), never in this
+      // immutable chain.
+      before: { redacted: true, noteCount: beforeNotes.length },
+      after: {
+        redacted: true,
+        noteCount: stored.notes.length,
+        addedNoteChars: mut.note.length,
+      },
       correlationId: ctx.correlationId,
       ...(ctx.ip !== undefined ? { ip: ctx.ip } : {}),
       ...(ctx.userAgent !== undefined ? { userAgent: ctx.userAgent } : {}),

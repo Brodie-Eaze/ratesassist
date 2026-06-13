@@ -12,9 +12,14 @@
  * geometries (e.g. before the cadastre query resolves).
  */
 
-import { Polygon as RLPolygon } from "react-leaflet";
+import { Polygon as RLPolygon, Tooltip } from "react-leaflet";
 import type { Ring } from "@/lib/polygonClip";
 import type { OverlapStats } from "./types";
+
+/** m² → hectares (1 ha = 10 000 m²) */
+function m2ToHa(m2: number): number {
+  return m2 / 10_000;
+}
 
 export type PolygonLayersProps = {
   /** The tenement polygon rings (DMIRS source). */
@@ -68,7 +73,7 @@ export default function PolygonLayers({
         )),
       )}
 
-      {/* Overlap polygon — gold */}
+      {/* Overlap polygon — gold, with hover tooltip (fires on mouseover only) */}
       {overlap && (
         <RLPolygon
           positions={ringToLatLng(overlap.ring)}
@@ -78,7 +83,14 @@ export default function PolygonLayers({
             fillOpacity: 0.35,
             weight: 2,
           }}
-        />
+        >
+          <Tooltip sticky>
+            <span style={{ fontWeight: 700 }}>
+              OVERLAP: {m2ToHa(overlap.areaM2).toFixed(1)} ha (
+              {overlap.percentOfParcel.toFixed(0)}% of parcel)
+            </span>
+          </Tooltip>
+        </RLPolygon>
       )}
     </>
   );

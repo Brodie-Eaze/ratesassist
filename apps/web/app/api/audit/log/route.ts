@@ -31,7 +31,7 @@ import {
   hasPermission,
 } from "@/lib/auth";
 import { scoped } from "@/lib/logger";
-import { getClientIp } from "@/lib/rate-limit";
+import { getClientIp, rateLimitComposite, retryAfterSeconds } from "@/lib/rate-limit";
 import { runTool } from "@/lib/tools";
 import { correlationIdFromHeaders } from "@/lib/correlation";
 
@@ -45,6 +45,14 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const session = getSessionFromRequest(req);
   if (!session) {
     return fail("unauthorized", "session required", 401);
+  }
+  const ip = getClientIp(req);
+  const rl = rateLimitComposite({ scope: "audit-log", ip, tenantId: session.tenantId, max: 30 });
+  if (!rl.ok) {
+    return NextResponse.json(
+      { ok: false, code: "rate_limited", error: "Too many requests" },
+      { status: 429, headers: { "Retry-After": retryAfterSeconds(rl.resetAt) } }
+    );
   }
   if (!hasPermission(session, "read.audit_log")) {
     log.warn({
@@ -83,7 +91,6 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const limit = Math.min(rawLimit, 500);
   const since = url.searchParams.get("since") ?? undefined;
 
-  const ip = getClientIp(req);
   const userAgent = req.headers.get("user-agent") ?? undefined;
 
   const result = await runTool(

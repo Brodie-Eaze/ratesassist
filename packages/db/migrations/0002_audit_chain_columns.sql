@@ -1,4 +1,7 @@
 -- Phase 9 P0 — audit-log tamper-evident hash chain.
+-- STATUS: SHIPPED — applied on every boot via bootstrap.ts MIGRATIONS_IN_ORDER.
+-- ("Phase 9 P0" is the authoring work-item tag, not a deployment gate; the
+--  hash-chain compute + verify is live today. See SECURITY.md "Audit log".)
 --
 -- Step 1 of two-step deploy: add columns + indexes, leaving columns NULLABLE
 -- so legacy writers continue to function while the verifier walks the new

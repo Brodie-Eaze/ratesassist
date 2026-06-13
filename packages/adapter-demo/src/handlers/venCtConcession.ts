@@ -1391,7 +1391,15 @@ export async function requestStrataConversionHandler(
         state: input.toState,
         childCount: next.childCts.length,
         createdChildren,
-        ...(mut.reason !== undefined ? { reason: mut.reason } : {}),
+        // PII-clean audit projection (RA-01): `reason` is operator free-text
+        // (z.string().max(500), mandatory on `withdrawn`) and may carry
+        // ratepayer detail. The audit log is append-only and RTBF-exempt, so
+        // lodging the body here would defeat APP 11.2 erasure. Record only the
+        // shape; the full reason survives in the RTBF-erasable lifecycle
+        // `history` store above (line ~1363), never in the immutable chain.
+        ...(mut.reason !== undefined
+          ? { reasonProvided: true, reasonChars: mut.reason.length }
+          : {}),
       },
       correlationId: ctx.correlationId,
       ...(ctx.ip !== undefined ? { ip: ctx.ip } : {}),

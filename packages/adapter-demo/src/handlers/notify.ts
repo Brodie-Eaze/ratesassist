@@ -20,6 +20,8 @@
  * Never sends without an authorised actor (actorKind="user" or "service").
  */
 
+import { createHash } from "node:crypto";
+
 import type { schemas } from "@ratesassist/contract";
 
 import { recordMutation } from "../audit/index.js";
@@ -206,7 +208,8 @@ export async function notifyClerkHandler(
     action: "notify.clerk",
     target: { type: "property", id: input.candidateAssessmentNumber },
     after: {
-      recipient: input.recipientEmail,
+      recipientHash: createHash("sha256").update(input.recipientEmail).digest("hex"),
+      recipientDomain: input.recipientEmail.split("@")[1] ?? "unknown",
       subject: input.subject,
       severity: input.severity,
       provider: outcome.provider,

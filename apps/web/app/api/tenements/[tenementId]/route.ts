@@ -23,9 +23,9 @@ import type { NextRequest } from "next/server";
 import { runTool } from "@/lib/tools";
 import {
   fail,
-  hasSession,
   maybeNotModified,
   ok,
+  resolveRouteSession,
   weakEtag,
 } from "@/lib/api-helpers";
 
@@ -44,7 +44,8 @@ export async function GET(
   req: NextRequest,
   ctx: { params: Promise<{ tenementId: string }> },
 ): Promise<Response> {
-  if (!hasSession(req)) {
+  const session = await resolveRouteSession(req);
+  if (session === null) {
     return fail("unauthorized", "Authentication required.");
   }
 
@@ -57,7 +58,18 @@ export async function GET(
     return fail("invalid_input", "sinceDays must be 1..365");
   }
 
-  const result = await runTool("get_grant_detail", { tenementId, sinceDays });
+  // Tenant scope: tenement metadata is public, but intersecting parcels carry
+  // commercially sensitive per-council valuation / rates / uplift. Inject the
+  // caller's tenant so a council only sees its own parcels; platform_admin
+  // (council omitted) sees all.
+  const councilScope = session.roles.includes("platform_admin")
+    ? {}
+    : { council: session.tenantId };
+  const result = await runTool("get_grant_detail", {
+    tenementId,
+    sinceDays,
+    ...councilScope,
+  });
   if (!result.ok) {
     if (result.code === "not_found") {
       return fail("not_found", `Tenement ${tenementId} not found.`);

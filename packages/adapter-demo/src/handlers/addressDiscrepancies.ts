@@ -163,10 +163,16 @@ export async function listAddressDiscrepanciesHandler(
   input: schemas.ToolInputs["list_address_discrepancies"],
   _ctx: RequestContext,
 ): Promise<schemas.ToolResult> {
-  const { kind, minSeverity } = input;
+  const { kind, minSeverity, council } = input;
   const minRank = SEVERITY_RANK[minSeverity];
 
   const filtered = SEEDED_ADDRESS_DISCREPANCIES.filter((d) => {
+    // `council` is injected by the web layer to the caller's tenant for
+    // non-admins. Each discrepancy's assessment number embeds its owning
+    // council (e.g. `KAL-7777-01`), so a prefix match scopes the set without
+    // a separate council field. Omitted (platform_admin) → all councils.
+    if (council !== undefined && !d.assessmentNumber.startsWith(`${council}-`))
+      return false;
     if (kind !== "all" && d.kind !== (kind as AddressDiscrepancyKind)) return false;
     if (SEVERITY_RANK[d.severityHint] < minRank) return false;
     return true;
@@ -179,8 +185,9 @@ export async function listAddressDiscrepanciesHandler(
       `Landgate "${d.landgateAddress}" / ${d.landgateLandUse}.`,
   );
 
+  const scopeFragment = council !== undefined ? `, council=${council}` : "";
   const text = [
-    `Landgate × rating-record address discrepancies (kind=${kind}, minSeverity=${minSeverity}, source=seeded):`,
+    `Landgate × rating-record address discrepancies (kind=${kind}, minSeverity=${minSeverity}${scopeFragment}, source=seeded):`,
     `${filtered.length} discrepancy(ies).`,
     "",
     ...lines,
@@ -197,6 +204,7 @@ export async function listAddressDiscrepanciesHandler(
       queriedAt: new Date().toISOString(),
       kind,
       minSeverity,
+      ...(council !== undefined ? { council } : {}),
     },
     mutated: false,
   };

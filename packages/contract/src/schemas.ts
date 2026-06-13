@@ -151,11 +151,20 @@ export const strataChildSchema = z
 export const inputs = {
   search_property: z.object({
     query: z.string().min(1).max(200),
+    /**
+     * Tenant scope. Restricts the search to one council's portfolio. The
+     * web layer injects the caller's tenant for non-admins (cross-tenant
+     * read IDOR fix) and leaves it for platform_admin. Omitted → all
+     * councils (admin / single-tenant deployment).
+     */
+    council: councilCode.optional(),
   }),
 
   search_by_owner: z.object({
     name: z.string().min(1).max(200),
     suburb: z.string().max(80).optional(),
+    /** Tenant scope — see `search_property.council`. */
+    council: councilCode.optional(),
   }),
 
   get_property_detail: z.object({
@@ -177,7 +186,17 @@ export const inputs = {
     offset: z.number().int().min(0).optional(),
   }),
 
-  list_councils: z.object({}).strict(),
+  list_councils: z
+    .object({
+      /**
+       * Tenant scope. The platform's council set is the commercially
+       * sensitive customer base — a non-admin must see only their own
+       * council. The web layer injects the caller's tenant for non-admins
+       * and leaves it for platform_admin. Omitted → all councils.
+       */
+      council: councilCode.optional(),
+    })
+    .strict(),
 
   get_owner: z.object({
     ownerId: z.string().min(1).max(80),
@@ -265,6 +284,15 @@ export const inputs = {
     tenementId: z.string().min(3).max(40),
     /** Lookback window in days for resolving the tenement against the grants feed. */
     sinceDays: z.number().int().min(1).max(365).default(90),
+    /**
+     * Tenant scope for the intersecting-parcel join. The tenement metadata
+     * is public (DMIRS/MINEDEX), but the intersecting council-registered
+     * parcels carry valuation / annual rates / recovery uplift — commercially
+     * sensitive per-council data. Restricts parcels to one council. The web
+     * layer injects the caller's tenant for non-admins (cross-tenant read
+     * IDOR fix) and leaves it for platform_admin. Omitted → all councils.
+     */
+    council: councilCode.optional(),
   }),
 
   list_lag_window_candidates: z.object({
@@ -326,6 +354,14 @@ export const inputs = {
        * the recovery dashboard.
        */
       minSeverity: z.enum(["high", "medium", "low"]).default("medium"),
+      /**
+       * Tenant scope. Each discrepancy is keyed to an assessment number that
+       * embeds its owning council (e.g. `KAL-7777-01`), so the unscoped set
+       * leaks other councils' mis-rated parcels + recovery reasoning. The web
+       * layer injects the caller's tenant for non-admins (cross-tenant read
+       * IDOR fix) and leaves it for platform_admin. Omitted → all councils.
+       */
+      council: councilCode.optional(),
     })
     .strict(),
 

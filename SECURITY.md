@@ -6,8 +6,8 @@
 | **Audience** | Council ICT, security, audit, procurement |
 | **Status** | Pre-pilot. Active development. |
 | **Owner** | Brodie · `security@ratesassist.com.au` |
-| **Version** | 0.2 |
-| **Last reviewed** | 2026-05-08 |
+| **Version** | 0.3 |
+| **Last reviewed** | 2026-05-31 |
 | **Review cycle** | Quarterly, or on material change |
 
 ---
@@ -63,16 +63,15 @@ We use the following labels throughout this document, and never represent more t
 
 ## Identity & access
 
-The pilot deployment is **single-operator** (the founder). Multi-user identity controls below are **planned**, not yet implemented in code.
+We distinguish **authentication** (proving who a user is — SSO / MFA, largely **planned**) from **authorization** (what an authenticated session may do — RBAC + per-tool permissions, **enforced in code today**).
 
-- **Officer-side SSO (Microsoft Entra / WorkOS):** **Planned (Phase 4).** WorkOS is the targeted identity provider; see `SUB-PROCESSORS.md`.
+- **Authorization — roles + per-tool permissions:** **In place.** Four hierarchical roles (`rates_officer` < `rates_supervisor` < `council_admin` < `platform_admin`) are enforced on **every** tool call through a compile-time-exhaustive policy table (`apps/web/lib/tool-tenant-scope.ts`). Each tool maps to a required permission (e.g. `read.tenant_data`, `write.draft_mutation`, `read.audit_log`); a session lacking the permission is denied. Tenant scope is applied in the same chokepoint, and unknown tools fail closed.
+- **Authentication — session integrity:** **Partial.** Sessions are short-lived, TTL-bounded cookies signed with HMAC-SHA256 (`RA_AUTH_SECRET`). **In place.** Rolling refresh and device/IP binding are **planned (Phase 4)**.
+- **Officer-side SSO (Microsoft Entra / WorkOS):** **Partial.** The WorkOS OIDC callback and session-mapping code is implemented, but **inactive** until a council provisions SSO secrets — a fresh production deploy returns `501` from `/api/auth/callback` by design. **Activation is planned (Phase 4);** see `SUB-PROCESSORS.md`.
 - **MFA enforcement:** **Planned (Phase 4)** — delivered with SSO. **There is no application-level MFA in the codebase today.** The pilot relies on the founder's hosting-provider MFA (Vercel, GitHub) for administrative access.
 - **FIDO2 / hardware-token preference:** **Aspirational.**
 - **Citizen-side magic link / MyGovID:** **Planned (Phase 5).** Not in scope for the council-officer-only pilot.
-- **Sessions (short-lived JWT, rolling refresh, device + IP binding):** **Planned (Phase 4)** alongside SSO.
-- **Roles (`viewer`, `officer`, `senior_officer`, `coordinator`, `manager`, `admin`):** **Planned (Phase 4)** — RBAC schema is designed but not enforced in code.
-- **Permissions (per-tool, e.g. `tool.send_sms`, `tool.write_owner`):** **Planned (Phase 4).**
-- **Step-up authentication for high-risk operations:** **Planned (Phase 4).**
+- **Step-up authentication for high-risk operations:** **Partial.** Mutating tools use a two-phase preview-then-confirm commit-token protocol (server-issued, 5-minute TTL, single-use) — **in place**. MFA-backed step-up is **planned (Phase 4)**.
 - **Just-in-time provisioning + automatic deprovisioning:** **Planned (Phase 4).**
 
 ---
@@ -93,7 +92,7 @@ The pilot deployment is **single-operator** (the founder). Multi-user identity c
 Every mutating tool call writes a structured audit entry tagged with tenant, actor, action, before/after snapshot, correlation ID, IP, and User-Agent. The captured-fields schema is delivered.
 
 - **Append-only storage:** **In place** — in-memory ring buffer for the demo adapter (capped at 10,000 entries with FIFO eviction); Postgres-backed `audit_log` table available via `RA_USE_DB=true` for production, with `UPDATE` and `DELETE` revoked at the SQL role level (see `packages/db/migrations/0001_init.sql`).
-- **Tamper-evident anchoring:** **Planned (Phase 9 hash-chain over occurrence order).**
+- **Tamper-evident hash-chain:** **In place (compute + verify)** — every entry links to its predecessor (`prevHash` → `rowHash` over occurrence order); `GET /api/audit/verify-chain` recomputes the chain and reports the first broken row. **Durable DB-side validation (a Postgres trigger that recomputes the hash-link and rejects a broken row at write time) and external Merkle anchoring that survives a database-admin or hardware compromise remain Planned (Phase 9).** A `BEFORE INSERT` trigger already ships (`0005_audit_chain_sentinel_lockdown.sql`) but enforces only genesis-sentinel lockdown, not full chain recomputation — see the immutability caveat below.
 - **Captured fields (user, role, tenant, IP, User-Agent, timestamp, action, target type/id, before/after JSON, correlation ID):** **In place.** Documented in `packages/db/AUDIT.md`.
 - **7-year retention:** **Planned (Phase 2 Postgres rollout)** to satisfy state records requirements; see `DATA-RETENTION-POLICY.md`. The in-memory ring buffer in the demo adapter is intentionally bounded — do not represent it as durable.
 - **Read API:** `GET /api/audit/log` (supervisor and above; `read.audit_log` permission). Cross-tenant reads are limited to `platform_admin`.
@@ -199,11 +198,11 @@ Honest disclosure of where we are pre-certification:
 - Formal certifications are targeted but not yet achieved.
 - Penetration testing programme begins on first paying contract.
 - Many controls described above are **planned**, not implemented; they are labelled inline.
-- The audit log, KMS-with-customer-managed-keys, and application-level MFA are the three controls most often pre-checked by procurement and are explicitly **not yet in place**. They are scheduled for Phase 2 (audit log), Phase 4 (MFA / SSO), and Phase 6 (KMS / VPC / AWS migration).
+- **Durable 7-year audit retention**, KMS-with-customer-managed-keys, and application-level MFA are the three controls most often pre-checked by procurement and are explicitly **not yet in place**. They are scheduled for Phase 2 (durable Postgres audit retention — the append-only, hash-chained capture is already in place), Phase 4 (MFA / SSO), and Phase 6 (KMS / VPC / AWS migration).
 - The single most material privacy disclosure today is cross-border LLM inference (Anthropic). It is documented in `PRIVACY-IMPACT-ASSESSMENT.md` and disclosed to every council in pilot scoping.
 
 We will not represent more than is true. Where a control is aspirational rather than active, this document marks it explicitly.
 
 ---
 
-*Last reviewed: 2026-05-08 · Next review: 2026-08-08 · Review cycle: quarterly.*
+*Last reviewed: 2026-05-31 · Next review: 2026-08-31 · Review cycle: quarterly.*

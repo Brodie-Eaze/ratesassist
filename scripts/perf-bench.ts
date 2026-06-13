@@ -45,6 +45,7 @@ import type {
 import { WA_RATE_TABLES } from "@ratesassist/contract";
 import {
   findMismatches,
+  findMismatchesWithOvertax,
   calculateUplift as estimateUpliftAccurate,
   type ChangeDetectionEntry,
   type EvaluationContext,
@@ -378,12 +379,12 @@ function runBench(): BenchResult {
   // ---- Track 1: full portfolio sweep ----
   console.log(`[perf] sweep #1 (findMismatches over ${properties.length} props)…`);
   const sweepStart = nsNow();
-  const result = findMismatches(ctx);
+  const result = findMismatchesWithOvertax(ctx);
   const fullSweepMs = elapsedMs(sweepStart);
   sampleRss();
   console.log(
     `[perf]   sweep complete in ${fullSweepMs.toFixed(1)}ms — ` +
-      `${result.length} headline + ${result.overtaxedCandidates.length} overtaxed candidates`,
+      `${result.candidates.length} headline + ${result.overtaxedCandidates.length} overtaxed candidates`,
   );
 
   // ---- Track 2: accurate uplift loop over candidates ----
