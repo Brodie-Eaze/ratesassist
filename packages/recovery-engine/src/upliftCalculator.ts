@@ -9,10 +9,14 @@
  * where `value` is GRV (urban / commercial / industrial / vacant) or UV
  * (rural / pastoral / mining), per the council's published schedule.
  *
- * Backdating per WA LGA s.6.81 ("rates that ought to have been imposed"):
- * up to 5 years statutory cap; we surface BOTH the statutory ceiling and a
- * conservative 3-year practical cap because most councils self-impose the
- * tighter ceiling on audit / admin grounds.
+ * Backdating ("rates that ought to have been imposed") is governed by Part 6
+ * of the WA Local Government Act 1995. We surface BOTH a wider statutory-style
+ * ceiling and a conservative 3-year practical cap because most councils
+ * self-impose the tighter ceiling on audit / admin grounds. The exact
+ * governing provision + period must be confirmed by the responsible officer
+ * against the current Act before service — we deliberately do not assert a
+ * specific section number (s.6.81 is "Objection not to affect liability", not
+ * a backdating-limit authority).
  *
  * The result carries a full human-readable formula trail + the council's
  * source URL so the evidence pack can be audited line by line.
@@ -30,7 +34,8 @@ const MS_PER_YEAR = 365.25 * 24 * 60 * 60 * 1000;
 
 /** Practical cap most WA councils self-impose on backdated corrections. */
 export const BACKDATING_CONSERVATIVE_YEARS = 3;
-/** Statutory ceiling per WA LGA 1995 s.6.81. */
+/** Wider statutory-style ceiling (WA LGA 1995, Part 6 — officer to confirm the
+ * exact governing provision + period before service). */
 export const BACKDATING_STATUTORY_YEARS = 5;
 
 export type UpliftInput = {
@@ -307,7 +312,7 @@ export function calculateUplift(input: UpliftInput): UpliftResult {
   }
   if (yearsSinceChange > BACKDATING_STATUTORY_YEARS) {
     caveats.push(
-      `Years since change (${yearsSinceChange.toFixed(1)}) exceed the ${BACKDATING_STATUTORY_YEARS}-year WA LGA s.6.81 statutory cap — arrears are capped accordingly.`,
+      `Years since change (${yearsSinceChange.toFixed(1)}) exceed the ${BACKDATING_STATUTORY_YEARS}-year backdating ceiling (WA LGA 1995, Part 6 — officer to confirm the governing provision) — arrears are capped accordingly.`,
     );
   }
 
@@ -364,7 +369,7 @@ export function calculateUplift(input: UpliftInput): UpliftResult {
     `Annual uplift = ${fmtAud(annualUplift)}/yr. ` +
     `Years since change: ${yearsSinceChange.toFixed(2)}. ` +
     `Backdated ${BACKDATING_CONSERVATIVE_YEARS}y (conservative): ${fmtAud(backdatedAmountConservative)}. ` +
-    `Backdated ${BACKDATING_STATUTORY_YEARS}y (LGA s.6.81 statutory): ${fmtAud(backdatedAmountStatutory)}.`;
+    `Backdated ${BACKDATING_STATUTORY_YEARS}y (statutory ceiling, LGA 1995 Part 6 — confirm provision): ${fmtAud(backdatedAmountStatutory)}.`;
 
   return {
     ok: true,

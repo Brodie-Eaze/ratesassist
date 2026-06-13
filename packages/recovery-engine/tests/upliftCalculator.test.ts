@@ -182,7 +182,7 @@ describe("calculateUplift — backdating math", () => {
     expect(r.backdatedYearsStatutory).toBe(BACKDATING_STATUTORY_YEARS);
     expect(r.backdatedAmountConservative).toBeCloseTo(r.annualUplift * 3, 0);
     expect(r.backdatedAmountStatutory).toBeCloseTo(r.annualUplift * 5, 0);
-    expect(r.caveats.some((c) => c.includes("statutory cap"))).toBe(true);
+    expect(r.caveats.some((c) => c.includes("backdating ceiling"))).toBe(true);
   });
 
   it("future-dated change (>1 day past evaluationDate) is rejected as invalid_change_date", () => {
