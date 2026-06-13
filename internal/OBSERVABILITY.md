@@ -205,7 +205,18 @@ roadmap to first-class metrics:
   MCP tool latency).
 - **Phase 6** — OpenTelemetry SDK on the request path; traces shipped to
   the same destination as logs via OTLP.
-- **Phase 7** — SLO + error budget tracking for the public council API.
+- **Phase 7** — productised SLO + error-budget tracking (automated burn-rate
+  dashboards) for the public council API.
+
+The **SLOs/SLIs themselves are defined now** for the revenue-critical paths
+(`/api/chat`, `/api/properties`, the audit verify path, `/api/health`,
+`/api/ready`) in [`SLO-SLI.md`](SLO-SLI.md), reconciled with
+[`SLA.md`](../SLA.md). That document also maps each of the four golden signals
+(latency, traffic, errors, saturation) to the exact log field it comes from
+today and records the two known gaps (per-route completion line on read
+routes; first-class saturation gauges) that Phase 6 closes. Phase 7 is about
+*automating* the burn-rate dashboards on top of those definitions, not about
+defining the SLOs for the first time.
 
 Until Phase 6 lands, dashboards live in the log destination of choice
 and the queries above are the contract.

@@ -57,6 +57,11 @@ This is the **before**: pre-flight, day-of, and first-24-hour windows.
       after running a tool call.
 - [ ] Tamper-evident chain verified by hitting
       `/api/audit/verify-chain` — returns `{ ok: true, valid: true }`.
+- [ ] DR restore drill for the audit chain run within the last 90 days and
+      PASSED (`npm run dr:audit-drill`). Latest drill artefact:
+      `internal/DR-RESTORE-DRILL-2026-05-29.md`. This proves a backup of the
+      compliance-critical audit store can be restored with the hash chain
+      intact (RPO/RTO targets in that doc and in `internal/SLO-SLI.md`).
 
 ### Compliance and legal
 
