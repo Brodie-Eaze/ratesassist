@@ -32,6 +32,11 @@ import { COUNCILS } from "@/lib/data";
 import { getEvaluationContextForTenant } from "@/lib/clients";
 import { correlationIdFromHeaders } from "@/lib/correlation";
 import { renderStatutoryNotice } from "@/lib/evidencePdf";
+import {
+  pdfIdentityHmac,
+  pdfIntegrityReceipt,
+  type PdfIdentity,
+} from "@/lib/pdfIntegrity";
 import { getClientIp, rateLimitComposite, retryAfterSeconds } from "@/lib/rate-limit";
 import { scoped } from "@/lib/logger";
 import { buildEvidencePack } from "@ratesassist/recovery-engine";
@@ -125,8 +130,18 @@ export async function GET(
       `${property.address}, ${property.suburb} ${property.postcode} ${property.state}`,
   };
 
-  const issuedDate = new Date().toISOString().slice(0, 10);
+  const generatedAtFull = new Date().toISOString();
+  const issuedDate = generatedAtFull.slice(0, 10);
   const noticeRef = `RN-${assessmentNumber}-${issuedDate.replace(/-/g, "")}`;
+
+  // Integrity identity — computed before render so the footer carries the ref.
+  const identity: PdfIdentity = {
+    tenantId: session.tenantId,
+    docId: noticeRef,
+    userId: session.userId,
+    timestamp: generatedAtFull,
+  };
+  const { ref: integrityRef } = pdfIdentityHmac(identity);
 
   // ---- 6. Render. ----
   let pdf: Buffer;
@@ -138,6 +153,7 @@ export async function GET(
       recipient,
       noticeRef,
       issuedDate,
+      integrityRef,
     });
   } catch (e) {
     log.error({
@@ -147,6 +163,8 @@ export async function GET(
     });
     return fail("internal_error", "Notice render failed.");
   }
+
+  const receipt = pdfIntegrityReceipt(identity, pdf);
 
   // ---- 7. Audit — best-effort. ----
   await writeNoticeAudit({
@@ -158,6 +176,9 @@ export async function GET(
     noticeRef,
     assessmentNumber,
     operatorName: session.displayName,
+    generatedAt: generatedAtFull,
+    pdfSha256: receipt.sha256,
+    pdfHmac: receipt.hmac,
   });
 
   log.info({
@@ -194,6 +215,9 @@ async function writeNoticeAudit(args: {
   noticeRef: string;
   assessmentNumber: string;
   operatorName: string;
+  generatedAt: string;
+  pdfSha256: string;
+  pdfHmac: string;
 }): Promise<void> {
   try {
     const audit = await import("@ratesassist/adapter-demo/audit");
@@ -206,6 +230,9 @@ async function writeNoticeAudit(args: {
       after: {
         assessmentNumber: args.assessmentNumber,
         operatorName: args.operatorName,
+        generatedAt: args.generatedAt,
+        pdfSha256: args.pdfSha256,
+        pdfHmac: args.pdfHmac,
       },
       correlationId: args.correlationId,
       ...(args.ip !== undefined ? { ip: args.ip } : {}),

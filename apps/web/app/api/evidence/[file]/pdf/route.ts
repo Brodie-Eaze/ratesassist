@@ -42,6 +42,11 @@ import { COUNCILS } from "@/lib/data";
 import { getEvaluationContextForTenant } from "@/lib/clients";
 import { correlationIdFromHeaders } from "@/lib/correlation";
 import { renderEvidencePdf } from "@/lib/evidencePdf";
+import {
+  pdfIdentityHmac,
+  pdfIntegrityReceipt,
+  type PdfIdentity,
+} from "@/lib/pdfIntegrity";
 import { getClientIp, rateLimitComposite, retryAfterSeconds } from "@/lib/rate-limit";
 import { scoped } from "@/lib/logger";
 import { buildEvidencePack } from "@ratesassist/recovery-engine";
@@ -140,7 +145,19 @@ export async function GET(
   // origin is set (dev mode).
   const evidenceUrl = buildEvidenceUrl(req, assessmentNumber);
 
-  // ---- 6. Render. ----
+  // ---- 6. Render (with a cryptographic integrity ref in the footer). ----
+  // The identity HMAC + footer ref are computed BEFORE render so the ref can
+  // be drawn into the document; the full byte-hash receipt is computed AFTER
+  // render and stored in the audit log for /api/verify/pack to confirm.
+  const generatedAt = new Date().toISOString();
+  const identity: PdfIdentity = {
+    tenantId: session.tenantId,
+    docId: pack.packId,
+    userId: session.userId,
+    timestamp: generatedAt,
+  };
+  const { ref: integrityRef } = pdfIdentityHmac(identity);
+
   let pdf: Buffer;
   try {
     pdf = await renderEvidencePdf({
@@ -148,6 +165,7 @@ export async function GET(
       councilName,
       operatorName: session.displayName,
       evidenceUrl,
+      integrityRef,
     });
   } catch (e) {
     log.error({
@@ -157,6 +175,8 @@ export async function GET(
     });
     return fail("internal_error", "PDF render failed.");
   }
+
+  const receipt = pdfIntegrityReceipt(identity, pdf);
 
   // ---- 7. Audit — best-effort, logged on failure. ----
   await writeAuditAsync({
@@ -168,6 +188,9 @@ export async function GET(
     packId: pack.packId,
     assessmentNumber,
     operatorName: session.displayName,
+    generatedAt,
+    pdfSha256: receipt.sha256,
+    pdfHmac: receipt.hmac,
   });
 
   log.info({
@@ -210,6 +233,9 @@ async function writeAuditAsync(args: {
   packId: string;
   assessmentNumber: string;
   operatorName: string;
+  generatedAt: string;
+  pdfSha256: string;
+  pdfHmac: string;
 }): Promise<void> {
   try {
     const audit = await import("@ratesassist/adapter-demo/audit");
@@ -222,6 +248,11 @@ async function writeAuditAsync(args: {
       after: {
         assessmentNumber: args.assessmentNumber,
         operatorName: args.operatorName,
+        // JD-2 integrity receipt — the byte-hash + identity HMAC that
+        // /api/verify/pack re-derives to prove a copy is unmodified.
+        generatedAt: args.generatedAt,
+        pdfSha256: args.pdfSha256,
+        pdfHmac: args.pdfHmac,
       },
       correlationId: args.correlationId,
       ...(args.ip !== undefined ? { ip: args.ip } : {}),

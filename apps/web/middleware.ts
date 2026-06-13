@@ -38,6 +38,11 @@ const PUBLIC_API_PREFIXES: readonly string[] = [
   "/api/ready",
   "/api/version",
   "/api/auth/",
+  // JD-2: public document-integrity verification. A council's legal team or
+  // a tribunal posts a downloaded PDF to confirm it is unmodified. No session
+  // — the cryptographic check (HMAC + stored byte-hash) IS the trust anchor,
+  // and the handler rate-limits + returns no PII.
+  "/api/verify/",
 ];
 
 /**
@@ -130,6 +135,12 @@ const HARDCODED_CSRF_EXEMPT_PATHS: ReadonlyArray<string> = [
   // and we cannot constrain its Origin header. The OAuth state-token
   // check inside the callback handler is the actual CSRF defense.
   "/api/auth/sso/callback",
+  // JD-2 public document verification — called programmatically (a council
+  // solicitor / tribunal posting a downloaded PDF), so it carries no
+  // first-party Origin. It is unauthenticated and read-only with respect to
+  // server state (it only HASHES the upload + reads the audit log), so CSRF
+  // — which protects a victim's authenticated session — does not apply.
+  "/api/verify/pack",
 ] as const;
 
 let warnedCsrfEnvDeprecated = false;
