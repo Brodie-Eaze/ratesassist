@@ -92,6 +92,10 @@ export async function GET(
 
   // ---- 3. Tenant scoping: cross-tenant returns 404 (not 403). ----
   const assetTenant = tenantFromAssessmentNumber(assessmentNumber);
+  if (!assetTenant) {
+    // Assessment number has no recognisable tenant prefix — treat as not found.
+    return fail("not_found", `Evidence pack for ${assessmentNumber} not found.`);
+  }
   if (!sessionMayAccessTenant(session, assetTenant)) {
     log.warn({
       msg: "evidence.pdf.cross_tenant_blocked",

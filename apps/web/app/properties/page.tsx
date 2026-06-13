@@ -65,12 +65,14 @@ export default function PropertiesPage() {
                 <input
                   className="input pl-9"
                   placeholder="Search address, suburb, assessment…"
+                  aria-label="Search properties by address, suburb, or assessment number"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                 />
               </div>
               <select
                 className="input"
+                aria-label="Filter by council"
                 value={council}
                 onChange={(e) => setCouncil(e.target.value)}
               >
@@ -120,7 +122,7 @@ export default function PropertiesPage() {
                       </span>
                       <span>{p.landUse}</span>
                       <span className={p.balance > 0 ? "text-warn-700" : ""}>
-                        {formatAud(p.balance)}
+                        {p.balance !== 0 ? formatAud(p.balance) : "—"}
                       </span>
                     </div>
                   </button>
@@ -199,7 +201,9 @@ function PropertyDetail({
           </div>
           <div>
             <div className="label">Annual rates</div>
-            <div className="text-sm font-medium">{formatAud(p.annualRates)}</div>
+            <div className="text-sm font-medium">
+              {p.annualRates ? formatAud(p.annualRates) : "—"}
+            </div>
           </div>
           <div>
             <div className="label">Last payment</div>

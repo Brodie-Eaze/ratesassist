@@ -13,13 +13,13 @@
  */
 
 import { createAbnClient, type AbnClient } from "@ratesassist/identity";
-import { buildLiveTenementsByAssessment } from "@ratesassist/spatial";
 import {
   recoveryStats as engineRecoveryStats,
   findMismatches,
   type ChangeDetectionEntry,
   type EvaluationContext,
 } from "@ratesassist/recovery-engine";
+import { buildLiveTenementsByAssessment } from "@ratesassist/spatial";
 import {
   TARGET_STATE_SCOPE,
   WA_RATE_TABLES,
@@ -49,11 +49,39 @@ import { scoped } from "./logger";
 // import per process — bootstrap is memoised in {@link getWebDb}.
 
 /**
- * Default ABN-Lookup base. Library code does not read environment, so we read
- * `ABN_LOOKUP_BASE` here and pass it through to the factory.
+ * SEC-002: ABN_LOOKUP_BASE allowlist. Mirrors the SEC-011 DMIRS guard. An
+ * env-supplied override must point at the official ATO ABR JSON service.
+ * Without this gate, an attacker who controls the env (e.g. a misconfigured
+ * PaaS dashboard) could pivot ABN/owner lookups to a hostile origin and feed
+ * fabricated entity data (directorships, GST status, trading names) back into
+ * the recovery audit as "authoritative" evidence — or exfiltrate the queried
+ * ABNs and owner names to an attacker-controlled host.
+ *
+ * The allowlist is intentionally narrow: only the abr.business.gov.au public
+ * host. Internal or staging variants must be added explicitly.
  */
-const ABN_LOOKUP_BASE: string =
-  process.env["ABN_LOOKUP_BASE"] ?? "https://abr.business.gov.au/json";
+export function isAllowedAbnBase(url: string): boolean {
+  return /^https:\/\/abr\.business\.gov\.au\//i.test(url);
+}
+
+/**
+ * Default ABN-Lookup base. Library code does not read environment, so we read
+ * `ABN_LOOKUP_BASE` here and pass it through to the factory. Any env override
+ * is allowlist-checked (SEC-002) and refused if it is not the official ABR host.
+ */
+const ABN_LOOKUP_BASE: string = (() => {
+  const envValue = process.env["ABN_LOOKUP_BASE"];
+  if (typeof envValue === "string" && envValue.length > 0) {
+    if (!isAllowedAbnBase(envValue)) {
+      throw new Error(
+        `ABN_LOOKUP_BASE refused: '${envValue}' is not on the ABR allowlist ` +
+          `(must start with https://abr.business.gov.au/)`,
+      );
+    }
+    return envValue;
+  }
+  return "https://abr.business.gov.au/json";
+})();
 
 /**
  * Singleton ABN client. The legacy app silently fell back to mock data on
@@ -421,7 +449,314 @@ export async function getEvaluationContextAsync(): Promise<EvaluationContext> {
   return cachedContext;
 }
 
-// ── E3: Per-tenant evaluation context (scale-safe path) ──────────────────────
+function buildContextFromInMemory(): EvaluationContext {
+  const ownersById = new Map(OWNERS.map((o) => [o.ownerId, o]));
+
+  const tenementsByAssessment = new Map<string, Tenement[]>();
+  for (const tenement of TENEMENTS) {
+    for (const assessment of tenement.intersectsAssessmentNumbers) {
+      const list = tenementsByAssessment.get(assessment);
+      if (list === undefined) {
+        tenementsByAssessment.set(assessment, [tenement]);
+      } else {
+        list.push(tenement);
+      }
+    }
+  }
+
+  // PERF-002 / PERF-003: build per-owner and per-suburb-rural indexes in a
+  // single pass over PROPERTIES so the scoring engine can look up O(1)
+  // instead of re-scanning the full property list on every signal eval.
+  const enrichedProperties = overlayVenCt(overlayValuations(PROPERTIES));
+  const propertiesByOwnerId = new Map<string, Property[]>();
+  const ruralBySuburb = new Map<string, Property[]>();
+  for (const p of enrichedProperties) {
+    for (const ownerId of p.ownerIds) {
+      const bucket = propertiesByOwnerId.get(ownerId);
+      if (bucket === undefined) {
+        propertiesByOwnerId.set(ownerId, [p]);
+      } else {
+        bucket.push(p);
+      }
+    }
+    if (p.landUse === "Rural") {
+      const bucket = ruralBySuburb.get(p.suburb);
+      if (bucket === undefined) {
+        ruralBySuburb.set(p.suburb, [p]);
+      } else {
+        bucket.push(p);
+      }
+    }
+  }
+
+  return {
+    properties: enrichedProperties,
+    ownersById,
+    tenementsByAssessment,
+    propertiesByOwnerId,
+    ruralBySuburb,
+    lagCandidatesByAssessment: MOCK_LAG_CANDIDATES_BY_ASSESSMENT,
+    addressDiscrepanciesByAssessment: MOCK_ADDRESS_DISCREPANCIES_BY_ASSESSMENT,
+    emitsApprovalsByTenement: MOCK_EMITS_APPROVALS_BY_TENEMENT,
+    changeDetectionByAssessment: MOCK_CHANGE_DETECTION_BY_ASSESSMENT,
+    landgateRecordsByVen: MOCK_LANDGATE_RECORDS_BY_VEN,
+    waterCorpEligibilityByCardOrProprietor: MOCK_WC_ELIGIBILITY,
+    proprietorDeceasedReferences: MOCK_PROPRIETOR_DECEASED_REFERENCES,
+    rateTablesByCouncil: RATE_TABLES_BY_COUNCIL,
+    targetStateScope: TARGET_STATE_SCOPE,
+  };
+}
+
+/**
+ * Feature flag (default OFF): hydrate `tenementsByAssessment` from LIVE
+ * DMIRS/SLIP register data — fetched for the council footprint and intersected
+ * against parcels — instead of the seeded DB rows. Set `RA_LIVE_TENEMENTS=1`
+ * (or `true`) to enable. Any live-path failure falls back to the DB map, so the
+ * flag can only ADD live signal, never blank the scorecard.
+ */
+const LIVE_TENEMENTS_ENABLED =
+  process.env["RA_LIVE_TENEMENTS"] === "1" ||
+  process.env["RA_LIVE_TENEMENTS"]?.toLowerCase() === "true";
+
+/**
+ * Build an EvaluationContext by reading properties / owners / tenements /
+ * transactions from Postgres. Each tenant scope is queried separately
+ * inside {@link withTenant} so RLS-enforced reads succeed. Tenements live
+ * outside RLS and are read directly.
+ */
+async function buildContextFromDb(): Promise<EvaluationContext> {
+  const log = scoped("apps/web/clients");
+  const start = Date.now();
+  const { getWebDb } = await import("./db");
+  const {
+    eq,
+    owners: ownersTable,
+    properties: propertiesTable,
+    propertyOwners: propertyOwnersTable,
+    tenants: tenantsTable,
+    tenements: tenementsTable,
+    withTenant,
+  } = await import("@ratesassist/db");
+  const db = await getWebDb();
+
+  const tenantRows = await db
+    .select({ id: tenantsTable.id, code: tenantsTable.code })
+    .from(tenantsTable);
+
+  const propertiesAcc: Property[] = [];
+  const ownersAcc: Owner[] = [];
+
+  for (const t of tenantRows) {
+    // pglite runs as superuser and ignores RLS row filters, which means a
+    // bare `SELECT * FROM owners` returns rows for every tenant on every
+    // iteration. Use an explicit `where(tenantId = t.id)` filter — it's a
+    // no-op on real Postgres where the policy already enforces it, and it
+    // keeps pglite honest in dev.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const ownerRows: any[] = await withTenant(db, t.id, async (tx) => {
+      return tx
+        .select()
+        .from(ownersTable)
+        .where(eq(ownersTable.tenantId, t.id));
+    });
+    const ownerIdToExt = new Map<string, string>(); // pk -> ownerExtId
+    for (const o of ownerRows) {
+      ownerIdToExt.set(o.id, o.ownerExtId);
+      const ownerExtId: string = o.ownerExtId;
+      const checkedAt: Date | null = o.abnCheckedAt ?? null;
+      const status: "Active" | "Cancelled" | "Suspended" | null = o.abnStatus ?? null;
+      ownersAcc.push({
+        ownerId: ownerExtId,
+        name: o.name,
+        abn: o.abn ?? null,
+        abnCheck:
+          checkedAt !== null && status !== null
+            ? {
+                kind: "checked",
+                status,
+                checkedAt: checkedAt.toISOString(),
+              }
+            : { kind: "unchecked" },
+        postalAddress: o.postalAddress,
+        email: o.email ?? null,
+        phone: o.phone ?? null,
+        ownerSince: o.ownerSince,
+        previousOwners: o.previousOwners ?? [],
+      });
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const propertyRows: any[] = await withTenant(db, t.id, async (tx) => {
+      return tx
+        .select()
+        .from(propertiesTable)
+        .where(eq(propertiesTable.tenantId, t.id));
+    });
+    const propertyIdSet = new Set<string>(propertyRows.map((p) => p.id));
+    // propertyOwners has no tenant_id column; filter client-side by the
+    // properties we just pulled.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const allPropertyOwnerRows: any[] = await withTenant(
+      db,
+      t.id,
+      async (tx) => {
+        return tx.select().from(propertyOwnersTable);
+      },
+    );
+    const propertyOwnerRows = allPropertyOwnerRows.filter((r) =>
+      propertyIdSet.has(r.propertyId),
+    );
+
+    const ownersByPropertyId = new Map<string, string[]>();
+    for (const row of propertyOwnerRows) {
+      const list = ownersByPropertyId.get(row.propertyId) ?? [];
+      const extId = ownerIdToExt.get(row.ownerId);
+      if (extId !== undefined) list.push(extId);
+      ownersByPropertyId.set(row.propertyId, list);
+    }
+
+    for (const p of propertyRows) {
+      const ownerIds: string[] = ownersByPropertyId.get(p.id) ?? [];
+      propertiesAcc.push({
+        assessmentNumber: p.assessmentNumber,
+        council: t.code,
+        address: p.address,
+        suburb: p.suburb,
+        postcode: p.postcode,
+        state: p.state,
+        landUse: p.landUse,
+        valuation: Number(p.valuation),
+        annualRates: Number(p.annualRates),
+        balance: Number(p.balance),
+        lastPaymentDate: p.lastPaymentDate
+          ? (p.lastPaymentDate as Date).toISOString().slice(0, 10)
+          : null,
+        lastPaymentAmount:
+          p.lastPaymentAmount !== null && p.lastPaymentAmount !== undefined
+            ? Number(p.lastPaymentAmount)
+            : null,
+        paymentMethod: p.paymentMethod ?? null,
+        pensionerRebate: p.pensionerRebate ?? false,
+        paymentArrangement: p.paymentArrangement ?? false,
+        ownerIds,
+        notes: p.notes ?? [],
+        lat: Number(p.centroidLat),
+        lng: Number(p.centroidLng),
+        ...parcelFromGeoJson(p.parcel),
+      });
+    }
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const tenementRows: any[] = await db.select().from(tenementsTable);
+  const tenementsAcc: Tenement[] = tenementRows.map((t) => ({
+    tenementId: t.tenementId,
+    type: t.type,
+    status: t.status,
+    holder: t.holder,
+    holderAbn: t.holderAbn ?? null,
+    commodity: t.commodity ?? [],
+    grantedDate: t.grantedDate,
+    expiryDate: t.expiryDate,
+    areaHectares: Number(t.areaHectares),
+    intersectsAssessmentNumbers: t.intersectsAssessmentNumbers ?? [],
+    isProducing: t.isProducing ?? false,
+    lastWorkProgramYear: t.lastWorkProgramYear ?? null,
+    polygon: polygonFromGeoJson(t.polygon),
+  }));
+
+  // Build the indexes from the DB-derived arrays.
+  const ownersById = new Map<string, Owner>(
+    ownersAcc.map((o) => [o.ownerId, o]),
+  );
+  const dbTenementsByAssessment = new Map<string, Tenement[]>();
+  for (const tenement of tenementsAcc) {
+    for (const an of tenement.intersectsAssessmentNumbers) {
+      const list = dbTenementsByAssessment.get(an);
+      if (list === undefined) {
+        dbTenementsByAssessment.set(an, [tenement]);
+      } else {
+        list.push(tenement);
+      }
+    }
+  }
+  const enrichedProperties = overlayVenCt(overlayValuations(propertiesAcc));
+
+  // LIVE tenements (flag-gated, default OFF). When enabled, replace the
+  // DB-derived map with one built from live DMIRS/SLIP register data fetched for
+  // this council's footprint and intersected against its parcels. Any failure
+  // (disabled, oversized bbox, fetch error, zero matches) keeps the DB map.
+  let tenementsByAssessment: ReadonlyMap<string, readonly Tenement[]> =
+    dbTenementsByAssessment;
+  if (LIVE_TENEMENTS_ENABLED) {
+    const live = await buildLiveTenementsByAssessment(enrichedProperties);
+    if (live.ok) {
+      tenementsByAssessment = live.tenementsByAssessment;
+      log.info({
+        msg: "eval_context.live_tenements",
+        source: live.source,
+        tenements: live.tenementCount,
+        matchedAssessments: live.matchedAssessments,
+      });
+    } else {
+      log.info({ msg: "eval_context.live_tenements_fallback", reason: live.reason });
+    }
+  }
+  const propertiesByOwnerId = new Map<string, Property[]>();
+  const ruralBySuburb = new Map<string, Property[]>();
+  for (const p of enrichedProperties) {
+    for (const ownerId of p.ownerIds) {
+      const bucket = propertiesByOwnerId.get(ownerId);
+      if (bucket === undefined) {
+        propertiesByOwnerId.set(ownerId, [p]);
+      } else {
+        bucket.push(p);
+      }
+    }
+    if (p.landUse === "Rural") {
+      const bucket = ruralBySuburb.get(p.suburb);
+      if (bucket === undefined) {
+        ruralBySuburb.set(p.suburb, [p]);
+      } else {
+        bucket.push(p);
+      }
+    }
+  }
+
+  log.info({
+    msg: "eval_context.db_hydrated",
+    durationMs: Date.now() - start,
+    properties: enrichedProperties.length,
+    owners: ownersAcc.length,
+    tenements: tenementsAcc.length,
+    tenants: tenantRows.length,
+  });
+
+  return {
+    properties: enrichedProperties,
+    ownersById,
+    tenementsByAssessment,
+    propertiesByOwnerId,
+    ruralBySuburb,
+    lagCandidatesByAssessment: MOCK_LAG_CANDIDATES_BY_ASSESSMENT,
+    addressDiscrepanciesByAssessment: MOCK_ADDRESS_DISCREPANCIES_BY_ASSESSMENT,
+    emitsApprovalsByTenement: MOCK_EMITS_APPROVALS_BY_TENEMENT,
+    changeDetectionByAssessment: MOCK_CHANGE_DETECTION_BY_ASSESSMENT,
+    landgateRecordsByVen: MOCK_LANDGATE_RECORDS_BY_VEN,
+    waterCorpEligibilityByCardOrProprietor: MOCK_WC_ELIGIBILITY,
+    proprietorDeceasedReferences: MOCK_PROPRIETOR_DECEASED_REFERENCES,
+    rateTablesByCouncil: RATE_TABLES_BY_COUNCIL,
+    targetStateScope: TARGET_STATE_SCOPE,
+  };
+}
+
+// ===== E3: Per-tenant scoped context cache =====
+//
+// The global `cachedContext` above loads ALL tenants at once (O(tenants ×
+// rows)), which becomes a memory cliff at 100k+ properties/tenant. The
+// per-tenant cache below builds an EvaluationContext scoped to a single
+// tenant, cached independently with a 5-minute TTL.
+//
 // Scale improvement:
 //   Before E3: 1 context = all tenants × all properties (unbounded)
 //   After  E3: 1 context per tenant × candidate properties only
@@ -441,10 +776,6 @@ export async function getEvaluationContextAsync(): Promise<EvaluationContext> {
 //   4. Tenement scope — loads only tenements that overlap this tenant's
 //      candidate properties (via `tenement_properties` join table), not
 //      the entire global tenement register.
-
-const LIVE_TENEMENTS_ENABLED =
-  process.env["RA_LIVE_TENEMENTS"] === "1" ||
-  process.env["RA_LIVE_TENEMENTS"]?.toLowerCase() === "true";
 
 const PER_TENANT_CTX_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -582,8 +913,7 @@ async function buildContextFromDbForTenant(
   // ── Step 4: Property→Owner join (scoped to candidate properties) ─────────
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const allPropertyOwnerRows: any[] = await withTenant(db, tenantUuid, async (tx) => {
-    return tx.select().from(propertyOwnersTable)
-      .where(inArray(propertyOwnersTable.propertyId, Array.from(propertyIdSet)));
+    return tx.select().from(propertyOwnersTable);
   });
   const propertyOwnerRows = allPropertyOwnerRows.filter((r) =>
     propertyIdSet.has(r.propertyId),
@@ -635,6 +965,8 @@ async function buildContextFromDbForTenant(
   // one candidate property for this tenant.
   let tenementsAcc: Tenement[] = [];
   if (propertyIdSet.size > 0) {
+    // propertyIdSet.size > 0 guarantees propertyIds.length > 0 here,
+    // so inArray won't generate invalid empty-IN SQL.
     const propertyIds = Array.from(propertyIdSet);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const joinRows: any[] = await db
@@ -812,275 +1144,6 @@ export function invalidateEvaluationContextForTenant(tenantId: string): void {
 /** Test hook: reset ALL per-tenant cache entries. */
 export function __resetPerTenantContextCacheForTests(): void {
   _tenantCtxCache.clear();
-}
-
-function buildContextFromInMemory(): EvaluationContext {
-  const ownersById = new Map(OWNERS.map((o) => [o.ownerId, o]));
-
-  const tenementsByAssessment = new Map<string, Tenement[]>();
-  for (const tenement of TENEMENTS) {
-    for (const assessment of tenement.intersectsAssessmentNumbers) {
-      const list = tenementsByAssessment.get(assessment);
-      if (list === undefined) {
-        tenementsByAssessment.set(assessment, [tenement]);
-      } else {
-        list.push(tenement);
-      }
-    }
-  }
-
-  // PERF-002 / PERF-003: build per-owner and per-suburb-rural indexes in a
-  // single pass over PROPERTIES so the scoring engine can look up O(1)
-  // instead of re-scanning the full property list on every signal eval.
-  const enrichedProperties = overlayVenCt(overlayValuations(PROPERTIES));
-  const propertiesByOwnerId = new Map<string, Property[]>();
-  const ruralBySuburb = new Map<string, Property[]>();
-  for (const p of enrichedProperties) {
-    for (const ownerId of p.ownerIds) {
-      const bucket = propertiesByOwnerId.get(ownerId);
-      if (bucket === undefined) {
-        propertiesByOwnerId.set(ownerId, [p]);
-      } else {
-        bucket.push(p);
-      }
-    }
-    if (p.landUse === "Rural") {
-      const bucket = ruralBySuburb.get(p.suburb);
-      if (bucket === undefined) {
-        ruralBySuburb.set(p.suburb, [p]);
-      } else {
-        bucket.push(p);
-      }
-    }
-  }
-
-  return {
-    properties: enrichedProperties,
-    ownersById,
-    tenementsByAssessment,
-    propertiesByOwnerId,
-    ruralBySuburb,
-    lagCandidatesByAssessment: MOCK_LAG_CANDIDATES_BY_ASSESSMENT,
-    addressDiscrepanciesByAssessment: MOCK_ADDRESS_DISCREPANCIES_BY_ASSESSMENT,
-    emitsApprovalsByTenement: MOCK_EMITS_APPROVALS_BY_TENEMENT,
-    changeDetectionByAssessment: MOCK_CHANGE_DETECTION_BY_ASSESSMENT,
-    landgateRecordsByVen: MOCK_LANDGATE_RECORDS_BY_VEN,
-    waterCorpEligibilityByCardOrProprietor: MOCK_WC_ELIGIBILITY,
-    proprietorDeceasedReferences: MOCK_PROPRIETOR_DECEASED_REFERENCES,
-    rateTablesByCouncil: RATE_TABLES_BY_COUNCIL,
-    targetStateScope: TARGET_STATE_SCOPE,
-  };
-}
-
-/**
- * Build an EvaluationContext by reading properties / owners / tenements /
- * transactions from Postgres. Each tenant scope is queried separately
- * inside {@link withTenant} so RLS-enforced reads succeed. Tenements live
- * outside RLS and are read directly.
- */
-async function buildContextFromDb(): Promise<EvaluationContext> {
-  const log = scoped("apps/web/clients");
-  const start = Date.now();
-  const { getWebDb } = await import("./db");
-  const {
-    eq,
-    owners: ownersTable,
-    properties: propertiesTable,
-    propertyOwners: propertyOwnersTable,
-    tenants: tenantsTable,
-    tenements: tenementsTable,
-    withTenant,
-  } = await import("@ratesassist/db");
-  const db = await getWebDb();
-
-  const tenantRows = await db
-    .select({ id: tenantsTable.id, code: tenantsTable.code })
-    .from(tenantsTable);
-
-  const propertiesAcc: Property[] = [];
-  const ownersAcc: Owner[] = [];
-
-  for (const t of tenantRows) {
-    // pglite runs as superuser and ignores RLS row filters, which means a
-    // bare `SELECT * FROM owners` returns rows for every tenant on every
-    // iteration. Use an explicit `where(tenantId = t.id)` filter — it's a
-    // no-op on real Postgres where the policy already enforces it, and it
-    // keeps pglite honest in dev.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const ownerRows: any[] = await withTenant(db, t.id, async (tx) => {
-      return tx
-        .select()
-        .from(ownersTable)
-        .where(eq(ownersTable.tenantId, t.id));
-    });
-    const ownerIdToExt = new Map<string, string>(); // pk -> ownerExtId
-    for (const o of ownerRows) {
-      ownerIdToExt.set(o.id, o.ownerExtId);
-      const ownerExtId: string = o.ownerExtId;
-      const checkedAt: Date | null = o.abnCheckedAt ?? null;
-      const status: "Active" | "Cancelled" | "Suspended" | null = o.abnStatus ?? null;
-      ownersAcc.push({
-        ownerId: ownerExtId,
-        name: o.name,
-        abn: o.abn ?? null,
-        abnCheck:
-          checkedAt !== null && status !== null
-            ? {
-                kind: "checked",
-                status,
-                checkedAt: checkedAt.toISOString(),
-              }
-            : { kind: "unchecked" },
-        postalAddress: o.postalAddress,
-        email: o.email ?? null,
-        phone: o.phone ?? null,
-        ownerSince: o.ownerSince,
-        previousOwners: o.previousOwners ?? [],
-      });
-    }
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const propertyRows: any[] = await withTenant(db, t.id, async (tx) => {
-      return tx
-        .select()
-        .from(propertiesTable)
-        .where(eq(propertiesTable.tenantId, t.id));
-    });
-    const propertyIdSet = new Set<string>(propertyRows.map((p) => p.id));
-    // propertyOwners has no tenant_id column; filter client-side by the
-    // properties we just pulled.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const allPropertyOwnerRows: any[] = await withTenant(
-      db,
-      t.id,
-      async (tx) => {
-        return tx.select().from(propertyOwnersTable);
-      },
-    );
-    const propertyOwnerRows = allPropertyOwnerRows.filter((r) =>
-      propertyIdSet.has(r.propertyId),
-    );
-
-    const ownersByPropertyId = new Map<string, string[]>();
-    for (const row of propertyOwnerRows) {
-      const list = ownersByPropertyId.get(row.propertyId) ?? [];
-      const extId = ownerIdToExt.get(row.ownerId);
-      if (extId !== undefined) list.push(extId);
-      ownersByPropertyId.set(row.propertyId, list);
-    }
-
-    for (const p of propertyRows) {
-      const ownerIds: string[] = ownersByPropertyId.get(p.id) ?? [];
-      propertiesAcc.push({
-        assessmentNumber: p.assessmentNumber,
-        council: t.code,
-        address: p.address,
-        suburb: p.suburb,
-        postcode: p.postcode,
-        state: p.state,
-        landUse: p.landUse,
-        valuation: Number(p.valuation),
-        annualRates: Number(p.annualRates),
-        balance: Number(p.balance),
-        lastPaymentDate: p.lastPaymentDate
-          ? (p.lastPaymentDate as Date).toISOString().slice(0, 10)
-          : null,
-        lastPaymentAmount:
-          p.lastPaymentAmount !== null && p.lastPaymentAmount !== undefined
-            ? Number(p.lastPaymentAmount)
-            : null,
-        paymentMethod: p.paymentMethod ?? null,
-        pensionerRebate: p.pensionerRebate ?? false,
-        paymentArrangement: p.paymentArrangement ?? false,
-        ownerIds,
-        notes: p.notes ?? [],
-        lat: Number(p.centroidLat),
-        lng: Number(p.centroidLng),
-        ...parcelFromGeoJson(p.parcel),
-      });
-    }
-  }
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const tenementRows: any[] = await db.select().from(tenementsTable);
-  const tenementsAcc: Tenement[] = tenementRows.map((t) => ({
-    tenementId: t.tenementId,
-    type: t.type,
-    status: t.status,
-    holder: t.holder,
-    holderAbn: t.holderAbn ?? null,
-    commodity: t.commodity ?? [],
-    grantedDate: t.grantedDate,
-    expiryDate: t.expiryDate,
-    areaHectares: Number(t.areaHectares),
-    intersectsAssessmentNumbers: t.intersectsAssessmentNumbers ?? [],
-    isProducing: t.isProducing ?? false,
-    lastWorkProgramYear: t.lastWorkProgramYear ?? null,
-    polygon: polygonFromGeoJson(t.polygon),
-  }));
-
-  // Build the indexes from the DB-derived arrays.
-  const ownersById = new Map<string, Owner>(
-    ownersAcc.map((o) => [o.ownerId, o]),
-  );
-  const tenementsByAssessment = new Map<string, Tenement[]>();
-  for (const tenement of tenementsAcc) {
-    for (const an of tenement.intersectsAssessmentNumbers) {
-      const list = tenementsByAssessment.get(an);
-      if (list === undefined) {
-        tenementsByAssessment.set(an, [tenement]);
-      } else {
-        list.push(tenement);
-      }
-    }
-  }
-  const enrichedProperties = overlayVenCt(overlayValuations(propertiesAcc));
-  const propertiesByOwnerId = new Map<string, Property[]>();
-  const ruralBySuburb = new Map<string, Property[]>();
-  for (const p of enrichedProperties) {
-    for (const ownerId of p.ownerIds) {
-      const bucket = propertiesByOwnerId.get(ownerId);
-      if (bucket === undefined) {
-        propertiesByOwnerId.set(ownerId, [p]);
-      } else {
-        bucket.push(p);
-      }
-    }
-    if (p.landUse === "Rural") {
-      const bucket = ruralBySuburb.get(p.suburb);
-      if (bucket === undefined) {
-        ruralBySuburb.set(p.suburb, [p]);
-      } else {
-        bucket.push(p);
-      }
-    }
-  }
-
-  log.info({
-    msg: "eval_context.db_hydrated",
-    durationMs: Date.now() - start,
-    properties: enrichedProperties.length,
-    owners: ownersAcc.length,
-    tenements: tenementsAcc.length,
-    tenants: tenantRows.length,
-  });
-
-  return {
-    properties: enrichedProperties,
-    ownersById,
-    tenementsByAssessment,
-    propertiesByOwnerId,
-    ruralBySuburb,
-    lagCandidatesByAssessment: MOCK_LAG_CANDIDATES_BY_ASSESSMENT,
-    addressDiscrepanciesByAssessment: MOCK_ADDRESS_DISCREPANCIES_BY_ASSESSMENT,
-    emitsApprovalsByTenement: MOCK_EMITS_APPROVALS_BY_TENEMENT,
-    changeDetectionByAssessment: MOCK_CHANGE_DETECTION_BY_ASSESSMENT,
-    landgateRecordsByVen: MOCK_LANDGATE_RECORDS_BY_VEN,
-    waterCorpEligibilityByCardOrProprietor: MOCK_WC_ELIGIBILITY,
-    proprietorDeceasedReferences: MOCK_PROPRIETOR_DECEASED_REFERENCES,
-    rateTablesByCouncil: RATE_TABLES_BY_COUNCIL,
-    targetStateScope: TARGET_STATE_SCOPE,
-  };
 }
 
 /**
