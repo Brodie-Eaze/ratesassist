@@ -2,13 +2,17 @@
  * Detection signal catalogue.
  *
  * Each signal is a hypothesis about why a property might be mis-rated, with
- * a calibrated weight, an authoritative source, and a category. Signals
+ * a hand-set weight, an authoritative source, and a category. Signals
  * compose into a transparent weighted-additive composite score.
  *
- * Stability: weights have been hand-calibrated against pilot-1 data. They
- * will be replaced by an ML-calibrated head once enough labelled outcomes
- * are accumulated (Phase 8). Until then, every weight here is auditable
- * and every signal hit cites its source in the evidence pack.
+ * Stability: weights are hand-set PRIORS derived from domain expertise — they
+ * have NOT yet been calibrated against labelled recovery outcomes (no pilot
+ * has run as of this writing). They are deliberately conservative and fully
+ * auditable: every weight is inspectable and every signal hit cites its source
+ * in the evidence pack. Once enough labelled outcomes accumulate, the priors
+ * will be replaced by an outcome-calibrated head (Phase 8). Treat the current
+ * composite score as a RANKING aid for human review, not a calibrated
+ * probability of recovery.
  */
 
 import type { SignalDef } from "@ratesassist/contract";
@@ -401,9 +405,9 @@ export function getSignal(id: string): SignalDef | undefined {
 }
 
 /**
- * Severity bands. Bands are calibrated so a single register signal alone
- * (≥0.45) is medium; register + identity (≥0.60) is high; anything below
- * 0.15 is suppressed.
+ * Severity bands. Thresholds are set by design so a single register signal
+ * alone (≥0.45) is medium; register + identity (≥0.60) is high; anything below
+ * 0.15 is suppressed. (These are deliberate cut-points, not outcome-fitted.)
  */
 export const SEVERITY_BANDS = {
   high: 0.6,

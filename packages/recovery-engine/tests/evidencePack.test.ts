@@ -25,7 +25,10 @@ import {
 } from "../src/evidencePack.js";
 import type { EvaluationContext } from "../src/scoring.js";
 
-function makeCtx(state: Property["state"]): EvaluationContext {
+function makeCtx(
+  state: Property["state"],
+  tenementType: Tenement["type"] = "M",
+): EvaluationContext {
   const owner = {
     ownerId: "O-MINER",
     name: "Pilbara Iron Holdings Pty Ltd",
@@ -61,8 +64,8 @@ function makeCtx(state: Property["state"]): EvaluationContext {
   };
 
   const tenement: Tenement = {
-    tenementId: "M-501",
-    type: "M",
+    tenementId: tenementType === "L" ? "L-777" : "M-501",
+    type: tenementType,
     status: "Live",
     holder: "Pilbara Iron Holdings Pty Ltd",
     holderAbn: "32614882110",
@@ -586,3 +589,23 @@ function makeDeceasedCtx(): EvaluationContext {
     ]),
   };
 }
+
+describe("buildEvidencePack — legal-risk callout (miscellaneous licence)", () => {
+  it("renders the contested-law callout when a misc-licence tenement is present", () => {
+    const result = buildEvidencePack("A-MINE", makeCtx("WA", "L"), {});
+    expect(result.kind).toBe("ok");
+    if (result.kind === "ok") {
+      expect(result.pack.markdown).toMatch(/Legal risk/i);
+      expect(result.pack.markdown).toMatch(/L-777/);
+      expect(result.pack.markdown).toMatch(/Mount Magnet|refund liability/i);
+    }
+  });
+
+  it("omits the callout for a normal mining-lease recovery", () => {
+    const result = buildEvidencePack("A-MINE", makeCtx("WA"), {});
+    expect(result.kind).toBe("ok");
+    if (result.kind === "ok") {
+      expect(result.pack.markdown).not.toMatch(/Legal risk/i);
+    }
+  });
+});
